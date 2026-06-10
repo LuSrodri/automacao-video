@@ -103,6 +103,7 @@ englobando preferencialmente o Brasil, Estados Unidos e Europa.
    6 tags por roteiro, variando a emoção conforme o conteúdo (elas não são
    faladas nem aparecem nas legendas). A pontuação também guia a entrega:
    reticências para suspense, MAIÚSCULAS para ênfase pontual.
+6. A narração deve ter ganchos com opiniões e perguntas para o público, para aumentar o engajamento e reações.
 
 Responda somente com o JSON pedido.\
 """
