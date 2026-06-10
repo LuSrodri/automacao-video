@@ -17,6 +17,7 @@ class Config:
     text_model: str = "gpt-5.4-mini"
     search_model: str = "grok-4.3"
     image_model: str = "gpt-image-1.5"
+    image_quality: str = "low"
     video_model: str = "grok-imagine-video-1.5-preview"
     video_duracao: int = 20
     video_resolucao: str = "480p"
@@ -59,6 +60,7 @@ def carregar_config() -> Config:
         text_model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"),
         search_model=os.getenv("SEARCH_MODEL", "grok-4.3"),
         image_model=os.getenv("IMAGE_MODEL", "gpt-image-1.5"),
+        image_quality=os.getenv("IMAGE_QUALITY", "low"),
         video_model=os.getenv("VIDEO_MODEL", "grok-imagine-video-1.5-preview"),
         video_duracao=int(os.getenv("VIDEO_DURACAO", "20")),
         video_resolucao=os.getenv("VIDEO_RESOLUCAO", "480p"),

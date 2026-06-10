@@ -15,15 +15,16 @@ from .config import Config
 
 INSTRUCOES_CONTAS = """\
 Use a busca no X para listar os posts mais relevantes sobre tecnologia e
-inteligência artificial publicados pelas contas permitidas no período.\
+inteligência artificial publicados pelas contas de alto engajamento (sendo em português ou inglês).\
 """
 
 INSTRUCOES_TRENDING = """\
-Use a busca no X para encontrar as threads e posts MAIS DISCUTIDOS do dia
+Use a busca no X para encontrar as threads e posts MAIS DISCUTIDOS da últimas horas
 sobre tecnologia e inteligência artificial: anúncios de empresas, lançamentos
-de modelos e produtos, pesquisas e polêmicas que estão dominando a conversa.
+de modelos e produtos, pesquisas e polêmicas que estão dominando a conversa, 
+startups brasileiras e internacionais, rumores, e afins.
 Priorize posts virais e de grande engajamento, vindos de fontes confiáveis
-(empresas, pesquisadores, jornalistas de tech).\
+ou usuários reconhecidos e recorrentes.\
 """
 
 FORMATO_RESPOSTA = """
@@ -32,7 +33,8 @@ Responda SOMENTE com um array JSON, sem texto antes ou depois, no formato:
 [{"conta": "username", "texto": "conteúdo completo do post", "data": "YYYY-MM-DD"}]
 
 Inclua até 20 posts, priorizando anúncios, lançamentos e notícias de maior
-impacto. Reproduza o texto dos posts fielmente, sem resumir demais.\
+impacto, mas também posts de usuários gerais com informações e insights relevantes. 
+Reproduza o texto dos posts fielmente, sem resumir demais.\
 """
 
 

@@ -76,6 +76,7 @@ descricao: ...
 | `TEXT_MODEL` | `gpt-5.4-mini` | Modelo de texto (tema, título, descrição, roteiro) |
 | `SEARCH_MODEL` | `grok-4.3` | Modelo da xAI que executa a X Search na coleta |
 | `IMAGE_MODEL` | `gpt-image-1.5` | Modelo das imagens-chave |
+| `IMAGE_QUALITY` | `low` | Qualidade das imagens: `low`, `medium`, `high` ou `auto` |
 | `VIDEO_MODEL` | `grok-imagine-video-1.5-preview` | Modelo de vídeo da xAI (`grok-imagine-video` é a opção estável e mais barata) |
 | `VIDEO_DURACAO` | `20` | Duração total em segundos (1–25) |
 | `VIDEO_RESOLUCAO` | `480p` | `480p` (US$ 0,05/seg) ou `720p` (US$ 0,07/seg) |
@@ -95,14 +96,16 @@ O GPT define para cada imagem um **logo de marca ou figura pública** ligada à 
 
 ## Custo estimado por vídeo
 
-Com os padrões do projeto (20s, 480p, busca aberta de trending), cada execução custa por volta de **US$ 1,75–2,20**:
+Com os padrões do projeto (20s, 480p, imagens `low`, busca aberta de trending), cada execução custa por volta de **US$ 1,70**:
 
 | Etapa | Custo |
 | --- | --- |
 | Coleta via X Search da xAI (tokens do grok-4.3 + buscas a US$ 5/1.000) | ~US$ 0,03–0,06 |
 | GPT 5.4 mini (roteiro) | < US$ 0,01 |
-| gpt-image-1.5 (1–3 imagens) | US$ 0,10–0,50 |
+| gpt-image-1.5 em qualidade `low` (1–3 imagens) | ~US$ 0,01–0,05 |
 | Grok Imagine 1.5 — 2×10s @ 480p (20s gerados + 2 entradas de imagem) | ~US$ 1,62 |
+
+Em ritmo de 3 vídeos por semana (~13/mês), isso dá **~US$ 22/mês** (≈ US$ 21 na xAI + ≈ US$ 1 na OpenAI).
 
 O `grok-imagine-video-1.5-preview` custa US$ 0,08/seg em 480p (US$ 0,14/seg em 720p) + US$ 0,01 por imagem de entrada. Usar `VIDEO_MODEL=grok-imagine-video` (US$ 0,05/seg) derruba o vídeo para ~US$ 1,02. Preços de junho/2026; confira as páginas de pricing da xAI e da OpenAI antes de escalar.
 

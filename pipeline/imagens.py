@@ -46,6 +46,7 @@ def _gerar(cliente: OpenAI, cfg: Config, prompt: str):
             model=cfg.image_model,
             prompt=prompt,
             size="1024x1024",
+            quality=cfg.image_quality,
             background="transparent",
             output_format="png",
             moderation="low",
@@ -64,6 +65,7 @@ def _gerar(cliente: OpenAI, cfg: Config, prompt: str):
             model=cfg.image_model,
             prompt=prompt,
             size="1024x1024",
+            quality=cfg.image_quality,
             output_format="png",
             moderation="low",
         )

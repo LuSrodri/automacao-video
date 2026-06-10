@@ -77,7 +77,8 @@ INSTRUCOES = """\
 Você é roteirista de vídeos curtos sobre tecnologia e inteligência artificial.
 
 Você receberá posts recentes do X (Twitter). Sua tarefa:
-1. Escolher O TEMA MAIS RELEVANTE do dia (maior impacto/novidade para o público tech).
+1. Escolher O TEMA MAIS RELEVANTE do dia (maior impacto/novidade para o público tech), 
+englobando preferencialmente o Brasil, Estados Unidos e Europa.
 2. Criar título, descrição e o texto do vídeo, todos em português do Brasil.
 3. O texto do vídeo deve ser narrável em cerca de 20 segundos: direto,
    empolgante, sem enrolação, explicando a notícia e por que ela importa.
