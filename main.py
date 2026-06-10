@@ -1,11 +1,13 @@
 """Automação de vídeos de notícias tech/AI a partir de posts do X.
 
 Fluxo:
-1. Coleta posts recentes das contas configuradas no X.
-2. GPT escolhe o tema do dia e gera título, descrição e texto do vídeo.
-3. OpenAI Images gera 1 a 3 imagens-chave com fundo transparente.
-4. Grok Imagine anima o clipe.png usando o texto do vídeo como prompt.
-5. ffmpeg sobrepõe as imagens-chave no vídeo.
+1. Coleta posts das últimas 24h no X (X Search da xAI).
+2. GPT escolhe o tema do dia e gera título, descrição e texto do vídeo (~60s).
+3. Web Search da xAI busca de 3 a 5 imagens-chave reais na web.
+4. ElevenLabs narra o texto (TTS).
+5. ffmpeg monta: vídeos de fundo intercalados aleatoriamente (mudos) +
+   narração + imagens centralizadas em largura total, com zoom-in lento e
+   fundo borrado + legendas sincronizadas.
 6. O resultado é salvo em output/ e registrado em videos.txt.
 """
 
@@ -14,12 +16,13 @@ import re
 import unicodedata
 from datetime import datetime
 
+from pipeline.audio import gerar_narracao
+from pipeline.busca_imagens import buscar_imagens
 from pipeline.config import carregar_config
-from pipeline.edicao import editar_video
+from pipeline.edicao import dimensoes_video, duracao_audio, montar_video
 from pipeline.escritor import gerar_roteiro
-from pipeline.imagens import gerar_imagens
+from pipeline.legendas import gerar_legendas
 from pipeline.registro import registrar
-from pipeline.video import gerar_video
 from pipeline.x_client import coletar_tweets
 
 
@@ -62,12 +65,28 @@ def main() -> None:
         json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    imagens = gerar_imagens(cfg, roteiro["imagens"], pasta)
-    video_bruto = gerar_video(cfg, roteiro["texto_video"], pasta / "video_bruto.mp4")
-    video_final = editar_video(
-        video_bruto,
+    imagens = buscar_imagens(cfg, roteiro["imagens"], pasta)
+    narracao, alinhamento = gerar_narracao(
+        cfg, roteiro["texto_video"], pasta / "narracao.mp3"
+    )
+
+    largura, altura = dimensoes_video(cfg.videos_fundo[0])
+    legendas, troca = gerar_legendas(
+        roteiro["texto_video"],
+        alinhamento,
+        duracao_audio(narracao) + 0.6,
+        largura,
+        altura,
+        pasta / "legendas.ass",
+    )
+
+    video_final = montar_video(
+        cfg.videos_fundo,
+        narracao,
         _sobreposicoes(roteiro["texto_video"], imagens),
         pasta / "video_final.mp4",
+        legendas=legendas,
+        inicio_imagens=troca,
     )
 
     registrar(cfg, video_final, roteiro["titulo"], roteiro["descricao"])

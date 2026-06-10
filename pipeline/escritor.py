@@ -37,20 +37,20 @@ ESQUEMA_ROTEIRO = {
             },
             "imagens": {
                 "type": "array",
-                "minItems": 1,
-                "maxItems": 3,
+                "minItems": 3,
+                "maxItems": 5,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "prompt": {
+                        "consulta": {
                             "type": "string",
                             "description": (
-                                "Prompt em inglês para a imagem-chave. "
-                                "Obrigatoriamente um logo de marca conhecida OU "
-                                "uma figura pública conhecida ligada à notícia, "
-                                "em estilo caricato/cartoon, elemento único e "
-                                "isolado, sem fundo nem cenário."
+                                "Consulta de busca de imagem em inglês para "
+                                "encontrar UMA foto/imagem real na web que "
+                                "ilustre este momento da narração (logo "
+                                "oficial, foto de figura pública, foto de "
+                                "produto, sede da empresa etc.)."
                             ),
                         },
                         "trecho": {
@@ -62,10 +62,10 @@ ESQUEMA_ROTEIRO = {
                             ),
                         },
                     },
-                    "required": ["prompt", "trecho"],
+                    "required": ["consulta", "trecho"],
                 },
                 "description": (
-                    "1 a 3 imagens-chave sincronizadas com a narração do vídeo."
+                    "3 a 5 imagens-chave sincronizadas com a narração do vídeo."
                 ),
             },
         },
@@ -77,23 +77,32 @@ INSTRUCOES = """\
 Você é roteirista de vídeos curtos sobre tecnologia e inteligência artificial.
 
 Você receberá posts recentes do X (Twitter). Sua tarefa:
-1. Escolher O TEMA MAIS RELEVANTE do dia (maior impacto/novidade para o público tech), 
+1. Escolher O TEMA MAIS RELEVANTE do dia (maior impacto/novidade para o público tech),
 englobando preferencialmente o Brasil, Estados Unidos e Europa.
 2. Criar título, descrição e o texto do vídeo, todos em português do Brasil.
-3. O texto do vídeo deve ser narrável em cerca de 20 segundos: direto,
-   empolgante, sem enrolação, explicando a notícia e por que ela importa.
-4. Definir de 1 a 3 imagens-chave. REGRAS DAS IMAGENS:
-   - Cada imagem deve ser OU o logo de uma marca/empresa conhecida OU uma
-     figura pública conhecida, sempre diretamente ligada à notícia.
-     Exemplo: notícia sobre a OpenAI -> logo da OpenAI e caricatura do
-     Sam Altman.
-   - Estilo sempre caricato/cartoon (caricatura divertida para pessoas,
-     versão cartunizada e estilizada para logos).
-   - O prompt deve ser em inglês, descrevendo UM elemento único, isolado,
-     sem fundo, sem cenário e SEM nenhum texto além do que faz parte do logo.
+3. O texto do vídeo deve ser narrável em cerca de {duracao} segundos
+   (aproximadamente {palavras} palavras): direto, empolgante, sem enrolação,
+   explicando a notícia, o contexto e por que ela importa.
+4. Definir de 3 a 5 imagens-chave. REGRAS DAS IMAGENS:
+   - As imagens serão buscadas na web (fotos e logos REAIS, nada gerado por
+     IA). Em "consulta", escreva a busca em inglês que encontra a melhor
+     imagem para aquele momento: logo oficial da empresa, foto da figura
+     pública envolvida, foto do produto, gráfico divulgado etc.
+     Exemplo: notícia sobre a OpenAI -> "OpenAI official logo" e
+     "Sam Altman portrait photo".
+   - Prefira assuntos visualmente reconhecíveis e fáceis de achar em boa
+     resolução.
    - Em "trecho", copie literalmente a parte do texto_video em que a imagem
      deve aparecer (substring exata do texto_video, sem alterar nada), para
-     sincronizar a imagem com a narração.
+     sincronizar a imagem com a narração. Distribua as imagens ao longo de
+     todo o texto, não concentre tudo no início.
+5. Deixe a narração expressiva inserindo audio tags do ElevenLabs v3 no
+   texto_video: palavras em inglês entre colchetes, posicionadas imediatamente
+   antes do trecho que modificam. Exemplos: [excited], [curious], [whispers],
+   [surprised], [sighs], [laughs], [clears throat], [short pause]. Use de 3 a
+   6 tags por roteiro, variando a emoção conforme o conteúdo (elas não são
+   faladas nem aparecem nas legendas). A pontuação também guia a entrega:
+   reticências para suspense, MAIÚSCULAS para ênfase pontual.
 
 Responda somente com o JSON pedido.\
 """
@@ -107,11 +116,15 @@ def gerar_roteiro(cfg: Config, tweets: list[dict]) -> dict:
         for t in tweets[:40]
     ]
     conteudo = "Posts coletados hoje:\n" + "\n".join(linhas)
+    instrucoes = INSTRUCOES.format(
+        duracao=cfg.video_duracao,
+        palavras=int(cfg.video_duracao * 2.5),
+    )
 
     resposta = cliente.chat.completions.create(
         model=cfg.text_model,
         messages=[
-            {"role": "system", "content": INSTRUCOES},
+            {"role": "system", "content": instrucoes},
             {"role": "user", "content": conteudo},
         ],
         response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},

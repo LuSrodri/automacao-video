@@ -1,21 +1,23 @@
 # Automação de Vídeos — Notícias Tech & AI
 
-Pipeline em Python que transforma posts recentes do X (Twitter) em um vídeo curto pronto para publicar:
+Pipeline em Python que transforma as notícias de tech/AI mais quentes do X (Twitter) em um vídeo vertical narrado, pronto para publicar:
 
-1. **Coleta** as threads de tech/AI mais discutidas das últimas 24h no X usando a ferramenta **X Search da xAI** (sem precisar de conta na X API). Opcionalmente, dá para restringir a contas específicas.
-2. **GPT 5.4 mini** escolhe o tema do dia e gera título, descrição e o texto do vídeo.
-3. **OpenAI Images** gera de 1 a 3 imagens-chave em PNG com fundo transparente — sempre logos de marcas ou figuras públicas ligadas à notícia, em estilo caricato.
-4. **Grok Imagine 1.5** (xAI) anima a imagem base `clipe.png` usando o texto do vídeo como prompt, com instrução para não renderizar textos/legendas no vídeo.
-5. **ffmpeg** sobrepõe as imagens-chave centralizadas na tela, cada uma na janela de tempo do trecho da narração a que se refere.
+1. **Coleta** as threads de tech/AI mais discutidas das últimas 24h no X usando a **X Search da xAI** (com `from_date`/`to_date`). Opcionalmente restringe a contas específicas.
+2. **GPT 5.4 mini** escolhe o tema do dia e gera título, descrição e o texto do vídeo (~60 segundos de narração).
+3. **Web Search da xAI** (modo image search) encontra de **3 a 5 imagens reais** na web — logos, fotos de figuras públicas, produtos — nada gerado por IA.
+4. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere). O roteiro inclui **audio tags** (`[excited]`, `[whispers]`, `[sighs]`…) que ditam o tom e a emoção da voz — elas não são faladas nem aparecem nas legendas.
+5. **ffmpeg** monta o vídeo: os **vídeos de fundo pré-gravados são intercalados em ordem aleatória** (sem repetir o mesmo em sequência, mudos) até cobrir a narração; cada imagem-chave entra **centralizada ocupando toda a largura**, com **zoom-in lento**, enquanto o **fundo fica borrado**; as imagens aparecem sincronizadas com o trecho da narração a que se referem. **Legendas** sincronizadas palavra a palavra são queimadas no vídeo: durante a primeira frase aparecem centralizadas na tela, depois centralizadas na parte inferior — fonte Barlow, texto preto com borda branca.
 6. O `.mp4` final vai para `output/` e a entrada (arquivo + título + descrição) é registrada em `videos.txt`.
 
 ## Pré-requisitos
 
 - **Python 3.10+**
 - **ffmpeg** no PATH. No Windows: `winget install Gyan.FFmpeg` (reabra o terminal depois)
-- Chaves de API (apenas duas):
-  - **OpenAI** — em [platform.openai.com/api-keys](https://platform.openai.com/api-keys), com acesso aos modelos `gpt-5.4-mini` e `gpt-image-1.5`/`gpt-image-2` (geração de imagem pode exigir verificação da organização).
-  - **xAI** — em [console.x.ai](https://console.x.ai). A mesma chave e os mesmos créditos cobrem a coleta de posts (ferramenta X Search, US$ 5/1.000 buscas) e a geração do vídeo (`grok-imagine-video`). Não é preciso ter conta na X API.
+- **Vídeos de fundo** na raiz do projeto, casando com o padrão `FUNDO_GLOB` (padrão: `av paulista*.mp4`). Ideal: verticais 9:16; eles são sorteados a cada execução e rodam em loop, sem áudio.
+- Chaves de API (três):
+  - **OpenAI** — em [platform.openai.com/api-keys](https://platform.openai.com/api-keys) (roteiro com `gpt-5.4-mini`).
+  - **xAI** — em [console.x.ai](https://console.x.ai) (coleta de posts via X Search + busca de imagens via Web Search).
+  - **ElevenLabs** — em [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys) (narração TTS).
 
 ## Configuração inicial (uma vez só)
 
@@ -25,16 +27,13 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-# 2. Crie o .env a partir do exemplo e preencha as chaves
+# 2. Crie o .env a partir do exemplo e preencha as três chaves
 Copy-Item .env.example .env
 notepad .env
 
-# 3. Coloque a imagem base do vídeo na raiz do projeto
-#    (é ela que o Grok Imagine vai animar)
-#    -> clipe.png
+# 3. Coloque os vídeos de fundo na raiz do projeto
+#    (ex.: "av paulista 1.mp4", "av paulista 2.mp4", "av paulista 3.mp4")
 ```
-
-Por padrão a coleta busca as threads de tech/AI mais discutidas do dia no X inteiro. Se preferir limitar a fontes específicas, preencha `X_ACCOUNTS` no `.env` (contas separadas por vírgula, sem `@`).
 
 ## Rodando
 
@@ -45,79 +44,52 @@ Toda vez que quiser gerar o vídeo do dia:
 python main.py
 ```
 
-O resultado fica em uma pasta por execução, por exemplo:
+O resultado fica em uma pasta por execução:
 
 ```
 output/
-└── 2026-06-09_openai-lanca-novo-modelo/
-    ├── roteiro.json     # tema, título, descrição, texto e prompts gerados
-    ├── imagem_1.png     # imagens-chave (fundo transparente)
-    ├── imagem_2.png
-    ├── video_bruto.mp4  # saída do Grok Imagine
-    └── video_final.mp4  # vídeo editado (este é o que você publica)
-```
-
-E o `videos.txt` na raiz acumula o histórico:
-
-```
-data: 2026-06-09 14:32
-arquivo: ...\output\2026-06-09_openai-lanca-novo-modelo\video_final.mp4
-titulo: OpenAI lança novo modelo
-descricao: ...
----
+└── 2026-06-10_titulo-do-dia/
+    ├── roteiro.json     # tema, título, descrição, texto e consultas de imagem
+    ├── imagem_1.jpg …   # imagens-chave baixadas da web
+    ├── narracao.mp3     # narração TTS
+    └── video_final.mp4  # este é o que você publica
 ```
 
 ## Ajustes no .env
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
-| `X_ACCOUNTS` | vazio | Opcional: restringe a busca a contas específicas (separadas por vírgula, máx. 20). Vazio = threads mais discutidas do dia |
+| `X_ACCOUNTS` | vazio | Opcional: restringe a busca a contas específicas (máx. 20). Vazio = threads mais discutidas do dia |
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados |
-| `TEXT_MODEL` | `gpt-5.4-mini` | Modelo de texto (tema, título, descrição, roteiro) |
-| `SEARCH_MODEL` | `grok-4.3` | Modelo da xAI que executa a X Search na coleta |
-| `IMAGE_MODEL` | `gpt-image-1.5` | Modelo das imagens-chave |
-| `IMAGE_QUALITY` | `low` | Qualidade das imagens: `low`, `medium`, `high` ou `auto` |
-| `VIDEO_MODEL` | `grok-imagine-video-1.5-preview` | Modelo de vídeo da xAI (`grok-imagine-video` é a opção estável e mais barata) |
-| `VIDEO_DURACAO` | `20` | Duração total em segundos (1–25) |
-| `VIDEO_RESOLUCAO` | `480p` | `480p` (US$ 0,05/seg) ou `720p` (US$ 0,07/seg) |
-| `VIDEO_ASPECT_RATIO` | `9:16` | Proporção do vídeo (`9:16`, `16:9`, `1:1`, `4:3`, `3:4`, `3:2`, `2:3`) |
+| `TEXT_MODEL` | `gpt-5.4-mini` | Modelo do roteiro |
+| `SEARCH_MODEL` | `grok-4.3` | Modelo da xAI para X Search e Web Search |
+| `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração ([voice library](https://elevenlabs.io/app/voice-library)) |
+| `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
+| `VIDEO_DURACAO` | `60` | Duração-alvo da narração em segundos (a duração final segue o áudio) |
+| `FUNDO_GLOB` | `av paulista*.mp4` | Padrão dos vídeos de fundo na raiz do projeto |
 
-### Como funcionam os 20 segundos
+## Como funcionam as legendas
 
-Durações acima de 10s são divididas em **segmentos de até 10s**, todos gerados **em paralelo** a partir do mesmo `clipe.png` — o texto do vídeo é repartido proporcionalmente entre eles, então cada segmento narra a sua parte. Ao final, o ffmpeg concatena tudo na ordem da narração. Com `VIDEO_DURACAO=20`, são 2 segmentos de 10s (duas chamadas cobradas ao Grok Imagine, mas que rodam ao mesmo tempo). Como cada segmento parte da mesma imagem base, há um corte de cena na junção — efeito de "novo take", comum em vídeos curtos. O limite total do pipeline é 25s.
+A ElevenLabs retorna o tempo de fala de cada caractere (`/with-timestamps`), e o pipeline agrupa as palavras em legendas curtas (até ~18 caracteres), gravadas em `legendas.ass` e queimadas no vídeo pelo ffmpeg. A primeira frase da narração aparece **centralizada na tela** (gancho de abertura); as demais ficam **centralizadas na parte inferior**. O estilo é texto **preto com borda branca**, na fonte **Barlow** (em `fonts/Barlow-Bold.ttf`; a Futura é comercial e não pode ser distribuída com o projeto — se você a tiver licenciada, basta trocar o `Fontname` em `pipeline/legendas.py`). O arquivo `alinhamento.json` de cada execução guarda os timestamps para depuração.
 
-### Sobre a proporção 9:16
+## Como funcionam as imagens-chave
 
-A proporção é aplicada na geração. Como a fonte é o `clipe.png`, **use uma imagem já em 9:16** (ex.: 1080×1920); se o arquivo tiver outra proporção, a API estica a imagem para encaixar no formato, distorcendo o resultado.
-
-### Como funcionam as imagens-chave
-
-O GPT define para cada imagem um **logo de marca ou figura pública** ligada à notícia (estilo caricato) e o **trecho exato da narração** em que ela deve aparecer. O pipeline posiciona cada imagem na janela de tempo proporcional à posição desse trecho no texto, centralizada na tela com ~55% da largura do vídeo. Se a moderação da OpenAI recusar alguma figura pública, aquela imagem é pulada e o vídeo segue com as demais.
+O GPT define, para cada imagem, uma **consulta de busca** (ex.: "OpenAI official logo", "Sam Altman portrait photo") e o **trecho exato da narração** em que ela deve aparecer. Cada consulta vira uma chamada própria ao Grok (`web_search` com `enable_image_search`, em paralelo); as URLs diretas dos arquivos vêm nas *annotations* da resposta, com os embeds markdown como reserva. O pipeline tenta os candidatos em ordem, segue para a og:image quando a URL é uma página, e valida o conteúdo (JPG/PNG/WebP, tamanho mínimo). Na montagem, cada imagem entra na janela de tempo proporcional à posição do trecho na narração — centralizada, em largura total, com zoom-in de ~12% e o fundo borrado enquanto estiver na tela. Se uma busca não retornar imagem válida, ela é pulada e o vídeo segue com as demais.
 
 ## Custo estimado por vídeo
 
-Com os padrões do projeto (20s, 480p, imagens `low`, busca aberta de trending), cada execução custa por volta de **US$ 1,70**:
-
 | Etapa | Custo |
 | --- | --- |
-| Coleta via X Search da xAI (tokens do grok-4.3 + buscas a US$ 5/1.000) | ~US$ 0,03–0,06 |
+| Coleta + busca de imagens (xAI: tokens grok-4.3 + tools a US$ 5/1.000 chamadas) | ~US$ 0,05–0,12 |
 | GPT 5.4 mini (roteiro) | < US$ 0,01 |
-| gpt-image-1.5 em qualidade `low` (1–3 imagens) | ~US$ 0,01–0,05 |
-| Grok Imagine 1.5 — 2×10s @ 480p (20s gerados + 2 entradas de imagem) | ~US$ 1,62 |
+| ElevenLabs (~1.000 caracteres por narração de 60s) | ~1.000 créditos do plano |
 
-Em ritmo de 3 vídeos por semana (~13/mês), isso dá **~US$ 22/mês** (≈ US$ 21 na xAI + ≈ US$ 1 na OpenAI).
-
-O `grok-imagine-video-1.5-preview` custa US$ 0,08/seg em 480p (US$ 0,14/seg em 720p) + US$ 0,01 por imagem de entrada. Usar `VIDEO_MODEL=grok-imagine-video` (US$ 0,05/seg) derruba o vídeo para ~US$ 1,02. Preços de junho/2026; confira as páginas de pricing da xAI e da OpenAI antes de escalar.
-
-## Observação importante sobre as imagens transparentes
-
-Pela documentação oficial da OpenAI, o **`gpt-image-2` não suporta fundo transparente** — requisições com `background: "transparent"` são rejeitadas para esse modelo. Quem suporta transparência nativa é o **`gpt-image-1.5`**, que por isso é o padrão do projeto.
-
-Se você definir `IMAGE_MODEL=gpt-image-2`, o script detecta a rejeição, gera a imagem sem o parâmetro e avisa no console — mas nesse caso o PNG pode vir com fundo, e o overlay no vídeo fica como um cartão retangular em vez de um elemento recortado.
+Em dinheiro de API (xAI + OpenAI), cada vídeo sai por **centavos**. O custo real vira o plano da ElevenLabs: o plano gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana. Total estimado: **~US$ 6–7/mês**.
 
 ## Problemas comuns
 
-- **Erro na coleta de posts** — verifique o saldo de créditos da xAI no [console.x.ai](https://console.x.ai) (a coleta usa a ferramenta X Search). Se a resposta vier sem JSON, rode de novo; o script mostra o trecho recebido para diagnóstico.
-- **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal para o PATH atualizar.
-- **Timeout no Grok Imagine** — a geração pode levar alguns minutos; o script aguarda até 15. Se estourar, rode de novo (o console da xAI também mostra o status pelo `request_id` impresso no log).
-- **`Imagem base não encontrada`** — falta o `clipe.png` na raiz do projeto.
+- **Erro na coleta de posts ou na busca de imagens** — verifique o saldo de créditos da xAI no [console.x.ai](https://console.x.ai).
+- **HTTP 401 na ElevenLabs** — chave errada no `.env`; **422** — texto/parâmetros inválidos (a mensagem detalha).
+- **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal.
+- **`Nenhum vídeo de fundo encontrado`** — confira os arquivos na raiz e o `FUNDO_GLOB`.
+- **Imagem-chave ruim/errada** — apague a pasta da execução e rode de novo; as buscas do Grok variam. Dá para editar `roteiro.json` e ajustar as consultas manualmente também.
