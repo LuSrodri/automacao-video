@@ -41,8 +41,11 @@ Toda vez que quiser gerar o vídeo do dia:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python main.py
+python main.py        # público brasileiro (conteúdo em português)
+python main.py -usa   # público americano (tudo em inglês)
 ```
+
+Com `-usa`, todo o material — escolha do tema, título, descrição, texto narrado e hashtags — é produzido em inglês americano e direcionado 100% ao público dos EUA (a coleta também prioriza o que está dominando a conversa por lá), e a narração usa a voz americana configurada em `ELEVENLABS_VOICE_ID_USA`.
 
 O resultado fica em uma pasta por execução:
 
@@ -63,7 +66,8 @@ output/
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados |
 | `TEXT_MODEL` | `gpt-5.4-mini` | Modelo do roteiro |
 | `SEARCH_MODEL` | `grok-4.3` | Modelo da xAI para X Search e Web Search |
-| `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração ([voice library](https://elevenlabs.io/app/voice-library)) |
+| `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
+| `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
 | `VIDEO_DURACAO` | `60` | Duração-alvo da narração em segundos (a duração final segue o áudio) |
 | `FUNDO_GLOB` | `av paulista*.mp4` | Padrão dos vídeos de fundo na raiz do projeto |

@@ -17,9 +17,10 @@ def gerar_narracao(cfg: Config, texto: str, destino: Path) -> tuple[Path, dict]:
     O alinhamento traz characters / character_start_times_seconds /
     character_end_times_seconds, usados para sincronizar as legendas.
     """
-    print(f"[audio] Gerando narração com a voz {cfg.voice_id}...")
+    voz = cfg.voice_id_usa if cfg.publico == "usa" else cfg.voice_id
+    print(f"[audio] Gerando narração com a voz {voz}...")
     resp = requests.post(
-        f"{API_BASE}/text-to-speech/{cfg.voice_id}/with-timestamps",
+        f"{API_BASE}/text-to-speech/{voz}/with-timestamps",
         params={"output_format": "mp3_44100_128"},
         headers={
             "xi-api-key": cfg.elevenlabs_api_key,

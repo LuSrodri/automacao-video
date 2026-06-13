@@ -62,12 +62,19 @@ def coletar_tweets(cfg: Config) -> list[dict]:
         "from_date": inicio.strftime("%Y-%m-%d"),
         "to_date": agora.strftime("%Y-%m-%d"),
     }
+    foco_usa = (
+        "\nPriorize o que está dominando a conversa NOS ESTADOS UNIDOS: "
+        "contas americanas, empresas americanas e notícias com impacto no "
+        "mercado dos EUA."
+        if cfg.publico == "usa"
+        else ""
+    )
     if cfg.contas:
         ferramenta["allowed_x_handles"] = cfg.contas
-        instrucoes = INSTRUCOES_CONTAS + FORMATO_RESPOSTA
+        instrucoes = INSTRUCOES_CONTAS + foco_usa + FORMATO_RESPOSTA
         print(f"[x] Buscando posts de {len(cfg.contas)} contas via X Search da xAI...")
     else:
-        instrucoes = INSTRUCOES_TRENDING + FORMATO_RESPOSTA
+        instrucoes = INSTRUCOES_TRENDING + foco_usa + FORMATO_RESPOSTA
         print("[x] Buscando as threads de tech/AI mais discutidas do dia...")
 
     resposta = cliente.responses.create(

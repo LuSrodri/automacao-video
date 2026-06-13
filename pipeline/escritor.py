@@ -19,20 +19,24 @@ ESQUEMA_ROTEIRO = {
             },
             "titulo": {
                 "type": "string",
-                "description": "Título chamativo do vídeo, em português, até 90 caracteres.",
+                "description": (
+                    "Título chamativo do vídeo, no idioma definido nas "
+                    "instruções, até 90 caracteres."
+                ),
             },
             "descricao": {
                 "type": "string",
                 "description": (
-                    "Descrição do vídeo em português, 1 a 3 frases em um único "
-                    "parágrafo, com hashtags relevantes no final."
+                    "Descrição do vídeo no idioma definido nas instruções, "
+                    "1 a 3 frases em um único parágrafo, com hashtags "
+                    "relevantes no final."
                 ),
             },
             "texto_video": {
                 "type": "string",
                 "description": (
-                    "Texto/roteiro narrado do vídeo, em português, conciso e "
-                    "dinâmico, adequado a um vídeo curto."
+                    "Texto/roteiro narrado do vídeo, no idioma definido nas "
+                    "instruções, conciso e dinâmico, adequado a um vídeo curto."
                 ),
             },
             "imagens": {
@@ -73,13 +77,26 @@ ESQUEMA_ROTEIRO = {
     },
 }
 
+FOCO_BRASIL = """\
+1. Escolher O TEMA MAIS RELEVANTE do dia (maior impacto/novidade para o público tech),
+englobando preferencialmente o Brasil, Estados Unidos e Europa.
+2. Criar título, descrição e o texto do vídeo, todos em português do Brasil.\
+"""
+
+FOCO_USA = """\
+1. Escolher O TEMA MAIS RELEVANTE do dia para o público de tecnologia dos
+ESTADOS UNIDOS: priorize notícias de empresas americanas ou com forte impacto
+no mercado e na cultura tech dos EUA.
+2. Criar título, descrição e o texto do vídeo, todos em INGLÊS AMERICANO,
+escritos 100% para o público dos EUA: tom, referências, unidades e hashtags
+americanas. Nada de português.\
+"""
+
 INSTRUCOES = """\
 Você é roteirista de vídeos curtos sobre tecnologia e inteligência artificial.
 
 Você receberá posts recentes do X (Twitter). Sua tarefa:
-1. Escolher O TEMA MAIS RELEVANTE do dia (maior impacto/novidade para o público tech),
-englobando preferencialmente o Brasil, Estados Unidos e Europa.
-2. Criar título, descrição e o texto do vídeo, todos em português do Brasil.
+{foco}
 3. O texto do vídeo deve ser narrável em cerca de {duracao} segundos
    (aproximadamente {palavras} palavras): direto, empolgante, sem enrolação,
    explicando a notícia, o contexto e por que ela importa.
@@ -118,6 +135,7 @@ def gerar_roteiro(cfg: Config, tweets: list[dict]) -> dict:
     ]
     conteudo = "Posts coletados hoje:\n" + "\n".join(linhas)
     instrucoes = INSTRUCOES.format(
+        foco=FOCO_USA if cfg.publico == "usa" else FOCO_BRASIL,
         duracao=cfg.video_duracao,
         palavras=int(cfg.video_duracao * 2.5),
     )

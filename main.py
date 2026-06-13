@@ -11,6 +11,7 @@ Fluxo:
 6. O resultado é salvo em output/ e registrado em videos.txt.
 """
 
+import argparse
 import json
 import re
 import unicodedata
@@ -54,7 +55,18 @@ def _sobreposicoes(texto_video: str, imagens: list[dict]) -> list[dict]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Gera o vídeo de notícias do dia.")
+    parser.add_argument(
+        "-usa",
+        action="store_true",
+        help="Conteúdo 100%% dedicado ao público americano (tudo em inglês)",
+    )
+    args = parser.parse_args()
+
     cfg = carregar_config()
+    if args.usa:
+        cfg.publico = "usa"
+        print("[config] Modo USA: conteúdo em inglês para o público americano")
 
     tweets = coletar_tweets(cfg)
     roteiro = gerar_roteiro(cfg, tweets)

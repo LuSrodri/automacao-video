@@ -19,9 +19,11 @@ class Config:
     text_model: str = "gpt-5.4-mini"
     search_model: str = "grok-4.3"
     voice_id: str = "czvzJwIVS2asEKnthV40"
+    voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
     tts_model: str = "eleven_v3"
     video_duracao: int = 60
     janela_horas: int = 24
+    publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
     output_dir: Path = field(default_factory=lambda: RAIZ / "output")
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
@@ -67,6 +69,7 @@ def carregar_config() -> Config:
         text_model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"),
         search_model=os.getenv("SEARCH_MODEL", "grok-4.3"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
+        voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
         video_duracao=int(os.getenv("VIDEO_DURACAO", "60")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
