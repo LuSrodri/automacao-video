@@ -15,7 +15,7 @@ ESQUEMA_ROTEIRO = {
         "properties": {
             "tema": {
                 "type": "string",
-                "description": "O tema do dia escolhido entre as notícias.",
+                "description": "O tema do dia escolhido entre as trends mais comentadas pelos usuários.",
             },
             "titulo": {
                 "type": "string",
@@ -41,8 +41,8 @@ ESQUEMA_ROTEIRO = {
             },
             "imagens": {
                 "type": "array",
-                "minItems": 3,
-                "maxItems": 5,
+                "minItems": 8,
+                "maxItems": 12,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -69,7 +69,7 @@ ESQUEMA_ROTEIRO = {
                     "required": ["consulta", "trecho"],
                 },
                 "description": (
-                    "3 a 5 imagens-chave sincronizadas com a narração do vídeo."
+                    "8 a 12 imagens-chave sincronizadas com a narração do vídeo."
                 ),
             },
         },
@@ -78,14 +78,14 @@ ESQUEMA_ROTEIRO = {
 }
 
 FOCO_BRASIL = """\
-1. Escolher O TEMA MAIS RELEVANTE do dia (maior impacto/novidade para o público tech),
-englobando preferencialmente o Brasil, Estados Unidos e Europa.
+1. Escolher A TREND MAIS COMENTADA PELOS USUÁRIOS do dia (maior impacto/polêmica/interesse para o público tech/AI),
+com foco em temas relevantes para o público brasileiro.
 2. Criar título, descrição e o texto do vídeo, todos em português do Brasil.\
 """
 
 FOCO_USA = """\
-1. Escolher O TEMA MAIS RELEVANTE do dia para o público de tecnologia dos
-ESTADOS UNIDOS: priorize notícias de empresas americanas ou com forte impacto
+1. Escolher A TREND MAIS COMENTADA PELOS USUÁRIOS do dia para o público de tecnologia dos
+ESTADOS UNIDOS: priorize forte impacto/polêmica/interesse, relevância para o público americano, e temas atuais
 no mercado e na cultura tech dos EUA.
 2. Criar título, descrição e o texto do vídeo, todos em INGLÊS AMERICANO,
 escritos 100% para o público dos EUA: tom, referências, unidades e hashtags
@@ -93,14 +93,15 @@ americanas. Nada de português.\
 """
 
 INSTRUCOES = """\
-Você é roteirista de vídeos curtos sobre tecnologia e inteligência artificial.
+Você é roteirista de vídeos curtos sobre trends do dia de tecnologia e inteligência artificial.
 
 Você receberá posts recentes do X (Twitter). Sua tarefa:
 {foco}
 3. O texto do vídeo deve ser narrável em cerca de {duracao} segundos
    (aproximadamente {palavras} palavras): direto, empolgante, sem enrolação,
    explicando a notícia, o contexto e por que ela importa.
-4. Definir de 3 a 5 imagens-chave. REGRAS DAS IMAGENS:
+4. Definir de 8 a 12 imagens-chave (use bastante: quanto mais momentos
+   ilustrados, mais dinâmico fica o vídeo). REGRAS DAS IMAGENS:
    - As imagens serão buscadas na web (fotos e logos REAIS, nada gerado por
      IA). Em "consulta", escreva a busca em inglês que encontra a melhor
      imagem para aquele momento: logo oficial da empresa, foto da figura
@@ -116,8 +117,8 @@ Você receberá posts recentes do X (Twitter). Sua tarefa:
 5. Deixe a narração expressiva inserindo audio tags do ElevenLabs v3 no
    texto_video: palavras em inglês entre colchetes, posicionadas imediatamente
    antes do trecho que modificam. Exemplos: [excited], [curious], [whispers],
-   [surprised], [sighs], [laughs], [clears throat], [short pause]. Use de 3 a
-   6 tags por roteiro, variando a emoção conforme o conteúdo (elas não são
+   [surprised], [sighs], [laughs], [clears throat], [short pause]. Use de 8 a
+   12 tags por roteiro, variando a emoção conforme o conteúdo (elas não são
    faladas nem aparecem nas legendas). A pontuação também guia a entrega:
    reticências para suspense, MAIÚSCULAS para ênfase pontual.
 6. A narração deve ter ganchos com opiniões e perguntas para o público, para aumentar o engajamento e reações.

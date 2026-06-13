@@ -1,8 +1,8 @@
 """Geração das legendas sincronizadas (formato ASS, queimadas pelo ffmpeg).
 
-No período inicial (primeira frase da narração) a legenda aparece
-centralizada na tela; no restante do vídeo, centralizada na parte inferior.
-Tipografia Barlow, texto preto com borda branca.
+Quando nenhuma imagem está na tela, a legenda aparece centralizada no meio;
+quando há imagem, ela desce para a parte inferior (a 20% de altura), liberando
+o centro para a imagem. Tipografia Barlow, texto preto com borda branca.
 """
 
 import re
@@ -103,12 +103,9 @@ def _agrupar(palavras: list[dict]) -> list[dict]:
     return eventos
 
 
-def _fim_primeira_frase(palavras: list[dict]) -> float:
-    """Momento em que a primeira frase termina (vira o ponto de troca de estilo)."""
-    for p in palavras:
-        if p["texto"].rstrip('"').rstrip("'").endswith((".", "!", "?", "…")):
-            return p["fim"]
-    return palavras[0]["fim"] if palavras else 0.0
+def _tem_imagem(ini: float, fim: float, intervalos: list[tuple[float, float]]) -> bool:
+    """Indica se alguma imagem está na tela durante a legenda (ini, fim)."""
+    return any(ini < fi and fim > ii for ii, fi in intervalos)
 
 
 def _ts(segundos: float) -> str:
@@ -126,11 +123,16 @@ def gerar_legendas(
     largura: int,
     altura: int,
     destino: Path,
-) -> tuple[Path, float]:
-    """Gera o .ass e devolve (caminho, instante em que a legenda central acaba)."""
+    intervalos_imagens: list[tuple[float, float]] | None = None,
+) -> Path:
+    """Gera o .ass das legendas sincronizadas e devolve seu caminho.
+
+    `intervalos_imagens`: janelas (início, fim) em que há imagem na tela; nesses
+    trechos a legenda vai para a parte inferior, nos demais fica centralizada.
+    """
+    intervalos = intervalos_imagens or []
     palavras = _palavras_com_tempos(texto, alinhamento, dur_total)
     eventos = _agrupar(palavras)
-    troca = _fim_primeira_frase(palavras)
 
     tam_centro = max(48, round(largura * 0.125))
     tam_inferior = max(32, round(largura * 0.085))
@@ -144,7 +146,7 @@ def gerar_legendas(
 
     linhas = []
     for ev in eventos:
-        central = ev["inicio"] < troca
+        central = not _tem_imagem(ev["inicio"], ev["fim"], intervalos)
         estilo = "Centro" if central else "Inferior"
         texto_ev = ev["texto"].replace("{", "(").replace("}", ")")
         if central:
@@ -155,4 +157,4 @@ def gerar_legendas(
 
     destino.write_text(corpo + "\n".join(linhas) + "\n", encoding="utf-8")
     print(f"[legendas] {len(eventos)} legendas geradas em {destino.name}")
-    return destino, troca
+    return destino

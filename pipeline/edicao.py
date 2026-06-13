@@ -1,23 +1,21 @@
 """Montagem final do vídeo com ffmpeg.
 
-O vídeo de fundo (mudo, em loop) recebe a narração TTS como trilha. Cada
-imagem-chave entra centralizada ocupando toda a largura, com zoom-in lento,
-enquanto o fundo fica borrado.
+O fundo é uma tela branca; a narração TTS entra como trilha. Cada imagem-chave
+entra centralizada ocupando toda a largura, com zoom-in lento, sincronizada com
+o trecho da narração a que se refere.
 """
 
-import random
-import shutil
 import subprocess
+import shutil
 from pathlib import Path
 
 from .config import RAIZ
 
 FPS = 30
 ZOOM_TOTAL = 0.16  # quanto a imagem cresce ao longo da exibição
-BLUR_SIGMA = 18
 MIN_EXIBICAO = 2.0  # segundos mínimos de exibição de cada imagem
 FOLGA = 0.25  # intervalo entre uma imagem e a seguinte
-FADE = 0.35  # duração do fade de entrada/saída (imagem e blur)
+FADE = 0.35  # duração do fade de entrada/saída da imagem
 
 
 def _exigir_ffmpeg() -> None:
@@ -65,49 +63,19 @@ def _dimensoes(imagem: Path) -> tuple[int, int]:
     return int(valores[0]), int(valores[1])
 
 
-def dimensoes_video(video: Path) -> tuple[int, int]:
-    """Largura e altura do primeiro stream de vídeo."""
-    _exigir_ffmpeg()
-    return _dimensoes(video)
-
-
-def _duracao_video(video: Path) -> float:
-    saida = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "csv=p=0",
-            str(video),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
+def _ordenar(sobreposicoes: list[dict]) -> list[dict]:
+    """Ordena as imagens pelo ponto da narração em que cada uma entra."""
+    return sorted(
+        sobreposicoes,
+        key=lambda s: (s.get("inicio_frac") is None, s.get("inicio_frac") or 0.0),
     )
-    return float(saida.stdout.strip())
-
-
-def _sequencia_fundos(fundos: list[Path], duracao_alvo: float) -> list[Path]:
-    """Sorteia fundos até cobrir a duração, sem repetir o mesmo em sequência."""
-    sequencia: list[Path] = []
-    total = 0.0
-    anterior: Path | None = None
-    duracoes = {f: _duracao_video(f) for f in fundos}
-    while total < duracao_alvo:
-        opcoes = [f for f in fundos if f != anterior] or fundos
-        escolha = random.choice(opcoes)
-        sequencia.append(escolha)
-        total += duracoes[escolha]
-        anterior = escolha
-    return sequencia
 
 
 def _calcular_janelas(
-    sobreposicoes: list[dict], duracao: float, inicio_minimo: float = 0.0
+    sobreposicoes: list[dict], duracao: float
 ) -> list[tuple[float, float] | None]:
     """Converte frações da narração em janelas (início, fim) em segundos.
 
-    `inicio_minimo`: nenhuma imagem aparece antes desse instante (período da
-    legenda de abertura); a primeira imagem entra logo depois dele.
     Devolve uma lista alinhada com `sobreposicoes`; None indica que não
     sobrou espaço no vídeo para exibir aquela imagem.
     """
@@ -120,19 +88,14 @@ def _calcular_janelas(
         else:
             ini = s["inicio_frac"] * duracao
             fim = max(s["fim_frac"] * duracao, ini + MIN_EXIBICAO)
-        if i == 0 and inicio_minimo > 0:
-            # A primeira imagem entra logo após a legenda de abertura
-            ini = inicio_minimo + 0.2
-            fim = max(fim, ini + MIN_EXIBICAO)
         janelas.append((ini, fim))
 
     # Remove sobreposições entre janelas consecutivas (a lista já chega
     # ordenada pelo início da narração)
     ajustadas: list[tuple[float, float] | None] = []
     fim_anterior = 0.0
-    piso = max(0.2, inicio_minimo + 0.2)
     for ini, fim in janelas:
-        ini = max(piso, ini, fim_anterior + FOLGA)
+        ini = max(0.0, ini, fim_anterior + FOLGA)
         fim = min(max(fim, ini + MIN_EXIBICAO), duracao - 0.1)
         if fim - ini < 1.0:
             # Sem espaço restante no vídeo para esta imagem
@@ -143,89 +106,54 @@ def _calcular_janelas(
     return ajustadas
 
 
+def intervalos_imagens(
+    sobreposicoes: list[dict], duracao: float
+) -> list[tuple[float, float]]:
+    """Janelas (início, fim) em que alguma imagem está na tela.
+
+    Usado pelas legendas para decidir a posição de cada trecho (centralizado
+    quando não há imagem; mais abaixo quando há). Determinístico: produz as
+    mesmas janelas que `montar_video` usa para posicionar as imagens.
+    """
+    janelas = _calcular_janelas(_ordenar(sobreposicoes), duracao)
+    return [j for j in janelas if j is not None]
+
+
 def _caminho_filtro(caminho: Path) -> str:
     """Escapa um caminho Windows para uso dentro de filter_complex."""
     return str(caminho).replace("\\", "/").replace(":", "\\:")
 
 
 def montar_video(
-    fundos: list[Path] | Path,
     narracao: Path,
     sobreposicoes: list[dict],
     destino: Path,
+    largura: int,
+    altura: int,
     legendas: Path | None = None,
-    inicio_imagens: float = 0.0,
 ) -> Path:
-    """Monta o vídeo final.
+    """Monta o vídeo final sobre um fundo branco.
 
-    `fundos`: vídeos de fundo disponíveis; são sorteados e intercalados
-    aleatoriamente (sem repetição consecutiva) até cobrir a narração.
     `sobreposicoes`: [{"caminho": Path, "inicio_frac": float|None,
     "fim_frac": float|None}, ...] — frações (0 a 1) da narração em que a
     imagem entra e sai; None usa distribuição uniforme.
     """
     _exigir_ffmpeg()
 
-    if isinstance(fundos, Path):
-        fundos = [fundos]
     duracao = duracao_audio(narracao) + 0.6
-    sequencia = _sequencia_fundos(fundos, duracao)
-    print(
-        "[edicao] Sequência de fundos: "
-        + " -> ".join(f.stem for f in sequencia)
-    )
-    largura = int(_probe(sequencia[0], "stream=width"))
-    altura = int(_probe(sequencia[0], "stream=height"))
 
     # Mantém janela e imagem pareadas: ordena pelo ponto da narração em que
     # cada imagem entra (sem sincronização conhecida vai para o final)
-    sobreposicoes = sorted(
-        sobreposicoes,
-        key=lambda s: (s.get("inicio_frac") is None, s.get("inicio_frac") or 0.0),
-    )
-    janelas = _calcular_janelas(sobreposicoes, duracao, inicio_imagens)
+    sobreposicoes = _ordenar(sobreposicoes)
+    janelas = _calcular_janelas(sobreposicoes, duracao)
     pares = [(s, j) for s, j in zip(sobreposicoes, janelas) if j is not None]
     descartadas = len(sobreposicoes) - len(pares)
     if descartadas:
         print(f"[edicao] {descartadas} imagem(ns) sem espaço no vídeo, descartada(s)")
 
-    n_fundos = len(sequencia)
-    filtros = [
-        f"[{k}:v]scale={largura}:{altura}:force_original_aspect_ratio=increase,"
-        f"crop={largura}:{altura},fps={FPS}[f{k}]"
-        for k in range(n_fundos)
-    ]
-    filtros.append(
-        "".join(f"[f{k}]" for k in range(n_fundos))
-        + f"concat=n={n_fundos}:v=1:a=0[base]"
-    )
-
-    if pares:
-        # Fundo borrado entra e sai em fade junto com cada imagem
-        filtros.append("[base]split=2[nitido][p_blur]")
-        filtros.append(
-            f"[p_blur]gblur=sigma={BLUR_SIGMA},split={len(pares)}"
-            + "".join(f"[bw{i}]" for i in range(len(pares)))
-        )
-        corrente = "nitido"
-        for i, (_, (ini, fim)) in enumerate(pares):
-            ini_b = max(0.0, ini - FADE)
-            fim_b = min(duracao, fim + FADE)
-            dur_b = fim_b - ini_b
-            filtros.append(
-                f"[bw{i}]trim=start={ini_b:.2f}:end={fim_b:.2f},"
-                f"setpts=PTS-STARTPTS,format=rgba,"
-                f"fade=t=in:st=0:d={FADE}:alpha=1,"
-                f"fade=t=out:st={dur_b - FADE:.2f}:d={FADE}:alpha=1,"
-                f"setpts=PTS+{ini_b:.2f}/TB[blur{i}]"
-            )
-            filtros.append(
-                f"[{corrente}][blur{i}]overlay=0:0:eof_action=pass"
-                f":enable='between(t,{ini_b:.2f},{fim_b:.2f})'[cb{i}]"
-            )
-            corrente = f"cb{i}"
-    else:
-        corrente = "base"
+    # Fundo branco gerado pelo ffmpeg (entrada 0); narração é a entrada 1.
+    filtros = [f"[0:v]fps={FPS},format=rgba[base]"]
+    corrente = "base"
 
     fator_pad = 1 + ZOOM_TOTAL
     for i, (s, (ini, fim)) in enumerate(pares):
@@ -238,7 +166,7 @@ def montar_video(
         # Sobre-amostragem (4x) + renderização em 2x com downscale final
         # eliminam o flicker do zoompan.
         filtros.append(
-            f"[{i + n_fundos + 1}:v]format=rgba,scale={largura * 4}:-2,"
+            f"[{i + 2}:v]format=rgba,scale={largura * 4}:-2,"
             f"pad=w=iw*{fator_pad}:h=ih*{fator_pad}"
             f":x=(ow-iw)/2:y=(oh-ih)/2:color=black@0.0,"
             f"zoompan=z='min(1+{ZOOM_TOTAL}*on/{quadros},{fator_pad})'"
@@ -263,16 +191,18 @@ def montar_video(
         filtros.append(f"[{corrente}]{filtro_ass}[vleg]")
         corrente = "vleg"
 
-    comando = ["ffmpeg", "-y"]
-    for video in sequencia:
-        comando += ["-i", str(video)]
-    comando += ["-i", str(narracao)]
+    comando = [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", f"color=c=white:s={largura}x{altura}:r={FPS}:d={duracao:.2f}",
+        "-i", str(narracao),
+    ]
     for s, _ in pares:
         comando += ["-i", str(s["caminho"])]
     comando += [
         "-filter_complex", ";".join(filtros),
         "-map", f"[{corrente}]",
-        "-map", f"{n_fundos}:a",
+        "-map", "1:a",
         "-t", f"{duracao:.2f}",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",

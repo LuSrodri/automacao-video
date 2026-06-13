@@ -15,7 +15,8 @@ class Config:
     xai_api_key: str
     elevenlabs_api_key: str
     contas: list[str]
-    videos_fundo: list[Path]
+    video_largura: int = 1080
+    video_altura: int = 1920
     text_model: str = "gpt-5.4-mini"
     search_model: str = "grok-4.3"
     voice_id: str = "czvzJwIVS2asEKnthV40"
@@ -52,20 +53,13 @@ def carregar_config() -> Config:
     if len(contas) > 20:
         raise SystemExit("X_ACCOUNTS aceita no máximo 20 contas (limite da X Search).")
 
-    fundo_glob = os.getenv("FUNDO_GLOB", "av paulista*.mp4")
-    videos_fundo = sorted(RAIZ.glob(fundo_glob))
-    if not videos_fundo:
-        raise SystemExit(
-            f"Nenhum vídeo de fundo encontrado com o padrão '{fundo_glob}' "
-            "na raiz do projeto."
-        )
-
     cfg = Config(
         openai_api_key=os.environ["OPENAI_API_KEY"],
         xai_api_key=os.environ["XAI_API_KEY"],
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
         contas=contas,
-        videos_fundo=videos_fundo,
+        video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
+        video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
         text_model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"),
         search_model=os.getenv("SEARCH_MODEL", "grok-4.3"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),

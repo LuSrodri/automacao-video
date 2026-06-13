@@ -14,7 +14,7 @@ from openai import OpenAI
 from .config import Config
 
 INSTRUCOES_CONTAS = """\
-Use a busca no X para listar os posts mais relevantes sobre tecnologia e
+Use a busca no X para listar os posts e trends mais relevantes sobre tecnologia e
 inteligência artificial publicados por contas de alto engajamento (sendo em português ou inglês)
 ou temas que estão em alta no momento.\
 """
@@ -65,7 +65,7 @@ def coletar_tweets(cfg: Config) -> list[dict]:
     foco_usa = (
         "\nPriorize o que está dominando a conversa NOS ESTADOS UNIDOS: "
         "contas americanas, empresas americanas e notícias com impacto no "
-        "mercado dos EUA."
+        "EUA."
         if cfg.publico == "usa"
         else ""
     )

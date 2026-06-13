@@ -3,11 +3,11 @@
 Fluxo:
 1. Coleta posts das últimas 24h no X (X Search da xAI).
 2. GPT escolhe o tema do dia e gera título, descrição e texto do vídeo (~60s).
-3. Web Search da xAI busca de 3 a 5 imagens-chave reais na web.
+3. Web Search da xAI busca de 3 a 12 imagens-chave reais na web.
 4. ElevenLabs narra o texto (TTS).
-5. ffmpeg monta: vídeos de fundo intercalados aleatoriamente (mudos) +
-   narração + imagens centralizadas em largura total, com zoom-in lento e
-   fundo borrado + legendas sincronizadas.
+5. ffmpeg monta: fundo branco + narração + imagens centralizadas em largura
+   total, com zoom-in lento + legendas sincronizadas (centralizadas quando não
+   há imagem, na parte inferior quando há).
 6. O resultado é salvo em output/ e registrado em videos.txt.
 """
 
@@ -20,7 +20,7 @@ from datetime import datetime
 from pipeline.audio import gerar_narracao
 from pipeline.busca_imagens import buscar_imagens
 from pipeline.config import carregar_config
-from pipeline.edicao import dimensoes_video, duracao_audio, montar_video
+from pipeline.edicao import duracao_audio, intervalos_imagens, montar_video
 from pipeline.escritor import gerar_roteiro
 from pipeline.legendas import gerar_legendas
 from pipeline.registro import registrar
@@ -82,23 +82,27 @@ def main() -> None:
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
     )
 
-    largura, altura = dimensoes_video(cfg.videos_fundo[0])
-    legendas, troca = gerar_legendas(
+    largura, altura = cfg.video_largura, cfg.video_altura
+    sobreposicoes = _sobreposicoes(roteiro["texto_video"], imagens)
+    duracao = duracao_audio(narracao) + 0.6
+
+    legendas = gerar_legendas(
         roteiro["texto_video"],
         alinhamento,
-        duracao_audio(narracao) + 0.6,
+        duracao,
         largura,
         altura,
         pasta / "legendas.ass",
+        intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
     )
 
     video_final = montar_video(
-        cfg.videos_fundo,
         narracao,
-        _sobreposicoes(roteiro["texto_video"], imagens),
+        sobreposicoes,
         pasta / "video_final.mp4",
+        largura,
+        altura,
         legendas=legendas,
-        inicio_imagens=troca,
     )
 
     registrar(cfg, video_final, roteiro["titulo"], roteiro["descricao"])

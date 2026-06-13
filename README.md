@@ -4,16 +4,16 @@ Pipeline em Python que transforma as notícias de tech/AI mais quentes do X (Twi
 
 1. **Coleta** as threads de tech/AI mais discutidas das últimas 24h no X usando a **X Search da xAI** (com `from_date`/`to_date`). Opcionalmente restringe a contas específicas.
 2. **GPT 5.4 mini** escolhe o tema do dia e gera título, descrição e o texto do vídeo (~60 segundos de narração).
-3. **Web Search da xAI** (modo image search) encontra de **3 a 5 imagens reais** na web — logos, fotos de figuras públicas, produtos — nada gerado por IA.
+3. **Web Search da xAI** (modo image search) encontra de **3 a 12 imagens reais** na web — logos, fotos de figuras públicas, produtos — nada gerado por IA.
 4. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere). O roteiro inclui **audio tags** (`[excited]`, `[whispers]`, `[sighs]`…) que ditam o tom e a emoção da voz — elas não são faladas nem aparecem nas legendas.
-5. **ffmpeg** monta o vídeo: os **vídeos de fundo pré-gravados são intercalados em ordem aleatória** (sem repetir o mesmo em sequência, mudos) até cobrir a narração; cada imagem-chave entra **centralizada ocupando toda a largura**, com **zoom-in lento**, enquanto o **fundo fica borrado**; as imagens aparecem sincronizadas com o trecho da narração a que se referem. **Legendas** sincronizadas palavra a palavra são queimadas no vídeo: durante a primeira frase aparecem centralizadas na tela, depois centralizadas na parte inferior — fonte Barlow, texto preto com borda branca.
+5. **ffmpeg** monta o vídeo sobre um **fundo branco**: cada imagem-chave entra **centralizada ocupando toda a largura**, com **zoom-in lento**, sincronizada com o trecho da narração a que se refere (podem aparecer já no início). **Legendas** sincronizadas palavra a palavra são queimadas no vídeo: quando **não há imagem na tela** ficam **centralizadas no meio**; quando **há imagem**, descem para a **parte inferior** (a 20% de altura) — fonte Barlow, texto preto com borda branca.
 6. O `.mp4` final vai para `output/` e a entrada (arquivo + título + descrição) é registrada em `videos.txt`.
 
 ## Pré-requisitos
 
 - **Python 3.10+**
 - **ffmpeg** no PATH. No Windows: `winget install Gyan.FFmpeg` (reabra o terminal depois)
-- **Vídeos de fundo** na raiz do projeto, casando com o padrão `FUNDO_GLOB` (padrão: `av paulista*.mp4`). Ideal: verticais 9:16; eles são sorteados a cada execução e rodam em loop, sem áudio.
+- O fundo é uma tela branca gerada pelo próprio ffmpeg; a resolução (padrão vertical 9:16, `1080x1920`) é configurável por `VIDEO_LARGURA`/`VIDEO_ALTURA`.
 - Chaves de API (três):
   - **OpenAI** — em [platform.openai.com/api-keys](https://platform.openai.com/api-keys) (roteiro com `gpt-5.4-mini`).
   - **xAI** — em [console.x.ai](https://console.x.ai) (coleta de posts via X Search + busca de imagens via Web Search).
@@ -30,9 +30,6 @@ pip install -r requirements.txt
 # 2. Crie o .env a partir do exemplo e preencha as três chaves
 Copy-Item .env.example .env
 notepad .env
-
-# 3. Coloque os vídeos de fundo na raiz do projeto
-#    (ex.: "av paulista 1.mp4", "av paulista 2.mp4", "av paulista 3.mp4")
 ```
 
 ## Rodando
@@ -70,15 +67,16 @@ output/
 | `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
 | `VIDEO_DURACAO` | `60` | Duração-alvo da narração em segundos (a duração final segue o áudio) |
-| `FUNDO_GLOB` | `av paulista*.mp4` | Padrão dos vídeos de fundo na raiz do projeto |
+| `VIDEO_LARGURA` | `1080` | Largura do vídeo (fundo branco) |
+| `VIDEO_ALTURA` | `1920` | Altura do vídeo (fundo branco) |
 
 ## Como funcionam as legendas
 
-A ElevenLabs retorna o tempo de fala de cada caractere (`/with-timestamps`), e o pipeline agrupa as palavras em legendas curtas (até ~18 caracteres), gravadas em `legendas.ass` e queimadas no vídeo pelo ffmpeg. A primeira frase da narração aparece **centralizada na tela** (gancho de abertura); as demais ficam **centralizadas na parte inferior**. O estilo é texto **preto com borda branca**, na fonte **Barlow** (em `fonts/Barlow-Bold.ttf`; a Futura é comercial e não pode ser distribuída com o projeto — se você a tiver licenciada, basta trocar o `Fontname` em `pipeline/legendas.py`). O arquivo `alinhamento.json` de cada execução guarda os timestamps para depuração.
+A ElevenLabs retorna o tempo de fala de cada caractere (`/with-timestamps`), e o pipeline agrupa as palavras em legendas curtas (até ~18 caracteres), gravadas em `legendas.ass` e queimadas no vídeo pelo ffmpeg. Quando **não há imagem na tela**, a legenda aparece **centralizada no meio**; quando **há imagem**, desce para a **parte inferior** (a 20% de altura) para não cobri-la. O estilo é texto **preto com borda branca**, na fonte **Barlow** (em `fonts/Barlow-Bold.ttf`; a Futura é comercial e não pode ser distribuída com o projeto — se você a tiver licenciada, basta trocar o `Fontname` em `pipeline/legendas.py`). O arquivo `alinhamento.json` de cada execução guarda os timestamps para depuração.
 
 ## Como funcionam as imagens-chave
 
-O GPT define, para cada imagem, uma **consulta de busca** (ex.: "OpenAI official logo", "Sam Altman portrait photo") e o **trecho exato da narração** em que ela deve aparecer. Cada consulta vira uma chamada própria ao Grok (`web_search` com `enable_image_search`, em paralelo); as URLs diretas dos arquivos vêm nas *annotations* da resposta, com os embeds markdown como reserva. O pipeline tenta os candidatos em ordem, segue para a og:image quando a URL é uma página, e valida o conteúdo (JPG/PNG/WebP, tamanho mínimo). Na montagem, cada imagem entra na janela de tempo proporcional à posição do trecho na narração — centralizada, em largura total, com zoom-in de ~12% e o fundo borrado enquanto estiver na tela. Se uma busca não retornar imagem válida, ela é pulada e o vídeo segue com as demais.
+O GPT define, para cada imagem, uma **consulta de busca** (ex.: "OpenAI official logo", "Sam Altman portrait photo") e o **trecho exato da narração** em que ela deve aparecer. Cada consulta vira uma chamada própria ao Grok (`web_search` com `enable_image_search`, em paralelo); as URLs diretas dos arquivos vêm nas *annotations* da resposta, com os embeds markdown como reserva. O pipeline tenta os candidatos em ordem, segue para a og:image quando a URL é uma página, e valida o conteúdo (JPG/PNG/WebP, tamanho mínimo). Na montagem, cada imagem entra na janela de tempo proporcional à posição do trecho na narração — centralizada sobre o fundo branco, em largura total, com zoom-in de ~16%. Se uma busca não retornar imagem válida, ela é pulada e o vídeo segue com as demais.
 
 ## Custo estimado por vídeo
 
@@ -95,5 +93,4 @@ Em dinheiro de API (xAI + OpenAI), cada vídeo sai por **centavos**. O custo rea
 - **Erro na coleta de posts ou na busca de imagens** — verifique o saldo de créditos da xAI no [console.x.ai](https://console.x.ai).
 - **HTTP 401 na ElevenLabs** — chave errada no `.env`; **422** — texto/parâmetros inválidos (a mensagem detalha).
 - **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal.
-- **`Nenhum vídeo de fundo encontrado`** — confira os arquivos na raiz e o `FUNDO_GLOB`.
 - **Imagem-chave ruim/errada** — apague a pasta da execução e rode de novo; as buscas do Grok variam. Dá para editar `roteiro.json` e ajustar as consultas manualmente também.

@@ -135,7 +135,7 @@ def buscar_imagens(cfg: Config, itens: list[dict], pasta: Path) -> list[dict]:
     """Busca e baixa as imagens; devolve [{"caminho": Path, "trecho": str}, ...]."""
     cliente = OpenAI(api_key=cfg.xai_api_key, base_url="https://api.x.ai/v1")
 
-    itens = itens[:5]
+    itens = itens[:12]
     print(f"[imagens] Buscando {len(itens)} imagens na web via xAI (em paralelo)...")
     with ThreadPoolExecutor(max_workers=len(itens)) as executor:
         listas_urls = list(
