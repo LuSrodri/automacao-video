@@ -25,6 +25,12 @@ class Config:
     video_duracao: int = 60
     janela_horas: int = 24
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+    youtube_refresh_token: str = ""
+    youtube_refresh_token_usa: str = ""
+    youtube_privacy: str = "public"  # public | unlisted | private
+    youtube_category_id: str = "28"  # 28 = Science & Technology
     output_dir: Path = field(default_factory=lambda: RAIZ / "output")
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
@@ -67,6 +73,12 @@ def carregar_config() -> Config:
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
         video_duracao=int(os.getenv("VIDEO_DURACAO", "60")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
+        youtube_client_id=os.getenv("YOUTUBE_CLIENT_ID", ""),
+        youtube_client_secret=os.getenv("YOUTUBE_CLIENT_SECRET", ""),
+        youtube_refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN", ""),
+        youtube_refresh_token_usa=os.getenv("YOUTUBE_REFRESH_TOKEN_USA", ""),
+        youtube_privacy=os.getenv("YOUTUBE_PRIVACY", "public"),
+        youtube_category_id=os.getenv("YOUTUBE_CATEGORY_ID", "28"),
     )
 
     # A duração final segue o áudio da narração; este valor orienta o

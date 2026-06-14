@@ -25,6 +25,8 @@ from pipeline.escritor import gerar_roteiro
 from pipeline.legendas import gerar_legendas
 from pipeline.registro import registrar
 from pipeline.x_client import coletar_tweets
+from pipeline.youtube import autenticar as autenticar_youtube
+from pipeline.youtube import publicar as publicar_youtube
 
 
 def _slug(texto: str, limite: int = 40) -> str:
@@ -61,9 +63,23 @@ def main() -> None:
         action="store_true",
         help="Conteúdo 100%% dedicado ao público americano (tudo em inglês)",
     )
+    parser.add_argument(
+        "--auth-youtube",
+        action="store_true",
+        help="Autoriza o canal português e salva o refresh token no .env",
+    )
+    parser.add_argument(
+        "--auth-youtube-usa",
+        action="store_true",
+        help="Autoriza o canal inglês e salva YOUTUBE_REFRESH_TOKEN_USA no .env",
+    )
     args = parser.parse_args()
 
     cfg = carregar_config()
+    if args.auth_youtube or args.auth_youtube_usa:
+        autenticar_youtube(cfg, usa=args.auth_youtube_usa)
+        return
+
     if args.usa:
         cfg.publico = "usa"
         print("[config] Modo USA: conteúdo em inglês para o público americano")
@@ -107,10 +123,20 @@ def main() -> None:
 
     registrar(cfg, video_final, roteiro["titulo"], roteiro["descricao"])
 
+    url_youtube = publicar_youtube(
+        cfg,
+        video_final,
+        roteiro["titulo"],
+        roteiro["descricao"],
+        tags=roteiro.get("tags"),
+    )
+
     print("\nConcluído!")
     print(f"  Vídeo final: {video_final}")
     print(f"  Título: {roteiro['titulo']}")
     print(f"  Descrição: {roteiro['descricao']}")
+    if url_youtube:
+        print(f"  YouTube: {url_youtube}")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ Pipeline em Python que transforma as notícias de tech/AI mais quentes do X (Twi
 4. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere). O roteiro inclui **audio tags** (`[excited]`, `[whispers]`, `[sighs]`…) que ditam o tom e a emoção da voz — elas não são faladas nem aparecem nas legendas.
 5. **ffmpeg** monta o vídeo sobre um **fundo branco**: cada imagem-chave entra **centralizada ocupando toda a largura**, com **zoom-in lento**, sincronizada com o trecho da narração a que se refere (podem aparecer já no início). **Legendas** sincronizadas palavra a palavra são queimadas no vídeo: quando **não há imagem na tela** ficam **centralizadas no meio**; quando **há imagem**, descem para a **parte inferior** (a 20% de altura) — fonte Barlow, texto preto com borda branca.
 6. O `.mp4` final vai para `output/` e a entrada (arquivo + título + descrição) é registrada em `videos.txt`.
+7. **YouTube** — o vídeo é publicado automaticamente no canal (Data API v3), usando o título e a descrição do roteiro. Roda sempre, independente da flag `-usa`.
 
 ## Pré-requisitos
 
@@ -69,6 +70,42 @@ output/
 | `VIDEO_DURACAO` | `60` | Duração-alvo da narração em segundos (a duração final segue o áudio) |
 | `VIDEO_LARGURA` | `1080` | Largura do vídeo (fundo branco) |
 | `VIDEO_ALTURA` | `1920` | Altura do vídeo (fundo branco) |
+| `YOUTUBE_CLIENT_ID` | — | Client ID OAuth (Google Cloud, tipo "Desktop app") |
+| `YOUTUBE_CLIENT_SECRET` | — | Client secret OAuth |
+| `YOUTUBE_REFRESH_TOKEN` | — | Canal português; preenchido por `--auth-youtube` |
+| `YOUTUBE_REFRESH_TOKEN_USA` | — | Canal inglês (`-usa`); preenchido por `--auth-youtube-usa` |
+| `YOUTUBE_PRIVACY` | `public` | `public`, `unlisted` ou `private` |
+| `YOUTUBE_CATEGORY_ID` | `28` | Categoria do YouTube (28 = Science & Technology) |
+
+## Publicação automática no YouTube
+
+A publicação usa a **YouTube Data API v3** com OAuth e roda sempre, em qualquer modo (`-usa` ou não). Configure uma vez:
+
+1. No [Google Cloud Console](https://console.cloud.google.com), ative a **YouTube Data API v3** e crie uma credencial **OAuth client ID** do tipo **Desktop app**. Coloque o `client_id` e o `client_secret` no `.env` (`YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`).
+2. Gere o refresh token de longa duração (abre o navegador para você autorizar a conta do canal):
+
+   ```powershell
+   python main.py --auth-youtube
+   ```
+
+   O token é salvo automaticamente em `YOUTUBE_REFRESH_TOKEN` no `.env`. A partir daí, toda execução do `python main.py` publica o vídeo ao final.
+
+### Dois canais (português e inglês)
+
+Cada canal tem seu próprio refresh token. A seleção é automática pela flag `-usa`:
+
+- `python main.py` → publica no **canal português** (`YOUTUBE_REFRESH_TOKEN`)
+- `python main.py -usa` → publica no **canal inglês** (`YOUTUBE_REFRESH_TOKEN_USA`)
+
+Para autorizar o canal inglês (na tela do Google, escolha o canal em inglês):
+
+```powershell
+python main.py --auth-youtube-usa
+```
+
+Os dois usam o mesmo `YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` — muda só qual canal você seleciona no consentimento. Se você só configurar um dos tokens, o outro modo apenas avisa e pula a publicação (sem derrubar a execução).
+
+Se as credenciais estiverem ausentes ou o upload falhar (rede, quota, token), o erro é apenas avisado — o vídeo continua salvo em `output/` e registrado em `videos.txt`.
 
 ## Como funcionam as legendas
 
@@ -94,3 +131,6 @@ Em dinheiro de API (xAI + OpenAI), cada vídeo sai por **centavos**. O custo rea
 - **HTTP 401 na ElevenLabs** — chave errada no `.env`; **422** — texto/parâmetros inválidos (a mensagem detalha).
 - **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal.
 - **Imagem-chave ruim/errada** — apague a pasta da execução e rode de novo; as buscas do Grok variam. Dá para editar `roteiro.json` e ajustar as consultas manualmente também.
+- **Refresh token do YouTube expira em ~7 dias** — a tela de consentimento OAuth está em modo **Testing**. Publique-a (**OAuth consent screen > Publish app**) para o refresh token virar de longa duração, e rode `--auth-youtube` de novo.
+- **`refresh_token` não retornado no `--auth-youtube`** — o Google só o devolve no primeiro consentimento. Remova o acesso em [myaccount.google.com/permissions](https://myaccount.google.com/permissions) e rode de novo.
+- **Upload do YouTube falha com 403 (quota)** — cada upload consome 1.600 unidades; a cota padrão é 10.000/dia (~6 vídeos). Peça aumento no Google Cloud se precisar de mais.
