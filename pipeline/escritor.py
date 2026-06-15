@@ -114,20 +114,29 @@ Você receberá posts recentes do X (Twitter). Sua tarefa:
      deve aparecer (substring exata do texto_video, sem alterar nada), para
      sincronizar a imagem com a narração. Distribua as imagens ao longo de
      todo o texto, não concentre tudo no início.
-5. Deixe a narração expressiva inserindo audio tags do ElevenLabs v3 no
+5. EVITE REPETIR os temas dos vídeos recém-publicados no canal (listados no
+   fim da mensagem do usuário, se houver). Só repita um assunto já abordado se
+   houver NOVIDADE REAL e relevante — um fato novo, desdobramento ou virada que
+   ainda não foi contado nesses vídeos; nesse caso, deixe claro no roteiro o que
+   mudou. Sem novidade, escolha outra trend do dia.
+6. Deixe a narração expressiva inserindo audio tags do ElevenLabs v3 no
    texto_video: palavras em inglês entre colchetes, posicionadas imediatamente
    antes do trecho que modificam. Exemplos: [excited], [curious], [whispers],
    [surprised], [sighs], [laughs], [clears throat], [short pause]. Use de 8 a
    12 tags por roteiro, variando a emoção conforme o conteúdo (elas não são
    faladas nem aparecem nas legendas). A pontuação também guia a entrega:
    reticências para suspense, MAIÚSCULAS para ênfase pontual.
-6. A narração deve ter ganchos com opiniões e perguntas para o público, para aumentar o engajamento e reações.
+7. A narração deve ter ganchos com opiniões e perguntas para o público, para aumentar o engajamento e reações.
 
 Responda somente com o JSON pedido.\
 """
 
 
-def gerar_roteiro(cfg: Config, tweets: list[dict]) -> dict:
+def gerar_roteiro(
+    cfg: Config,
+    tweets: list[dict],
+    videos_recentes: list[dict] | None = None,
+) -> dict:
     cliente = OpenAI(api_key=cfg.openai_api_key)
 
     linhas = [
@@ -135,6 +144,17 @@ def gerar_roteiro(cfg: Config, tweets: list[dict]) -> dict:
         for t in tweets[:40]
     ]
     conteudo = "Posts coletados hoje:\n" + "\n".join(linhas)
+
+    if videos_recentes:
+        recentes = "\n".join(
+            f"- ({v.get('data') or '?'}) {v.get('titulo', '')}"
+            for v in videos_recentes
+        )
+        conteudo += (
+            "\n\nÚltimos vídeos já publicados neste canal (NÃO repita esses "
+            "temas, salvo novidade real):\n" + recentes
+        )
+
     instrucoes = INSTRUCOES.format(
         foco=FOCO_USA if cfg.publico == "usa" else FOCO_BRASIL,
         duracao=cfg.video_duracao,

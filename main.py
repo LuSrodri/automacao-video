@@ -2,7 +2,8 @@
 
 Fluxo:
 1. Coleta posts das últimas 24h no X (X Search da xAI).
-2. GPT escolhe o tema do dia e gera título, descrição e texto do vídeo (~60s).
+2. GPT escolhe o tema do dia e gera título, descrição e texto do vídeo (~60s),
+   evitando repetir os temas dos últimos vídeos do canal (lidos do YouTube).
 3. Web Search da xAI busca de 3 a 12 imagens-chave reais na web.
 4. ElevenLabs narra o texto (TTS).
 5. ffmpeg monta: fundo branco + narração + imagens centralizadas em largura
@@ -27,6 +28,7 @@ from pipeline.registro import registrar
 from pipeline.x_client import coletar_tweets
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
+from pipeline.youtube import ultimos_publicados
 
 
 def _slug(texto: str, limite: int = 40) -> str:
@@ -85,7 +87,8 @@ def main() -> None:
         print("[config] Modo USA: conteúdo em inglês para o público americano")
 
     tweets = coletar_tweets(cfg)
-    roteiro = gerar_roteiro(cfg, tweets)
+    recentes = ultimos_publicados(cfg, n=9)
+    roteiro = gerar_roteiro(cfg, tweets, videos_recentes=recentes)
 
     pasta = cfg.output_dir / f"{datetime.now():%Y-%m-%d}_{_slug(roteiro['titulo'])}"
     pasta.mkdir(parents=True, exist_ok=True)

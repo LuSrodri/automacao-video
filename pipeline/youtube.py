@@ -25,10 +25,30 @@ import requests
 
 from .config import RAIZ, Config
 
-ESCOPO = "https://www.googleapis.com/auth/youtube.upload"
+# Todos os escopos da YouTube Data API v3, conforme a lista oficial da Google
+# (https://developers.google.com/identity/protocols/oauth2/scopes#youtube).
+# Assim o mesmo refresh token serve para publicar, ler e gerenciar o canal,
+# sem reautenticar a cada feature nova.
+#
+# NÃO incluímos "youtubepartner-channel-audit": a Google exige que o token com
+# esse escopo seja revogado logo após a auditoria com o parceiro, o que é
+# incompatível com um refresh token de longa duração. Adicione manualmente só
+# se for fazer uma auditoria pontual.
+ESCOPO = " ".join(
+    [
+        "https://www.googleapis.com/auth/youtube",
+        "https://www.googleapis.com/auth/youtube.upload",
+        "https://www.googleapis.com/auth/youtube.readonly",
+        "https://www.googleapis.com/auth/youtube.force-ssl",
+        "https://www.googleapis.com/auth/youtube.channel-memberships.creator",
+        "https://www.googleapis.com/auth/youtubepartner",
+    ]
+)
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
+CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
+PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 ENV_PATH = RAIZ / ".env"
 
 
@@ -73,6 +93,63 @@ def _renovar_access_token(cfg: Config, refresh_token: str | None = None) -> str:
             f"{resp.text[:300]}"
         )
     return resp.json()["access_token"]
+
+
+def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
+    """Últimos `n` vídeos publicados no canal selecionado (BR ou USA).
+
+    Lê direto da YouTube Data API o canal correspondente ao refresh token de
+    ``cfg.publico``, devolvendo os vídeos do mais recente para o mais antigo.
+    Cada item traz ``titulo``, ``descricao`` e ``data`` (YYYY-MM-DD). Serve
+    para o roteirista evitar repetir temas recém-publicados. Em qualquer falha
+    (credenciais ausentes, API indisponível), devolve lista vazia sem derrubar
+    o fluxo — o render não depende de nenhum estado local.
+    """
+    refresh = _refresh_token_do_publico(cfg)
+    if not (cfg.youtube_client_id and cfg.youtube_client_secret and refresh):
+        return []
+
+    try:
+        token = _renovar_access_token(cfg, refresh)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        canal = requests.get(
+            CHANNELS_URL,
+            params={"part": "contentDetails", "mine": "true"},
+            headers=headers,
+            timeout=60,
+        )
+        if canal.status_code != 200:
+            raise RuntimeError(f"{canal.status_code}: {canal.text[:300]}")
+        itens = canal.json().get("items", [])
+        if not itens:
+            return []
+        uploads = itens[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+        lista = requests.get(
+            PLAYLIST_ITEMS_URL,
+            params={"part": "snippet", "playlistId": uploads, "maxResults": n},
+            headers=headers,
+            timeout=60,
+        )
+        if lista.status_code != 200:
+            raise RuntimeError(f"{lista.status_code}: {lista.text[:300]}")
+
+        videos = []
+        for item in lista.json().get("items", []):
+            snippet = item.get("snippet", {})
+            videos.append(
+                {
+                    "titulo": snippet.get("title", ""),
+                    "descricao": snippet.get("description", ""),
+                    "data": snippet.get("publishedAt", "")[:10],
+                }
+            )
+        print(f"[youtube] {len(videos)} vídeos recentes do canal carregados.")
+        return videos
+    except Exception as erro:  # noqa: BLE001 — leitura opcional não derruba o fluxo
+        print(f"[youtube] Não foi possível ler os últimos vídeos (ignorado): {erro}")
+        return []
 
 
 def publicar(

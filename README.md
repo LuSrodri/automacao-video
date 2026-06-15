@@ -3,7 +3,7 @@
 Pipeline em Python que transforma as notícias de tech/AI mais quentes do X (Twitter) em um vídeo vertical narrado, pronto para publicar:
 
 1. **Coleta** as threads de tech/AI mais discutidas das últimas 24h no X usando a **X Search da xAI** (com `from_date`/`to_date`). Opcionalmente restringe a contas específicas.
-2. **GPT 5.4 mini** escolhe o tema do dia e gera título, descrição e o texto do vídeo (~60 segundos de narração).
+2. **GPT 5.4 mini** escolhe o tema do dia e gera título, descrição e o texto do vídeo (~60 segundos de narração). Antes de decidir, recebe os **últimos 9 vídeos já publicados no canal selecionado** (lidos da própria YouTube Data API, então funciona em qualquer ambiente, sem depender de estado local) e é instruído a **não repetir tema recente** — só repete um assunto se houver novidade real, e nesse caso deixa claro o que mudou.
 3. **Web Search da xAI** (modo image search) encontra de **3 a 12 imagens reais** na web — logos, fotos de figuras públicas, produtos — nada gerado por IA.
 4. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere). O roteiro inclui **audio tags** (`[excited]`, `[whispers]`, `[sighs]`…) que ditam o tom e a emoção da voz — elas não são faladas nem aparecem nas legendas.
 5. **ffmpeg** monta o vídeo sobre um **fundo branco**: cada imagem-chave entra **centralizada ocupando toda a largura**, com **zoom-in lento**, sincronizada com o trecho da narração a que se refere (podem aparecer já no início). **Legendas** sincronizadas palavra a palavra são queimadas no vídeo: quando **não há imagem na tela** ficam **centralizadas no meio**; quando **há imagem**, descem para a **parte inferior** (a 20% de altura) — fonte Barlow, texto preto com borda branca.
@@ -79,7 +79,7 @@ output/
 
 ## Publicação automática no YouTube
 
-A publicação usa a **YouTube Data API v3** com OAuth e roda sempre, em qualquer modo (`-usa` ou não). Configure uma vez:
+A publicação usa a **YouTube Data API v3** com OAuth e roda sempre, em qualquer modo (`-usa` ou não). A autorização pede o conjunto completo de escopos do YouTube (publicar, ler e gerenciar), então o mesmo refresh token também é usado para ler os últimos vídeos do canal (passo 2 do fluxo) e cobre features futuras sem reautenticar. Configure uma vez:
 
 1. No [Google Cloud Console](https://console.cloud.google.com), ative a **YouTube Data API v3** e crie uma credencial **OAuth client ID** do tipo **Desktop app**. Coloque o `client_id` e o `client_secret` no `.env` (`YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`).
 2. Gere o refresh token de longa duração (abre o navegador para você autorizar a conta do canal):
@@ -133,4 +133,5 @@ Em dinheiro de API (xAI + OpenAI), cada vídeo sai por **centavos**. O custo rea
 - **Imagem-chave ruim/errada** — apague a pasta da execução e rode de novo; as buscas do Grok variam. Dá para editar `roteiro.json` e ajustar as consultas manualmente também.
 - **Refresh token do YouTube expira em ~7 dias** — a tela de consentimento OAuth está em modo **Testing**. Publique-a (**OAuth consent screen > Publish app**) para o refresh token virar de longa duração, e rode `--auth-youtube` de novo.
 - **`refresh_token` não retornado no `--auth-youtube`** — o Google só o devolve no primeiro consentimento. Remova o acesso em [myaccount.google.com/permissions](https://myaccount.google.com/permissions) e rode de novo.
+- **Não lê os últimos vídeos do canal (passo 2)** — tokens autorizados antes da ampliação de escopos só tinham `youtube.upload`. Rode `--auth-youtube` (e `--auth-youtube-usa`) de novo para reautorizar com o escopo de leitura. Sem isso, o vídeo ainda é gerado, só sem o filtro anti-repetição.
 - **Upload do YouTube falha com 403 (quota)** — cada upload consome 1.600 unidades; a cota padrão é 10.000/dia (~6 vídeos). Peça aumento no Google Cloud se precisar de mais.
