@@ -1,29 +1,23 @@
-"""Busca das imagens-chave reais na web via Web Search (Image Search) da xAI.
+"""Busca das imagens-chave reais na web via Brave Image Search API.
 
-Cada assunto vira uma chamada própria ao grok com `enable_image_search`
-(rodam em paralelo): pedidos pequenos fazem o modelo realmente usar a
-ferramenta. As URLs diretas dos arquivos vêm nas annotations (url_citation)
-da resposta; os embeds markdown do texto entram como candidatos extras.
+Cada assunto vira uma consulta à API do Brave
+(https://api.search.brave.com/res/v1/images/search). De cada resultado
+pegamos a URL original em alta resolução (`properties.url`) e, como reserva,
+a miniatura proxied (`thumbnail.src`). As buscas rodam em sequência com um
+intervalo entre elas para respeitar o limite de ~1 req/s do plano gratuito.
 """
 
 import re
-from concurrent.futures import ThreadPoolExecutor
+import time
 from pathlib import Path
 
 import requests
-from openai import OpenAI
 
 from .config import Config
 
-INSTRUCAO_BUSCA = """\
-Use image search to find real images of: {consulta}
-
-High resolution, no watermarks, no collages. Embed the 3 best results in
-your reply as markdown images, exactly as image search returned them
-(direct image file URLs). Reply with the embeds only, no other text.\
-"""
-
-PADRAO_EMBED = re.compile(r"!\[[^\]]*\]\((https?://[^\s)]+)\)")
+BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/images/search"
+INTERVALO_REQ = 1.05  # s entre chamadas (plano free do Brave: ~1 req/s)
+RESULTADOS_POR_BUSCA = 10  # quantos resultados pedir por consulta
 
 # Assinaturas de formatos aceitos (o ffmpeg lê todos)
 MAGICAS = {
@@ -99,57 +93,73 @@ def _baixar(url: str, destino_sem_ext: Path) -> Path | None:
     return destino
 
 
-def _candidatos(resposta) -> list[str]:
-    """URLs candidatas: annotations url_citation primeiro, embeds depois."""
-    urls: list[str] = []
-    for item in getattr(resposta, "output", None) or []:
-        if getattr(item, "type", "") != "message":
-            continue
-        for parte in getattr(item, "content", None) or []:
-            for ann in getattr(parte, "annotations", None) or []:
-                if getattr(ann, "type", "") == "url_citation" and getattr(ann, "url", None):
-                    urls.append(ann.url)
-    urls.extend(PADRAO_EMBED.findall(resposta.output_text))
-    return list(dict.fromkeys(urls))
+def _parametros_regiao(cfg: Config) -> dict[str, str]:
+    """País e idioma da busca conforme o público (melhora a coerência)."""
+    if cfg.publico == "usa":
+        return {"country": "US", "search_lang": "en"}
+    return {"country": "BR", "search_lang": "pt"}
 
 
-def _buscar_um(cliente: OpenAI, cfg: Config, consulta: str) -> list[str]:
-    try:
-        resposta = cliente.responses.create(
-            model=cfg.search_model,
-            input=[
-                {
-                    "role": "user",
-                    "content": INSTRUCAO_BUSCA.format(consulta=consulta),
-                }
-            ],
-            tools=[{"type": "web_search", "enable_image_search": True}],
-        )
-    except Exception as erro:
-        print(f"[aviso] Busca de imagem falhou para '{consulta}': {erro}")
-        return []
-    return _candidatos(resposta)
+def _candidatos(dados: dict) -> list[str]:
+    """URLs candidatas: imagens originais primeiro, miniaturas como reserva."""
+    resultados = dados.get("results") or []
+    originais = [
+        (r.get("properties") or {}).get("url")
+        for r in resultados
+        if (r.get("properties") or {}).get("url")
+    ]
+    miniaturas = [
+        (r.get("thumbnail") or {}).get("src")
+        for r in resultados
+        if (r.get("thumbnail") or {}).get("src")
+    ]
+    return list(dict.fromkeys([*originais, *miniaturas]))
+
+
+def _buscar_um(cfg: Config, consulta: str, regiao: dict[str, str]) -> list[str]:
+    headers = {
+        "Accept": "application/json",
+        "X-Subscription-Token": cfg.brave_api_key,
+    }
+    params = {
+        "q": consulta,
+        "count": RESULTADOS_POR_BUSCA,
+        "safesearch": "off",
+        **regiao,
+    }
+    for tentativa in range(3):
+        try:
+            resp = requests.get(
+                BRAVE_ENDPOINT, headers=headers, params=params, timeout=30
+            )
+            if resp.status_code == 429:  # limite de taxa: espera e tenta de novo
+                time.sleep(1.5 * (tentativa + 1))
+                continue
+            resp.raise_for_status()
+            return _candidatos(resp.json())
+        except (requests.RequestException, ValueError) as erro:
+            print(f"[aviso] Busca de imagem (Brave) falhou para '{consulta}': {erro}")
+            return []
+    print(f"[aviso] Brave limitou as buscas (429) para: {consulta}")
+    return []
 
 
 def buscar_imagens(cfg: Config, itens: list[dict], pasta: Path) -> list[dict]:
     """Busca e baixa as imagens; devolve [{"caminho": Path, "trecho": str}, ...]."""
-    cliente = OpenAI(api_key=cfg.xai_api_key, base_url="https://api.x.ai/v1")
-
     itens = itens[:12]
-    print(f"[imagens] Buscando {len(itens)} imagens na web via xAI (em paralelo)...")
-    with ThreadPoolExecutor(max_workers=len(itens)) as executor:
-        listas_urls = list(
-            executor.map(
-                lambda item: _buscar_um(cliente, cfg, item["consulta"]), itens
-            )
-        )
+    regiao = _parametros_regiao(cfg)
+    print(f"[imagens] Buscando {len(itens)} imagens via Brave Image Search...")
 
+    # Sequencial e com intervalo: o plano gratuito do Brave aceita ~1 req/s.
     baixadas: list[dict] = []
-    for i, (item, urls) in enumerate(zip(itens, listas_urls), 1):
+    for i, item in enumerate(itens, 1):
+        if i > 1:
+            time.sleep(INTERVALO_REQ)
+        urls = _buscar_um(cfg, item["consulta"], regiao)
         if not urls:
             print(f"[aviso] Nenhuma imagem encontrada para: {item['consulta']}")
             continue
-        for url in urls[:5]:
+        for url in urls[:6]:
             caminho = _baixar(url, pasta / f"imagem_{i}")
             if caminho:
                 baixadas.append({"caminho": caminho, "trecho": item.get("trecho", "")})

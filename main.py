@@ -4,7 +4,7 @@ Fluxo:
 1. Coleta posts das últimas 24h no X (X Search da xAI).
 2. GPT escolhe o tema do dia e gera título, descrição e texto do vídeo (~60s),
    evitando repetir os temas dos últimos vídeos do canal (lidos do YouTube).
-3. Web Search da xAI busca de 3 a 12 imagens-chave reais na web.
+3. Brave Image Search busca de 8 a 12 imagens-chave reais na web.
 4. ElevenLabs narra o texto (TTS).
 5. ffmpeg monta: fundo branco + narração + imagens centralizadas em largura
    total, com zoom-in lento + legendas sincronizadas (centralizadas quando não

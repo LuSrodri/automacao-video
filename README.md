@@ -4,7 +4,7 @@ Pipeline em Python que transforma as notícias de tech/AI mais quentes do X (Twi
 
 1. **Coleta** as threads de tech/AI mais discutidas das últimas 24h no X usando a **X Search da xAI** (com `from_date`/`to_date`). Opcionalmente restringe a contas específicas.
 2. **GPT 5.4 mini** escolhe o tema do dia e gera título, descrição e o texto do vídeo (~60 segundos de narração). Antes de decidir, recebe os **últimos 9 vídeos já publicados no canal selecionado** (lidos da própria YouTube Data API, então funciona em qualquer ambiente, sem depender de estado local) e é instruído a **não repetir tema recente** — só repete um assunto se houver novidade real, e nesse caso deixa claro o que mudou.
-3. **Web Search da xAI** (modo image search) encontra de **3 a 12 imagens reais** na web — logos, fotos de figuras públicas, produtos — nada gerado por IA.
+3. **Brave Image Search** encontra de **8 a 12 imagens reais** na web — fotos jornalísticas do próprio fato (pessoas, eventos e produtos da notícia), nada gerado por IA. As consultas são geradas para serem coerentes com a notícia, não ilustrações genéricas.
 4. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere). O roteiro inclui **audio tags** (`[excited]`, `[whispers]`, `[sighs]`…) que ditam o tom e a emoção da voz — elas não são faladas nem aparecem nas legendas.
 5. **ffmpeg** monta o vídeo sobre um **fundo branco**: cada imagem-chave entra **centralizada ocupando toda a largura**, com **zoom-in lento**, sincronizada com o trecho da narração a que se refere (podem aparecer já no início). **Legendas** sincronizadas palavra a palavra são queimadas no vídeo: quando **não há imagem na tela** ficam **centralizadas no meio**; quando **há imagem**, descem para a **parte inferior** (a 20% de altura) — fonte Barlow, texto preto com borda branca.
 6. O `.mp4` final vai para `output/` e a entrada (arquivo + título + descrição) é registrada em `videos.txt`.
@@ -15,9 +15,10 @@ Pipeline em Python que transforma as notícias de tech/AI mais quentes do X (Twi
 - **Python 3.10+**
 - **ffmpeg** no PATH. No Windows: `winget install Gyan.FFmpeg` (reabra o terminal depois)
 - O fundo é uma tela branca gerada pelo próprio ffmpeg; a resolução (padrão vertical 9:16, `1080x1920`) é configurável por `VIDEO_LARGURA`/`VIDEO_ALTURA`.
-- Chaves de API (três):
+- Chaves de API (quatro):
   - **OpenAI** — em [platform.openai.com/api-keys](https://platform.openai.com/api-keys) (roteiro com `gpt-5.4-mini`).
-  - **xAI** — em [console.x.ai](https://console.x.ai) (coleta de posts via X Search + busca de imagens via Web Search).
+  - **xAI** — em [console.x.ai](https://console.x.ai) (coleta de posts via X Search).
+  - **Brave Search** — em [api-dashboard.search.brave.com](https://api-dashboard.search.brave.com) (busca das imagens via Image Search API).
   - **ElevenLabs** — em [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys) (narração TTS).
 
 ## Configuração inicial (uma vez só)
@@ -63,7 +64,7 @@ output/
 | `X_ACCOUNTS` | vazio | Opcional: restringe a busca a contas específicas (máx. 20). Vazio = threads mais discutidas do dia |
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados |
 | `TEXT_MODEL` | `gpt-5.4-mini` | Modelo do roteiro |
-| `SEARCH_MODEL` | `grok-4.3` | Modelo da xAI para X Search e Web Search |
+| `SEARCH_MODEL` | `grok-4.3` | Modelo da xAI para a X Search (coleta de posts) |
 | `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
 | `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
@@ -113,24 +114,26 @@ A ElevenLabs retorna o tempo de fala de cada caractere (`/with-timestamps`), e o
 
 ## Como funcionam as imagens-chave
 
-O GPT define, para cada imagem, uma **consulta de busca** (ex.: "OpenAI official logo", "Sam Altman portrait photo") e o **trecho exato da narração** em que ela deve aparecer. Cada consulta vira uma chamada própria ao Grok (`web_search` com `enable_image_search`, em paralelo); as URLs diretas dos arquivos vêm nas *annotations* da resposta, com os embeds markdown como reserva. O pipeline tenta os candidatos em ordem, segue para a og:image quando a URL é uma página, e valida o conteúdo (JPG/PNG/WebP, tamanho mínimo). Na montagem, cada imagem entra na janela de tempo proporcional à posição do trecho na narração — centralizada sobre o fundo branco, em largura total, com zoom-in de ~16%. Se uma busca não retornar imagem válida, ela é pulada e o vídeo segue com as demais.
+O GPT define, para cada imagem, uma **consulta de busca** coerente com o fato da notícia (ex.: "Sam Altman GPT-6 launch keynote 2026") e o **trecho exato da narração** em que ela deve aparecer. Cada consulta vira uma chamada à **Brave Image Search API**; o pipeline usa a URL original de cada resultado (`properties.url`) e, como reserva, a miniatura proxied (`thumbnail.src`). As buscas rodam em sequência com intervalo entre elas (o plano gratuito do Brave aceita ~1 req/s) e o país/idioma seguem o público (BR/pt ou US/en). O pipeline tenta os candidatos em ordem, segue para a og:image quando a URL é uma página, e valida o conteúdo (JPG/PNG/WebP, tamanho mínimo). Na montagem, cada imagem entra na janela de tempo proporcional à posição do trecho na narração — centralizada sobre o fundo branco, em largura total, com zoom-in de ~16%. Se uma busca não retornar imagem válida, ela é pulada e o vídeo segue com as demais.
 
 ## Custo estimado por vídeo
 
 | Etapa | Custo |
 | --- | --- |
-| Coleta + busca de imagens (xAI: tokens grok-4.3 + tools a US$ 5/1.000 chamadas) | ~US$ 0,05–0,12 |
+| Coleta de posts (xAI: tokens grok-4.3 + tools a US$ 5/1.000 chamadas) | ~US$ 0,05–0,12 |
+| Busca de imagens (Brave Image Search) | grátis no plano free / centavos no pago |
 | GPT 5.4 mini (roteiro) | < US$ 0,01 |
 | ElevenLabs (~1.000 caracteres por narração de 60s) | ~1.000 créditos do plano |
 
-Em dinheiro de API (xAI + OpenAI), cada vídeo sai por **centavos**. O custo real vira o plano da ElevenLabs: o plano gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana. Total estimado: **~US$ 6–7/mês**.
+Em dinheiro de API (xAI + OpenAI + Brave), cada vídeo sai por **centavos**. O custo real vira o plano da ElevenLabs: o plano gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana. Total estimado: **~US$ 6–7/mês**.
 
 ## Problemas comuns
 
-- **Erro na coleta de posts ou na busca de imagens** — verifique o saldo de créditos da xAI no [console.x.ai](https://console.x.ai).
+- **Erro na coleta de posts** — verifique o saldo de créditos da xAI no [console.x.ai](https://console.x.ai).
+- **Erro/429 na busca de imagens** — confira a `BRAVE_API_KEY` e o limite do plano no [dashboard do Brave](https://api-dashboard.search.brave.com); o pipeline já espaça as buscas (~1 req/s) e tenta de novo em 429.
 - **HTTP 401 na ElevenLabs** — chave errada no `.env`; **422** — texto/parâmetros inválidos (a mensagem detalha).
 - **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal.
-- **Imagem-chave ruim/errada** — apague a pasta da execução e rode de novo; as buscas do Grok variam. Dá para editar `roteiro.json` e ajustar as consultas manualmente também.
+- **Imagem-chave ruim/errada** — apague a pasta da execução e rode de novo; os resultados do Brave variam. Dá para editar `roteiro.json` e ajustar as consultas manualmente também.
 - **Refresh token do YouTube expira em ~7 dias** — a tela de consentimento OAuth está em modo **Testing**. Publique-a (**OAuth consent screen > Publish app**) para o refresh token virar de longa duração, e rode `--auth-youtube` de novo.
 - **`refresh_token` não retornado no `--auth-youtube`** — o Google só o devolve no primeiro consentimento. Remova o acesso em [myaccount.google.com/permissions](https://myaccount.google.com/permissions) e rode de novo.
 - **Não lê os últimos vídeos do canal (passo 2)** — tokens autorizados antes da ampliação de escopos só tinham `youtube.upload`. Rode `--auth-youtube` (e `--auth-youtube-usa`) de novo para reautorizar com o escopo de leitura. Sem isso, o vídeo ainda é gerado, só sem o filtro anti-repetição.

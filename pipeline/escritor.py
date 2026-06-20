@@ -51,10 +51,18 @@ ESQUEMA_ROTEIRO = {
                             "type": "string",
                             "description": (
                                 "Consulta de busca de imagem em inglês para "
-                                "encontrar UMA foto/imagem real na web que "
-                                "ilustre este momento da narração (logo "
-                                "oficial, foto de figura pública, foto de "
-                                "produto, sede da empresa etc.)."
+                                "encontrar UMA imagem real e coerente com este "
+                                "momento da narração. Priorize a foto do "
+                                "próprio fato (pessoas e empresas envolvidas "
+                                "na ação, o evento, o produto em uso real). "
+                                "Para contextualizar, também valem: foto da "
+                                "figura pública citada, o logo/identidade "
+                                "visual da empresa mencionada, foto do produto "
+                                "e foto do local/lugar relevante. Seja "
+                                "específico com nomes próprios e o "
+                                "acontecimento. Evite ilustrações genéricas, "
+                                "fotos de banco de imagens (stock) e imagens "
+                                "geradas por IA."
                             ),
                         },
                         "trecho": {
@@ -102,13 +110,20 @@ Você receberá posts recentes do X (Twitter). Sua tarefa:
    explicando a notícia, o contexto e por que ela importa.
 4. Definir de 8 a 12 imagens-chave (use bastante: quanto mais momentos
    ilustrados, mais dinâmico fica o vídeo). REGRAS DAS IMAGENS:
-   - As imagens serão buscadas na web (fotos e logos REAIS, nada gerado por
-     IA). Em "consulta", escreva a busca em inglês que encontra a melhor
-     imagem para aquele momento: logo oficial da empresa, foto da figura
-     pública envolvida, foto do produto, gráfico divulgado etc.
-     Exemplo: notícia sobre a OpenAI -> "OpenAI official logo" e
-     "Sam Altman portrait photo".
-   - Prefira assuntos visualmente reconhecíveis e fáceis de achar em boa
+   - As imagens serão buscadas na web (fotos REAIS, nada gerado por IA). Em
+     "consulta", escreva a busca em inglês que encontra a imagem mais
+     COERENTE com a notícia daquele momento. Use uma MISTURA de tipos para
+     contextualizar bem o vídeo: a foto do próprio fato/evento, a figura
+     pública envolvida, o logo da empresa citada, o produto e o lugar/local
+     relevante.
+     Exemplo (OpenAI lançando o GPT-6): "Sam Altman GPT-6 launch keynote
+     2026", "OpenAI GPT-6 announcement event", "OpenAI logo",
+     "OpenAI headquarters San Francisco".
+   - Prefira a imagem do acontecimento real em vez de ilustração genérica;
+     evite fotos de banco de imagens (stock) e imagens geradas por IA. Logos,
+     retratos e fotos de lugares são bem-vindos como contexto — só não deixe
+     que TODAS as imagens sejam apenas logos.
+   - Prefira assuntos visualmente documentados e fáceis de achar em boa
      resolução.
    - Em "trecho", copie literalmente a parte do texto_video em que a imagem
      deve aparecer (substring exata do texto_video, sem alterar nada), para

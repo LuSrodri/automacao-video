@@ -14,6 +14,7 @@ class Config:
     openai_api_key: str
     xai_api_key: str
     elevenlabs_api_key: str
+    brave_api_key: str
     contas: list[str]
     video_largura: int = 1080
     video_altura: int = 1920
@@ -55,7 +56,12 @@ def carregar_config() -> Config:
 
     faltando = [
         nome
-        for nome in ("OPENAI_API_KEY", "XAI_API_KEY", "ELEVENLABS_API_KEY")
+        for nome in (
+            "OPENAI_API_KEY",
+            "XAI_API_KEY",
+            "ELEVENLABS_API_KEY",
+            "BRAVE_API_KEY",
+        )
         if not os.getenv(nome)
     ]
     if faltando:
@@ -78,6 +84,7 @@ def carregar_config() -> Config:
         openai_api_key=os.environ["OPENAI_API_KEY"],
         xai_api_key=os.environ["XAI_API_KEY"],
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
+        brave_api_key=os.environ["BRAVE_API_KEY"],
         contas=contas,
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
