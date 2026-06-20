@@ -97,7 +97,8 @@ def _parametros_regiao(cfg: Config) -> dict[str, str]:
     """País e idioma da busca conforme o público (melhora a coerência)."""
     if cfg.publico == "usa":
         return {"country": "US", "search_lang": "en"}
-    return {"country": "BR", "search_lang": "pt"}
+    # Brave aceita só 'pt-br'/'pt-pt' como search_lang; 'pt' puro retorna 422.
+    return {"country": "BR", "search_lang": "pt-br"}
 
 
 def _candidatos(dados: dict) -> list[str]:
@@ -114,6 +115,25 @@ def _candidatos(dados: dict) -> list[str]:
         if (r.get("thumbnail") or {}).get("src")
     ]
     return list(dict.fromkeys([*originais, *miniaturas]))
+
+
+def _detalhe_erro(erro: Exception) -> str:
+    """Extrai o motivo real do corpo de erro do Brave (código + detalhe).
+
+    O Brave responde a falhas com um JSON {"error": {"code", "detail", ...}}.
+    Sem isso o aviso mostra só "422 Client Error", escondendo a causa real
+    (ex.: SUBSCRIPTION_TOKEN_INVALID ou search_lang fora do enum aceito).
+    """
+    resp = getattr(erro, "response", None)
+    if resp is None:
+        return ""
+    try:
+        erro_api = (resp.json() or {}).get("error") or {}
+    except ValueError:
+        corpo = (resp.text or "").strip()
+        return f" | corpo: {corpo[:300]}" if corpo else ""
+    partes = [str(p) for p in (erro_api.get("code"), erro_api.get("detail")) if p]
+    return f" | Brave: {' - '.join(partes)}" if partes else ""
 
 
 def _buscar_um(cfg: Config, consulta: str, regiao: dict[str, str]) -> list[str]:
@@ -138,7 +158,10 @@ def _buscar_um(cfg: Config, consulta: str, regiao: dict[str, str]) -> list[str]:
             resp.raise_for_status()
             return _candidatos(resp.json())
         except (requests.RequestException, ValueError) as erro:
-            print(f"[aviso] Busca de imagem (Brave) falhou para '{consulta}': {erro}")
+            print(
+                f"[aviso] Busca de imagem (Brave) falhou para '{consulta}': "
+                f"{erro}{_detalhe_erro(erro)}"
+            )
             return []
     print(f"[aviso] Brave limitou as buscas (429) para: {consulta}")
     return []
