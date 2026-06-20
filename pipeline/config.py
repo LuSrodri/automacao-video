@@ -29,10 +29,25 @@ class Config:
     youtube_client_secret: str = ""
     youtube_refresh_token: str = ""
     youtube_refresh_token_usa: str = ""
+    youtube_handle: str = ""  # @usuário exibido no topo do vídeo (público br)
+    youtube_handle_usa: str = ""  # @usuário do canal inglês (-usa)
     youtube_privacy: str = "public"  # public | unlisted | private
     youtube_category_id: str = "28"  # 28 = Science & Technology
     output_dir: Path = field(default_factory=lambda: RAIZ / "output")
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
+
+    @property
+    def handle_do_publico(self) -> str:
+        """@usuário do canal certo (inglês quando publico == 'usa'), normalizado.
+
+        Devolve string vazia quando não configurado; nesse caso o vídeo é
+        montado sem o nome de usuário sob o logo.
+        """
+        bruto = (self.youtube_handle_usa if self.publico == "usa"
+                 else self.youtube_handle).strip()
+        if not bruto:
+            return ""
+        return bruto if bruto.startswith("@") else f"@{bruto}"
 
 
 def carregar_config() -> Config:
@@ -77,6 +92,8 @@ def carregar_config() -> Config:
         youtube_client_secret=os.getenv("YOUTUBE_CLIENT_SECRET", ""),
         youtube_refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN", ""),
         youtube_refresh_token_usa=os.getenv("YOUTUBE_REFRESH_TOKEN_USA", ""),
+        youtube_handle=os.getenv("YOUTUBE_HANDLE", ""),
+        youtube_handle_usa=os.getenv("YOUTUBE_HANDLE_USA", ""),
         youtube_privacy=os.getenv("YOUTUBE_PRIVACY", "public"),
         youtube_category_id=os.getenv("YOUTUBE_CATEGORY_ID", "28"),
     )

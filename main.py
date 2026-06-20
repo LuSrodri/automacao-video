@@ -122,6 +122,7 @@ def main() -> None:
         largura,
         altura,
         legendas=legendas,
+        handle=cfg.handle_do_publico,
     )
 
     registrar(cfg, video_final, roteiro["titulo"], roteiro["descricao"])

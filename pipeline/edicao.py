@@ -17,6 +17,16 @@ MIN_EXIBICAO = 2.0  # segundos mínimos de exibição de cada imagem
 FOLGA = 0.25  # intervalo entre uma imagem e a seguinte
 FADE = 0.35  # duração do fade de entrada/saída da imagem
 
+# Branding discreto no topo: logo do YouTube Shorts + @usuário do canal.
+LOGO_PADRAO = RAIZ / "assets" / "YouTube-Shorts-Logo.png"
+FONTE_HANDLE = RAIZ / "fonts" / "Barlow-Bold.ttf"
+LOGO_LARGURA_FRAC = 0.30  # largura do logo como fração da largura do vídeo
+LOGO_OPACIDADE = 0.55  # opacidade do logo (0 a 1)
+LOGO_Y_FRAC = 0.06  # distância do topo como fração da altura
+HANDLE_OPACIDADE = 0.65  # opacidade do nome de usuário
+HANDLE_FONTE_FRAC = 0.030  # tamanho da fonte como fração da largura
+HANDLE_GAP_FRAC = 0.80  # posição do @usuário dentro da caixa do logo
+
 
 def _exigir_ffmpeg() -> None:
     for binario in ("ffmpeg", "ffprobe"):
@@ -124,6 +134,11 @@ def _caminho_filtro(caminho: Path) -> str:
     return str(caminho).replace("\\", "/").replace(":", "\\:")
 
 
+def _texto_drawtext(texto: str) -> str:
+    """Escapa um texto para uso dentro de text='...' do filtro drawtext."""
+    return texto.replace("\\", "\\\\").replace("'", r"'\''")
+
+
 def montar_video(
     narracao: Path,
     sobreposicoes: list[dict],
@@ -131,12 +146,18 @@ def montar_video(
     largura: int,
     altura: int,
     legendas: Path | None = None,
+    handle: str | None = None,
+    logo: Path | None = LOGO_PADRAO,
 ) -> Path:
     """Monta o vídeo final sobre um fundo branco.
 
     `sobreposicoes`: [{"caminho": Path, "inicio_frac": float|None,
     "fim_frac": float|None}, ...] — frações (0 a 1) da narração em que a
     imagem entra e sai; None usa distribuição uniforme.
+
+    `logo`/`handle`: branding discreto no topo — o logo do YouTube Shorts e o
+    nome de usuário do canal (ex.: "@CanalDeTecnologia"). Cada um é opcional;
+    o logo só entra se o arquivo existir e o @usuário só entra se informado.
     """
     _exigir_ffmpeg()
 
@@ -191,6 +212,43 @@ def montar_video(
         filtros.append(f"[{corrente}]{filtro_ass}[vleg]")
         corrente = "vleg"
 
+    # Branding no topo (sobre as legendas, sempre visível). O logo entra como
+    # a última entrada do ffmpeg; seu índice vem depois do fundo, da narração
+    # e de todas as imagens.
+    usar_logo = logo is not None and Path(logo).is_file()
+    if usar_logo:
+        idx_logo = 2 + len(pares)
+        log_l, log_a = _dimensoes(logo)
+        largura_logo = round(largura * LOGO_LARGURA_FRAC)
+        altura_logo = round(largura_logo * log_a / log_l)
+        y_logo = round(altura * LOGO_Y_FRAC)
+        filtros.append(
+            f"[{idx_logo}:v]format=rgba,scale={largura_logo}:-1,"
+            f"colorchannelmixer=aa={LOGO_OPACIDADE},"
+            f"fade=t=in:st=0:d={FADE}:alpha=1[logo]"
+        )
+        filtros.append(
+            f"[{corrente}][logo]overlay=(W-w)/2:{y_logo}:eof_action=pass[vlogo]"
+        )
+        corrente = "vlogo"
+
+    if handle and FONTE_HANDLE.is_file():
+        # Sem logo, ancora o @usuário no mesmo ponto onde o logo começaria.
+        y_base = round(altura * LOGO_Y_FRAC)
+        if usar_logo:
+            y_handle = y_base + round(altura_logo * HANDLE_GAP_FRAC)
+        else:
+            y_handle = y_base
+        filtros.append(
+            f"[{corrente}]drawtext=fontfile='{_caminho_filtro(FONTE_HANDLE)}'"
+            f":text='{_texto_drawtext(handle)}':fontcolor=black"
+            f":fontsize={round(largura * HANDLE_FONTE_FRAC)}"
+            f":x=(w-text_w)/2:y={y_handle}"
+            f":alpha='if(lt(t,{FADE}),{HANDLE_OPACIDADE}*t/{FADE},{HANDLE_OPACIDADE})'"
+            f"[vbrand]"
+        )
+        corrente = "vbrand"
+
     comando = [
         "ffmpeg", "-y",
         "-f", "lavfi",
@@ -199,6 +257,10 @@ def montar_video(
     ]
     for s, _ in pares:
         comando += ["-i", str(s["caminho"])]
+    if usar_logo:
+        # -loop 1: o PNG é um único quadro; sem isso o logo apareceria só no
+        # primeiro instante. O loop é limitado pela duração do vídeo (-t).
+        comando += ["-loop", "1", "-i", str(logo)]
     comando += [
         "-filter_complex", ";".join(filtros),
         "-map", f"[{corrente}]",
