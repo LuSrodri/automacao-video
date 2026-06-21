@@ -41,8 +41,8 @@ ESQUEMA_ROTEIRO = {
             },
             "imagens": {
                 "type": "array",
-                "minItems": 8,
-                "maxItems": 12,
+                "minItems": 4,
+                "maxItems": 6,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -77,7 +77,7 @@ ESQUEMA_ROTEIRO = {
                     "required": ["consulta", "trecho"],
                 },
                 "description": (
-                    "8 a 12 imagens-chave sincronizadas com a narração do vídeo."
+                    "4 a 6 imagens-chave sincronizadas com a narração do vídeo."
                 ),
             },
         },
@@ -108,8 +108,8 @@ Você receberá posts recentes do X (Twitter). Sua tarefa:
 3. O texto do vídeo deve ser narrável em cerca de {duracao} segundos
    (aproximadamente {palavras} palavras): direto, empolgante, sem enrolação,
    explicando a notícia, o contexto e por que ela importa.
-4. Definir de 8 a 12 imagens-chave (use bastante: quanto mais momentos
-   ilustrados, mais dinâmico fica o vídeo). REGRAS DAS IMAGENS:
+4. Definir de 4 a 6 imagens-chave bem escolhidas (cada uma fica até 6 segundos
+   na tela, então priorize os momentos mais importantes). REGRAS DAS IMAGENS:
    - As imagens serão buscadas na web (fotos REAIS, nada gerado por IA). Em
      "consulta", escreva a busca em inglês que encontra a imagem mais
      COERENTE com a notícia daquele momento. Use uma MISTURA de tipos para

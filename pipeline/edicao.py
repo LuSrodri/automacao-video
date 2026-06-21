@@ -1,8 +1,8 @@
 """Montagem final do vídeo com ffmpeg.
 
 O fundo é uma tela branca; a narração TTS entra como trilha. Cada imagem-chave
-entra centralizada ocupando toda a largura, com zoom-in lento, sincronizada com
-o trecho da narração a que se refere.
+entra centralizada ocupando toda a largura, estática, sincronizada com o
+trecho da narração a que se refere.
 """
 
 import subprocess
@@ -12,8 +12,8 @@ from pathlib import Path
 from .config import RAIZ
 
 FPS = 30
-ZOOM_TOTAL = 0.16  # quanto a imagem cresce ao longo da exibição
 MIN_EXIBICAO = 2.0  # segundos mínimos de exibição de cada imagem
+MAX_EXIBICAO = 6.0  # segundos máximos de exibição de cada imagem
 FOLGA = 0.25  # intervalo entre uma imagem e a seguinte
 FADE = 0.35  # duração do fade de entrada/saída da imagem
 
@@ -98,6 +98,8 @@ def _calcular_janelas(
         else:
             ini = s["inicio_frac"] * duracao
             fim = max(s["fim_frac"] * duracao, ini + MIN_EXIBICAO)
+        # Cada imagem fica no máximo MAX_EXIBICAO segundos na tela
+        fim = min(fim, ini + MAX_EXIBICAO)
         janelas.append((ini, fim))
 
     # Remove sobreposições entre janelas consecutivas (a lista já chega
@@ -106,7 +108,7 @@ def _calcular_janelas(
     fim_anterior = 0.0
     for ini, fim in janelas:
         ini = max(0.0, ini, fim_anterior + FOLGA)
-        fim = min(max(fim, ini + MIN_EXIBICAO), duracao - 0.1)
+        fim = min(max(fim, ini + MIN_EXIBICAO), ini + MAX_EXIBICAO, duracao - 0.1)
         if fim - ini < 1.0:
             # Sem espaço restante no vídeo para esta imagem
             ajustadas.append(None)
@@ -176,24 +178,12 @@ def montar_video(
     filtros = [f"[0:v]fps={FPS},format=rgba[base]"]
     corrente = "base"
 
-    fator_pad = 1 + ZOOM_TOTAL
     for i, (s, (ini, fim)) in enumerate(pares):
-        img_l, img_a = _dimensoes(s["caminho"])
-        altura_overlay = max(2, round(largura * img_a / img_l / 2) * 2)
         dur_j = fim - ini
-        quadros = max(2, round(dur_j * FPS))
-        # A imagem ganha uma borda transparente e o zoom avança sobre ela:
-        # o quadro cresce de ~86% até 100% da largura, sem cortar conteúdo.
-        # Sobre-amostragem (4x) + renderização em 2x com downscale final
-        # eliminam o flicker do zoompan.
+        # Imagem estática: escala para a largura total (altura par via -2),
+        # com fade de entrada/saída, posicionada no instante da narração.
         filtros.append(
-            f"[{i + 2}:v]format=rgba,scale={largura * 4}:-2,"
-            f"pad=w=iw*{fator_pad}:h=ih*{fator_pad}"
-            f":x=(ow-iw)/2:y=(oh-ih)/2:color=black@0.0,"
-            f"zoompan=z='min(1+{ZOOM_TOTAL}*on/{quadros},{fator_pad})'"
-            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-            f":d={quadros}:s={largura * 2}x{altura_overlay * 2}:fps={FPS},"
-            f"scale={largura}:{altura_overlay},format=rgba,"
+            f"[{i + 2}:v]fps={FPS},format=rgba,scale={largura}:-2,"
             f"fade=t=in:st=0:d={FADE}:alpha=1,"
             f"fade=t=out:st={max(0.0, dur_j - FADE):.2f}:d={FADE}:alpha=1,"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[img{i}]"
@@ -255,8 +245,10 @@ def montar_video(
         "-i", f"color=c=white:s={largura}x{altura}:r={FPS}:d={duracao:.2f}",
         "-i", str(narracao),
     ]
-    for s, _ in pares:
-        comando += ["-i", str(s["caminho"])]
+    # -loop 1 -t: cada imagem é um PNG/JPG de um quadro; o loop a mantém na
+    # tela durante toda a sua janela (o filtro fps/fade depois faz o resto).
+    for s, (ini, fim) in pares:
+        comando += ["-loop", "1", "-t", f"{fim - ini:.2f}", "-i", str(s["caminho"])]
     if usar_logo:
         # -loop 1: o PNG é um único quadro; sem isso o logo apareceria só no
         # primeiro instante. O loop é limitado pela duração do vídeo (-t).
