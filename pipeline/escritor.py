@@ -40,9 +40,11 @@ ESQUEMA_SELECAO = {
             "consulta_noticias": {
                 "type": "string",
                 "description": (
-                    "Consulta de busca de NOTÍCIAS (em inglês, com nomes "
-                    "próprios e o acontecimento) para encontrar manchetes "
-                    "recentes que complementem a trend com fatos e números."
+                    "Consulta CURTA de busca de NOTÍCIAS em inglês: 3 a 6 "
+                    "palavras, só os nomes próprios principais + o acontecimento "
+                    "central (ex.: 'Anthropic Claude global outage'). NÃO empilhe "
+                    "detalhes, sintomas, códigos de erro nem sinônimos — consulta "
+                    "longa demais zera os resultados."
                 ),
             },
         },
@@ -60,6 +62,42 @@ ESQUEMA_ROTEIRO = {
             "tema": {
                 "type": "string",
                 "description": "A trend/tema do vídeo.",
+            },
+            "sentimento": {
+                "type": "string",
+                "description": (
+                    "A emoção DOMINANTE em volta da trend (ex.: indignação, medo, "
+                    "deboche, euforia, ceticismo, fascínio) e, em uma frase, o "
+                    "ângulo que o vídeo vai assumir por causa dela. Decida ISTO "
+                    "PRIMEIRO: é o que dirige o tom da narração, a ênfase dos "
+                    "fatos e onde fica o clímax."
+                ),
+            },
+            "ganchos_candidatos": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 6,
+                "items": {"type": "string"},
+                "description": (
+                    "ANTES de escrever o roteiro, gere de 4 a 6 PRIMEIRAS FRASES "
+                    "(ganchos) bem DIFERENTES entre si, cada uma atacando o tema "
+                    "por um ângulo distinto (o segredo escondido, a virada "
+                    "contraintuitiva, o número-enigma, a consequência alarmante). "
+                    "Cada uma DEVE abrir uma lacuna de curiosidade e plantar FOMO "
+                    "sem entregar a resposta. Trate como rascunho de divergência: "
+                    "varie de verdade, não escreva 5 versões da mesma frase."
+                ),
+            },
+            "gancho_escolhido": {
+                "type": "string",
+                "description": (
+                    "O gancho que deixa a MAIOR pergunta no ar — o que entrega "
+                    "MENOS e gera mais necessidade de descobrir; NÃO o mais "
+                    "completo ou dramático. Não pode conter o segredo da história "
+                    "nem um veredito de conclusão. A primeira frase de texto_video "
+                    "DEVE ser exatamente este gancho (copiado palavra por palavra, "
+                    "antes de qualquer audio tag)."
+                ),
             },
             "titulo": {
                 "type": "string",
@@ -109,11 +147,19 @@ ESQUEMA_ROTEIRO = {
                                 "Para contextualizar, também valem: foto da "
                                 "figura pública citada, o logo/identidade "
                                 "visual da empresa mencionada, foto do produto "
-                                "e foto do local/lugar relevante. Seja "
-                                "específico com nomes próprios e o "
-                                "acontecimento. Evite ilustrações genéricas, "
-                                "fotos de banco de imagens (stock) e imagens "
-                                "geradas por IA."
+                                "e foto do local/lugar relevante. REGRAS DURAS: "
+                                "(1) UM único assunto concreto e fotografável "
+                                "por consulta — PROIBIDO consulta composta tipo "
+                                "'X and Y side by side' ou 'logos A e B juntos' "
+                                "(não existe foto assim; busque um por vez). "
+                                "(2) PROIBIDO consulta de conceito abstrato que "
+                                "só retorna banco de imagens (ex.: 'data center "
+                                "server room', 'person using laptop', 'AI "
+                                "automation concept'); ancore sempre em nome "
+                                "próprio + fato real. (3) Seja específico com "
+                                "nomes próprios e o acontecimento. Evite "
+                                "ilustrações genéricas, fotos de banco de "
+                                "imagens (stock) e imagens geradas por IA."
                             ),
                         },
                         "trecho": {
@@ -134,7 +180,16 @@ ESQUEMA_ROTEIRO = {
                 ),
             },
         },
-        "required": ["tema", "titulo", "descricao", "texto_video", "imagens"],
+        "required": [
+            "tema",
+            "sentimento",
+            "ganchos_candidatos",
+            "gancho_escolhido",
+            "titulo",
+            "descricao",
+            "texto_video",
+            "imagens",
+        ],
     },
 }
 
@@ -162,7 +217,9 @@ Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta 
 2. NÃO repetir os temas dos vídeos recentes do canal, salvo se houver novidade
    real e relevante.
 
-Gere também uma consulta de busca de NOTÍCIAS (em inglês) para a trend escolhida.
+Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
+nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
+longa e cheia de detalhes zera os resultados — seja enxuto.
 Responda somente com o JSON pedido.\
 """
 
@@ -180,14 +237,34 @@ pagar a dívida que o gancho criou. Se o gancho for morno, nada salva o vídeo.
 
 O nome do jogo é criar uma LACUNA DE CURIOSIDADE: dizer o suficiente pra pessoa
 QUERER saber, e esconder o suficiente pra ela TER QUE FICAR pra descobrir. O
-gancho não informa — ele provoca. Erro fatal: informar demais cedo demais. No
-instante em que o título/primeira frase já entrega a resposta, a curiosidade
-morre e a pessoa desliza.
-- RUIM (informa demais, curiosidade morna): "A OpenAI transformou outdoors em um
-  jogo para desenvolvedores." — já contou tudo; não sobrou nada pra descobrir.
-- BOM (abre lacuna): "Tem um código escondido nos outdoors da OpenAI espalhados
-  pela cidade... e quem decifrar primeiro ganha algo que ninguém esperava." —
-  nomeia o suficiente pra dar tesão, esconde o payoff.
+gancho não informa — ele provoca.
+
+A ESTRUTURA É DE HISTÓRIA, NÃO DE MANCHETE: um vídeo bom se desenrola como um
+filme — tem começo, meio e clímax. O gancho NÃO é o resumo da notícia: é a PORTA
+DE ENTRADA que faz a pessoa perguntar algo específico ("por quê?", "como?", "o
+quê?"). O gancho PODE dizer o RESULTADO chocante (ex.: "Dois modelos da Anthropic
+sumiram do mundo inteiro") — isso é ótimo, porque dispara na hora o "por quê?". O
+que o gancho NÃO pode fazer é já entregar a EXPLICAÇÃO. A explicação é o que o
+corpo constrói, em ordem, até o clímax.
+
+ERRO QUE MATA O VÍDEO (assistir o filme pelo final): disparar o "por quê?" no
+gancho e respondê-lo no soco seguinte. Ex.: "Dois modelos sumiram... foi uma
+ordem do governo." Aí não houve jornada nenhuma — você contou o desfecho. O
+certo é: depois do gancho, CONTEXTUALIZAR e contar a história ATÉ chegar na
+explicação e no clímax.
+
+NO GANCHO É PROIBIDO: explicar/responder a pergunta que ele abre, colocar o
+veredito ("isso muda tudo", "é assustador"), e ser longo. Gancho é CURTÍSSIMO —
+uma frase de um fôlego (~6 a 12 palavras).
+- RUIM (longo + já com veredito): "Uma decisão em Washington apagou dois modelos
+  da Anthropic no planeta inteiro e isso abre um precedente assustador."
+- BOM (curto, dispara o porquê): "Dois modelos da Anthropic sumiram do mundo
+  inteiro de uma vez."
+- BOM (detalhe estranho como porta de entrada): "A Anthropic recebeu uma carta
+  que não podia ignorar."
+
+TESTE DO GANCHO: ele deixa UMA pergunta clara no ar e cabe num fôlego? Se já
+explica, traz veredito ou precisa de vírgulas pra respirar, reescreva.
 
 FOMO: a sensação de "todo mundo vai saber disso, menos eu, se eu deslizar". O
 gancho tem que plantar que isso é grande, que já está acontecendo, e que ficar de
@@ -195,34 +272,70 @@ fora é o vexame. Use sinais de urgência e de "manada" quando forem verdadeiros
 (já viralizou, todo mundo está testando, mudou as regras do jogo da noite pro
 dia).
 
+PROCESSO OBRIGATÓRIO — NÃO ESCREVA O PRIMEIRO GANCHO QUE VIER À CABEÇA:
+1. Primeiro, preencha "ganchos_candidatos" com 4 a 6 primeiras frases bem
+   diferentes, cada uma por um ângulo distinto (use as 4 formas abaixo). O
+   primeiro gancho que vem à cabeça é quase sempre o mais óbvio e morno — o ouro
+   costuma estar no 4º ou 5º. Force a variação.
+2. Depois, escolha em "gancho_escolhido" o candidato mais CURTO e claro que
+   dispara uma pergunta específica ("por quê?", "como?"). Descarte na hora os que
+   já explicam, trazem veredito de conclusão ou precisam de vírgula pra respirar.
+3. Só então escreva o "texto_video" começando EXATAMENTE por esse gancho.
+
+ARMAS PRA AFIAR O GANCHO (use no candidato, não no clichê):
+- ESPECIFICIDADE vence vagueza: nome próprio + detalhe concreto pega mais que
+  abstração ("o app que a OpenAI lançou" < "o app que a OpenAI lançou e tirou do
+  ar em 6 horas").
+- Number-gap: jogue o número absurdo como enigma ("ganhou 1 milhão de usuários
+  num fim de semana — e foi aí que o problema começou").
+- Resultado chocante como porta: abra pelo efeito que faz perguntar "por quê?"
+  (mas sem explicar — a explicação é o corpo).
+- Nomeie o inimigo/aposta: quem perde, quem ganha, o que está em jogo.
+- Curto. Gancho longo dilui. Mire em uma frase que caiba em um fôlego.
+EVITE clichê de IA e enchimento: "num mundo cada vez mais...", "a tecnologia
+avança...", "imagine que...", "você não vai acreditar". São mortos.
+
 Escreva o roteiro narrado (campo texto_video) seguindo a CURVA DE RETENÇÃO de um
 vídeo curto que precisa segurar a pessoa até o fim:
 
-1. GANCHO (primeiros ~3 segundos): a primeira frase é 80% do trabalho. Ela tem
-   que abrir uma LACUNA, não fechar. Mire em uma destas formas (escolha a que o
-   fato permitir, na ordem de força):
-   - O segredo/detalhe escondido: insinue que existe algo surpreendente SEM
-     dizer o que é ("ninguém percebeu o que a OpenAI fez de verdade aqui...").
-   - A virada contraintuitiva: prometa que o óbvio está errado ("todo mundo
-     achou que era X. Não é.").
-   - O número/fato absurdo apresentado como enigma, não como dado solto.
-   - A consequência alarmante: o que isso muda pra QUEM ESTÁ ASSISTINDO.
-   PROIBIDO: "Hoje vamos falar sobre...", abrir explicando o contexto, ou
-   entregar a conclusão na primeira frase. Se dá pra ler a primeira frase e não
-   precisar do resto, o gancho falhou — reescreva.
-2. DESENVOLVIMENTO (a tensão da lacuna aberta): cada frase só existe pra puxar a
-   próxima. Você abriu uma lacuna no gancho — NÃO feche cedo. Entregue em
-   camadas, adiando a revelação principal, e abra micro-lacunas no meio do
-   caminho ("mas tem um detalhe que muda tudo", "e foi aí que...", "só que
-   ninguém tinha visto isso..."). Cada vez que você quase entrega, abre outra
-   pontinha. Ritmo RÁPIDO, sem enrolação, sem frase morta, sem contexto que não
-   alimente a curiosidade. Toda frase justifica o tempo dela na tela.
-3. RECOMPENSA (final): FECHE a lacuna que o gancho abriu — pague a dívida. A
-   pessoa tem que sentir "caramba, valeu ter ficado", não "me enganaram". Entregue
-   a virada/o segredo/o número que amarra tudo, com uma opinião forte ou uma
-   consequência clara. Sem payoff, o vídeo vira clickbait e o algoritmo pune.
-   Termine com um gancho de engajamento (pergunta/opinião polêmica que provoque
-   comentário).
+1. GANCHO (primeiros ~3 segundos): curtíssimo, uma frase de um fôlego, que
+   dispara uma pergunta específica na cabeça do espectador. Pode ser o resultado
+   chocante, um detalhe estranho como porta de entrada, um número-enigma ou uma
+   virada contraintuitiva. PROIBIDO: explicar/responder a pergunta, "Hoje vamos
+   falar sobre...", veredito de conclusão, e frases longas.
+2. DESENVOLVIMENTO (a história se desenrolando): o gancho disparou um "por quê?".
+   NÃO responda de cara. Primeiro CONTEXTUALIZE e conte a história EM ORDEM
+   (cronológica/causal), construindo até a explicação. Pense em cenas encadeadas
+   por causa e efeito:
+   - SETUP: a situação inicial / o que existia antes ("a Anthropic lançou o Mythos
+     5 e o Fable 5 no dia tal...").
+   - ESTOPIM: o que disparou tudo ("72 horas depois, alguém já tinha feito um
+     jailbreak num deles, usando uma função de achar falhas em código...").
+   - ESCALADA: a reação em cadeia, um fato puxando o outro ("isso acendeu o alarme
+     no governo dos EUA, que por controle de exportação proibiu o uso por
+     estrangeiros... só que a Anthropic não conseguia bloquear em tempo real, e
+     pra obedecer teve que desligar pra TODO MUNDO").
+   Cada frase é um novo passo da história, ligado por "aí...", "X horas depois...",
+   "isso obrigou...", "só que...". Ritmo RÁPIDO, sem frase morta. A retenção vem do
+   ENREDO andando e dos stakes subindo — NÃO de enrolar ou esconder a resposta com
+   teasing vazio. A pessoa fica porque a história está acontecendo, não porque você
+   prometeu um segredo e ficou empurrando com a barriga.
+3. CLÍMAX E FECHO (final): a história chega no ponto mais alto — o quadro completo,
+   a virada de maior impacto, o "tamanho" real do que aconteceu. Logo depois, UMA
+   frase de consequência/sentido que aterrissa o peso disso. NÃO SINALIZE QUE ESTÁ
+   ACABANDO; o vídeo não pode "desligar". A última frase é uma AFIRMAÇÃO SECA e
+   para ali. PROIBIDO terminar com PERGUNTA de qualquer tipo (CTA "e você, o que
+   acha?" ou retórica), pedir like/comentário, ou usar frases de encerramento ("no
+   fim das contas", "então é isso", "enfim"). Sem ponto de interrogação na frase
+   final. Melhor ainda: feche reconectando com o gancho (loop), sem nunca dizer
+   que terminou.
+
+TOM GUIADO PELO SENTIMENTO: o campo "sentimento" diz qual é a emoção dominante da
+trend (ex.: indignação, medo, deboche, euforia, ceticismo, fascínio). É ELE que
+dirige o vídeo: o ângulo da história, quais fatos você enfatiza, onde está o
+clímax e a entrega da narração (as audio tags). Indignação pede tom de denúncia;
+medo, tom de alerta; deboche, ironia; fascínio, deslumbre. Um roteiro sem emoção
+clara fica neutro e CHATO — comprometa-se com o sentimento do começo ao fim.
 
 O roteiro deve ser narrável em cerca de {duracao} segundos (aproximadamente
 {palavras} palavras).
@@ -241,6 +354,12 @@ roteiro (NUNCA pode haver um trecho da narração sem imagem na tela). REGRAS:
   fotos de banco de imagens (stock) e imagens geradas por IA. Logos, retratos e
   fotos de lugares são bem-vindos como contexto — só não deixe que TODAS as
   imagens sejam apenas logos.
+- UM assunto por consulta. NÃO peça imagem composta ("Claude and ChatGPT logos
+  side by side", "A e B juntos") — isso não existe como foto; busque um de cada
+  vez. NÃO use consulta de conceito abstrato que só devolve stock ("data center
+  server room", "person using laptop", "automation concept"): ancore em nome
+  próprio + fato (ex.: troque "AI outage concept" por "Claude status page outage
+  screenshot").
 - Prefira assuntos visualmente documentados e fáceis de achar em boa resolução.
 - Em "trecho", copie literalmente a parte do texto_video em que a imagem deve
   aparecer (substring exata do texto_video, sem alterar nada). Distribua as
@@ -264,6 +383,7 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"{i}. {t['trend']}\n"
             f"   Resumo: {t['resumo']}\n"
             f"   Engajamento: {t.get('engajamento', '?')}\n"
+            f"   Sentimento: {t.get('sentimento', '?')}\n"
             f"   Apelo visual: {t.get('apelo_visual', '?')}"
         )
     return "\n".join(linhas)
@@ -335,7 +455,9 @@ def gerar_roteiro(
 
     conteudo = (
         f"TREND ESCOLHIDA: {trend_escolhida['trend']}\n"
-        f"Resumo da trend: {trend_escolhida.get('resumo', '')}\n\n"
+        f"Resumo da trend: {trend_escolhida.get('resumo', '')}\n"
+        f"Sentimento em volta da trend (clima dos posts no X): "
+        f"{trend_escolhida.get('sentimento', '?')}\n\n"
         "NOTÍCIAS RECENTES SOBRE A TREND:\n" + _resumo_noticias(noticias)
     )
 
@@ -356,6 +478,13 @@ def gerar_roteiro(
 
     roteiro = json.loads(resposta.choices[0].message.content)
     print(f"[roteiro] Tema do dia: {roteiro['tema']}")
+    if roteiro.get("sentimento"):
+        print(f"[roteiro] Sentimento/ângulo: {roteiro['sentimento']}")
     print(f"[roteiro] Título: {roteiro['titulo']}")
+    if roteiro.get("ganchos_candidatos"):
+        print(
+            f"[roteiro] {len(roteiro['ganchos_candidatos'])} ganchos testados; "
+            f"escolhido: {roteiro.get('gancho_escolhido', '')}"
+        )
     print(f"[roteiro] {len(roteiro['imagens'])} imagens-chave definidas")
     return roteiro

@@ -30,6 +30,28 @@ MAGICAS = {
 
 TAMANHO_MINIMO = 5_000  # bytes; descarta thumbnails/ícones minúsculos
 
+# Domínios de banco de imagens (stock): não são descartados, mas vão pro FIM da
+# fila para que fotos reais do fato sejam tentadas primeiro.
+DOMINIOS_STOCK = (
+    "shutterstock", "istockphoto", "gettyimages", "adobestock", "stock.adobe",
+    "dreamstime", "alamy", "123rf", "depositphotos", "freepik", "vecteezy",
+    "pexels", "unsplash", "pixabay", "stockphoto", "bigstockphoto", "canva",
+)
+
+
+def _e_stock(url: str) -> bool:
+    return any(d in url.lower() for d in DOMINIOS_STOCK)
+
+
+# CDNs que exigem autenticação/referer e respondem 403 a download direto: nunca
+# baixam, então são descartados antes de virarem candidatos (evita tentativas
+# desperdiçadas).
+DOMINIOS_BLOQUEADOS = ("cdninstagram.com", "fbcdn.net")
+
+
+def _bloqueado(url: str) -> bool:
+    return any(d in url.lower() for d in DOMINIOS_BLOQUEADOS)
+
 PADRAO_OG_IMAGE = re.compile(
     r"<meta[^>]+(?:property|name)=[\"'](?:og:image|twitter:image)[\"'][^>]+"
     r"content=[\"']([^\"']+)[\"']",
@@ -165,18 +187,20 @@ def _candidatos(dados: dict) -> list[str]:
     paginas: list[str] = []
     for img in imagens:
         url = img.get("imageUrl")
-        if url:
+        if url and not _bloqueado(url):
             lado = _lado_menor(img)
             destino = pequenas if lado and lado < LADO_MINIMO else grandes
             destino.append((lado, url))
         pagina = img.get("url")
-        if pagina:
+        if pagina and not _bloqueado(pagina):
             paginas.append(pagina)
 
-    # maior primeiro; dimensão 0 (desconhecida) por último dentro do tier
-    chave_ord = lambda x: (x[0] == 0, -x[0])  # noqa: E731
+    # não-stock primeiro; depois maior primeiro; dimensão 0 (desconhecida) por
+    # último dentro do tier — fotos reais do fato vêm antes de banco de imagens
+    chave_ord = lambda x: (_e_stock(x[1]), x[0] == 0, -x[0])  # noqa: E731
     grandes.sort(key=chave_ord)
     pequenas.sort(key=chave_ord)
+    paginas.sort(key=_e_stock)
     ordenadas = [u for _, u in grandes] + [u for _, u in pequenas] + paginas
     return list(dict.fromkeys(ordenadas))
 

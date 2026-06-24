@@ -40,6 +40,9 @@ formato:
              empresas e números concretos que apareceram nos posts",
   "engajamento": "uma frase sobre o quão quente está (volume de posts, reações,
                   quem está comentando)",
+  "sentimento": "a EMOÇÃO dominante nos posts (ex.: indignação, medo, deboche,
+                 euforia, ceticismo, fascínio) e por quê — qual sentimento está
+                 movendo a conversa, não só o fato",
   "apelo_visual": "uma frase sobre o quanto o assunto rende boas imagens reais
                    (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo
                    e por quê",
@@ -104,6 +107,7 @@ def coletar_trends(cfg: Config) -> list[dict]:
             "trend": t.get("trend", "").strip(),
             "resumo": t.get("resumo", "").strip(),
             "engajamento": t.get("engajamento", "").strip(),
+            "sentimento": t.get("sentimento", "").strip(),
             "apelo_visual": t.get("apelo_visual", "").strip(),
             "data": t.get("data", ""),
         }
