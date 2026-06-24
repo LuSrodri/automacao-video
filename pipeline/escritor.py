@@ -64,8 +64,11 @@ ESQUEMA_ROTEIRO = {
             "titulo": {
                 "type": "string",
                 "description": (
-                    "Título chamativo do vídeo, no idioma definido nas "
-                    "instruções, até 90 caracteres."
+                    "Título do vídeo, no idioma definido nas instruções, até 90 "
+                    "caracteres. Ele é parte do gancho: tem que abrir uma LACUNA "
+                    "DE CURIOSIDADE (nomear o suficiente pra dar tesão, esconder "
+                    "o payoff) e plantar FOMO. NUNCA entregue a resposta no "
+                    "título — se dá pra ler e não precisar do vídeo, está errado."
                 ),
             },
             "descricao": {
@@ -80,8 +83,11 @@ ESQUEMA_ROTEIRO = {
                 "type": "string",
                 "description": (
                     "Texto/roteiro narrado do vídeo, no idioma definido nas "
-                    "instruções. Dinâmico, rápido e direto ao ponto, com gancho "
-                    "impecável nos primeiros 3 segundos e recompensa no final."
+                    "instruções. Dinâmico, rápido e direto ao ponto. A PRIMEIRA "
+                    "FRASE abre uma lacuna de curiosidade (provoca, não informa; "
+                    "não entrega a resposta) e planta FOMO; o desenvolvimento "
+                    "mantém a lacuna aberta em camadas; o final paga a dívida com "
+                    "a recompensa que o gancho prometeu."
                 ),
             },
             "imagens": {
@@ -167,23 +173,56 @@ tecnologia e inteligência artificial. {foco}
 Você recebe a TREND escolhida para o vídeo e NOTÍCIAS recentes sobre ela. Use as
 notícias para acertar fatos, nomes, empresas, datas e números — não invente.
 
+REGRA DE OURO — ONDE MORA O APELO: curiosidade e FOMO vivem QUASE INTEIRAMENTE no
+gancho (os ~3 primeiros segundos e a primeira frase). Não no vídeo todo, não no
+visual, não no ritmo. Vivem na PROMESSA INICIAL. O resto do roteiro só existe pra
+pagar a dívida que o gancho criou. Se o gancho for morno, nada salva o vídeo.
+
+O nome do jogo é criar uma LACUNA DE CURIOSIDADE: dizer o suficiente pra pessoa
+QUERER saber, e esconder o suficiente pra ela TER QUE FICAR pra descobrir. O
+gancho não informa — ele provoca. Erro fatal: informar demais cedo demais. No
+instante em que o título/primeira frase já entrega a resposta, a curiosidade
+morre e a pessoa desliza.
+- RUIM (informa demais, curiosidade morna): "A OpenAI transformou outdoors em um
+  jogo para desenvolvedores." — já contou tudo; não sobrou nada pra descobrir.
+- BOM (abre lacuna): "Tem um código escondido nos outdoors da OpenAI espalhados
+  pela cidade... e quem decifrar primeiro ganha algo que ninguém esperava." —
+  nomeia o suficiente pra dar tesão, esconde o payoff.
+
+FOMO: a sensação de "todo mundo vai saber disso, menos eu, se eu deslizar". O
+gancho tem que plantar que isso é grande, que já está acontecendo, e que ficar de
+fora é o vexame. Use sinais de urgência e de "manada" quando forem verdadeiros
+(já viralizou, todo mundo está testando, mudou as regras do jogo da noite pro
+dia).
+
 Escreva o roteiro narrado (campo texto_video) seguindo a CURVA DE RETENÇÃO de um
 vídeo curto que precisa segurar a pessoa até o fim:
 
-1. GANCHO (primeiros ~3 segundos): a primeira frase tem que ser IMPECÁVEL e
-   irresistível — uma afirmação chocante, um número absurdo, uma pergunta
-   provocadora ou uma promessa clara do que a pessoa vai descobrir. Nada de
-   "Hoje vamos falar sobre...". Crie uma lacuna de curiosidade imediata.
-2. DESENVOLVIMENTO: cada frase puxa a próxima. Entregue a informação em camadas,
-   adiando a revelação principal, criando pequenas tensões ("mas tem um detalhe",
-   "e foi aí que..."). O ritmo é RÁPIDO, dinâmico e direto ao ponto — sem
-   enrolação, sem frases mortas, sem pausas. Toda frase tem que justificar o
-   tempo dela na tela.
-3. RECOMPENSA (final): entregue a revelação/payoff que o gancho prometeu, de
-   forma que a pessoa sinta que VALEU A PENA ter ficado até o fim — uma
-   conclusão satisfatória, uma virada, um dado que amarra tudo ou uma opinião
-   forte. A pessoa não pode se sentir enganada. Termine com um gancho de
-   engajamento (pergunta/opinião que provoque comentários).
+1. GANCHO (primeiros ~3 segundos): a primeira frase é 80% do trabalho. Ela tem
+   que abrir uma LACUNA, não fechar. Mire em uma destas formas (escolha a que o
+   fato permitir, na ordem de força):
+   - O segredo/detalhe escondido: insinue que existe algo surpreendente SEM
+     dizer o que é ("ninguém percebeu o que a OpenAI fez de verdade aqui...").
+   - A virada contraintuitiva: prometa que o óbvio está errado ("todo mundo
+     achou que era X. Não é.").
+   - O número/fato absurdo apresentado como enigma, não como dado solto.
+   - A consequência alarmante: o que isso muda pra QUEM ESTÁ ASSISTINDO.
+   PROIBIDO: "Hoje vamos falar sobre...", abrir explicando o contexto, ou
+   entregar a conclusão na primeira frase. Se dá pra ler a primeira frase e não
+   precisar do resto, o gancho falhou — reescreva.
+2. DESENVOLVIMENTO (a tensão da lacuna aberta): cada frase só existe pra puxar a
+   próxima. Você abriu uma lacuna no gancho — NÃO feche cedo. Entregue em
+   camadas, adiando a revelação principal, e abra micro-lacunas no meio do
+   caminho ("mas tem um detalhe que muda tudo", "e foi aí que...", "só que
+   ninguém tinha visto isso..."). Cada vez que você quase entrega, abre outra
+   pontinha. Ritmo RÁPIDO, sem enrolação, sem frase morta, sem contexto que não
+   alimente a curiosidade. Toda frase justifica o tempo dela na tela.
+3. RECOMPENSA (final): FECHE a lacuna que o gancho abriu — pague a dívida. A
+   pessoa tem que sentir "caramba, valeu ter ficado", não "me enganaram". Entregue
+   a virada/o segredo/o número que amarra tudo, com uma opinião forte ou uma
+   consequência clara. Sem payoff, o vídeo vira clickbait e o algoritmo pune.
+   Termine com um gancho de engajamento (pergunta/opinião polêmica que provoque
+   comentário).
 
 O roteiro deve ser narrável em cerca de {duracao} segundos (aproximadamente
 {palavras} palavras).
