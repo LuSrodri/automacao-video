@@ -2,6 +2,8 @@
 
 import base64
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import requests
@@ -9,6 +11,47 @@ import requests
 from .config import Config
 
 API_BASE = "https://api.elevenlabs.io/v1"
+
+# A narração é acelerada para ficar mais dinâmica; os timestamps do alinhamento
+# são reescalados na mesma proporção para as legendas/imagens seguirem em sincronia.
+VELOCIDADE = 1.1
+
+
+def _acelerar_audio(audio: Path, fator: float) -> bool:
+    """Acelera o MP3 em `fator` (atempo) no lugar. Devolve True se funcionou."""
+    if fator == 1.0:
+        return False
+    if shutil.which("ffmpeg") is None:
+        print("[audio] ffmpeg ausente; narração não foi acelerada.")
+        return False
+    tmp = audio.with_name(audio.stem + "_acel" + audio.suffix)
+    resultado = subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-i", str(audio),
+            "-filter:a", f"atempo={fator}",
+            str(tmp),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if resultado.returncode != 0:
+        print(f"[audio] Falha ao acelerar narração; usando original.\n"
+              f"{resultado.stderr[-300:]}")
+        tmp.unlink(missing_ok=True)
+        return False
+    tmp.replace(audio)
+    return True
+
+
+def _reescalar_alinhamento(alinhamento: dict, fator: float) -> dict:
+    """Divide os timestamps por `fator` (áudio mais rápido = tempos menores)."""
+    for chave in ("character_start_times_seconds", "character_end_times_seconds"):
+        tempos = alinhamento.get(chave)
+        if tempos:
+            alinhamento[chave] = [
+                None if t is None else t / fator for t in tempos
+            ]
+    return alinhamento
 
 
 def gerar_narracao(cfg: Config, texto: str, destino: Path) -> tuple[Path, dict]:
@@ -44,6 +87,11 @@ def gerar_narracao(cfg: Config, texto: str, destino: Path) -> tuple[Path, dict]:
     alinhamento = dados.get("alignment") or {}
     if not alinhamento:
         print("[aviso] ElevenLabs não retornou alinhamento; legendas serão estimadas.")
+
+    if _acelerar_audio(destino, VELOCIDADE):
+        alinhamento = _reescalar_alinhamento(alinhamento, VELOCIDADE)
+        print(f"[audio] Narração acelerada em {VELOCIDADE}x.")
+
     (destino.parent / "alinhamento.json").write_text(
         json.dumps(alinhamento, ensure_ascii=False), encoding="utf-8"
     )

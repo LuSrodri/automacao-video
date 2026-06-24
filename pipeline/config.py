@@ -23,7 +23,7 @@ class Config:
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
     tts_model: str = "eleven_v3"
-    video_duracao: int = 60
+    video_duracao: int = 35
     janela_horas: int = 24
     num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
     num_noticias: int = 6  # quantas notícias buscar (Firecrawl news) p/ enriquecer
@@ -95,7 +95,7 @@ def carregar_config() -> Config:
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
-        video_duracao=int(os.getenv("VIDEO_DURACAO", "60")),
+        video_duracao=int(os.getenv("VIDEO_DURACAO", "35")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
         num_noticias=int(os.getenv("NUM_NOTICIAS", "6")),

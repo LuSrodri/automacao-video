@@ -1,16 +1,20 @@
 """Geração das legendas sincronizadas (formato ASS, queimadas pelo ffmpeg).
 
-Quando nenhuma imagem está na tela, a legenda aparece centralizada no meio;
-quando há imagem, ela desce para a parte inferior (a 20% de altura), liberando
-o centro para a imagem. Tipografia Barlow, texto preto com borda branca.
+As legendas aparecem UMA PALAVRA POR VEZ, sempre em MAIÚSCULAS, com uma leve
+animação de entrada (pop + fade). Quando nenhuma imagem está na tela, a palavra
+fica centralizada no meio; quando há imagem, ela vai para a parte de baixo
+(deixando o centro livre para a imagem). Tipografia Barlow, texto preto com
+borda branca.
 """
 
 import re
 from pathlib import Path
 
-MAX_CHARS_LINHA = 18  # tamanho máximo de cada legenda exibida
-MAX_PALAVRAS = 4
 MIN_EXIBICAO = 0.35  # segundos
+
+# Animação de entrada (sutil): a palavra surge a 82% do tamanho e cresce até
+# 100% em 140 ms, com um fade rápido. São tags de override do próprio ASS.
+ANIM = r"{\fscx82\fscy82\t(0,140,\fscx100\fscy100)\fad(80,40)}"
 
 CABECALHO = """\
 [Script Info]
@@ -73,30 +77,15 @@ def _palavras_com_tempos(texto: str, alinhamento: dict, dur_total: float) -> lis
 
 
 def _agrupar(palavras: list[dict]) -> list[dict]:
-    """Agrupa palavras em legendas curtas (estilo vídeo vertical)."""
-    grupos, atual = [], []
-    for p in palavras:
-        candidato = " ".join([*(x["texto"] for x in atual), p["texto"]])
-        if atual and (len(candidato) > MAX_CHARS_LINHA or len(atual) >= MAX_PALAVRAS):
-            grupos.append(atual)
-            atual = []
-        atual.append(p)
-        # Fim de frase encerra a legenda, para não misturar frases
-        if p["texto"].rstrip('"').rstrip("'").endswith((".", "!", "?", "…")):
-            grupos.append(atual)
-            atual = []
-    if atual:
-        grupos.append(atual)
-
-    eventos = []
-    for g in grupos:
-        eventos.append(
-            {
-                "texto": " ".join(x["texto"] for x in g),
-                "inicio": g[0]["inicio"],
-                "fim": max(g[-1]["fim"], g[0]["inicio"] + MIN_EXIBICAO),
-            }
-        )
+    """Uma legenda por palavra (estilo karaokê de vídeo vertical)."""
+    eventos = [
+        {
+            "texto": p["texto"],
+            "inicio": p["inicio"],
+            "fim": max(p["fim"], p["inicio"] + MIN_EXIBICAO),
+        }
+        for p in palavras
+    ]
     # Evita sobreposição entre legendas consecutivas
     for k in range(len(eventos) - 1):
         eventos[k]["fim"] = min(eventos[k]["fim"], eventos[k + 1]["inicio"])
@@ -134,25 +123,23 @@ def gerar_legendas(
     palavras = _palavras_com_tempos(texto, alinhamento, dur_total)
     eventos = _agrupar(palavras)
 
-    tam_centro = max(48, round(largura * 0.125))
-    tam_inferior = max(32, round(largura * 0.085))
+    tam_centro = max(56, round(largura * 0.150))
+    tam_inferior = max(40, round(largura * 0.110))
     corpo = CABECALHO.format(
         largura=largura,
         altura=altura,
         tam_centro=tam_centro,
         tam_inferior=tam_inferior,
-        margem_v=round(altura * 0.20),
+        margem_v=round(altura * 0.26),
     )
 
     linhas = []
     for ev in eventos:
         central = not _tem_imagem(ev["inicio"], ev["fim"], intervalos)
         estilo = "Centro" if central else "Inferior"
-        texto_ev = ev["texto"].replace("{", "(").replace("}", ")")
-        if central:
-            texto_ev = texto_ev.upper()
+        palavra = ev["texto"].replace("{", "(").replace("}", ")").upper()
         linhas.append(
-            f"Dialogue: 0,{_ts(ev['inicio'])},{_ts(ev['fim'])},{estilo},,0,0,0,,{texto_ev}"
+            f"Dialogue: 0,{_ts(ev['inicio'])},{_ts(ev['fim'])},{estilo},,0,0,0,,{ANIM}{palavra}"
         )
 
     destino.write_text(corpo + "\n".join(linhas) + "\n", encoding="utf-8")

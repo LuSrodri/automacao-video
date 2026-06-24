@@ -24,6 +24,10 @@ ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça a imagem nítida)
 ZOOM_MAX = 1.15  # zoom máximo da animação
 ZOOM_RATE = 0.0008  # incremento de zoom por quadro
 
+# Efeito sonoro de "woosh" tocado em cada transição entre imagens.
+WOOSH = RAIZ / "assets" / "woosh.mp3"
+WOOSH_VOL = 0.5  # volume do efeito relativo à narração
+
 # Branding discreto no topo: logo do YouTube Shorts + @usuário do canal.
 LOGO_PADRAO = RAIZ / "assets" / "YouTube-Shorts-Logo.png"
 FONTE_HANDLE = RAIZ / "fonts" / "Barlow-Bold.ttf"
@@ -231,8 +235,15 @@ def montar_video(
             if i < n - 1 else ""
         )
 
-        # Divide a entrada em fundo (borrado) e frente (nítida, com zoom).
-        filtros.append(f"[{idx}:v]fps={FPS},format=rgba,split[in_bg{i}][in_fg{i}]")
+        # Achata sobre BRANCO antes de dividir: imagens com fundo transparente
+        # (logos, recortes em PNG) ganham um fundo branco sólido em vez de deixar
+        # o vídeo vazar por trás. Fotos opacas não mudam (o branco fica coberto).
+        filtros.append(f"color=c=white:s={larg_img}x{alt_img}:r={FPS}[wbg{i}]")
+        filtros.append(f"[{idx}:v]fps={FPS},format=rgba[src{i}]")
+        filtros.append(
+            f"[wbg{i}][src{i}]overlay=0:0:shortest=1,format=rgba,"
+            f"split[in_bg{i}][in_fg{i}]"
+        )
 
         # Fundo: a própria imagem cobrindo a tela toda, borrada e levemente escura.
         filtros.append(
@@ -261,8 +272,16 @@ def montar_video(
             f"[{corrente}][bg{i}]overlay=0:0:eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[b{i}]"
         )
+        # "Woosh": a imagem nítida desliza para o centro durante o crossfade,
+        # alternando o lado (direita/esquerda), em sincronia com o efeito sonoro.
+        if i == 0:
+            x_fg = "(W-w)/2"
+        else:
+            sinal = "+" if i % 2 == 0 else "-"
+            prog = f"(1-min(1\\,(t-{ini:.2f})/{CROSSFADE:.2f}))"
+            x_fg = f"(W-w)/2{sinal}(W+w)/2*{prog}"
         filtros.append(
-            f"[b{i}][fg{i}]overlay=(W-w)/2:(H-h)/2:eof_action=pass"
+            f"[b{i}][fg{i}]overlay={x_fg}:(H-h)/2:eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[f{i}]"
         )
         corrente = f"f{i}"
@@ -323,10 +342,39 @@ def montar_video(
         )
         corrente = "vbrand"
 
+    # Efeito sonoro de woosh em cada transição (no instante em que a próxima
+    # imagem começa a deslizar). A primeira imagem não tem transição de entrada.
+    mapa_audio = "1:a"
+    transicoes = [ini for _, (ini, _) in pares[1:]]
+    if WOOSH.is_file() and transicoes:
+        idx_woosh = 2 + n + (1 if usar_logo else 0)
+        comando += ["-i", str(WOOSH)]
+        m = len(transicoes)
+        filtros.append(
+            "[1:a]aformat=channel_layouts=stereo:sample_rates=44100[narr]"
+        )
+        filtros.append(
+            f"[{idx_woosh}:a]asplit={m}" + "".join(f"[ws{k}]" for k in range(m))
+        )
+        rotulos = []
+        for k, t in enumerate(transicoes):
+            ms = max(0, round(t * 1000))
+            filtros.append(
+                f"[ws{k}]adelay={ms}:all=1,"
+                f"aformat=channel_layouts=stereo:sample_rates=44100,"
+                f"volume={WOOSH_VOL}[wd{k}]"
+            )
+            rotulos.append(f"[wd{k}]")
+        filtros.append(
+            f"[narr]{''.join(rotulos)}amix=inputs={m + 1}:normalize=0"
+            f":duration=first,alimiter=limit=0.97[aout]"
+        )
+        mapa_audio = "[aout]"
+
     comando += [
         "-filter_complex", ";".join(filtros),
         "-map", f"[{corrente}]",
-        "-map", "1:a",
+        "-map", mapa_audio,
         "-t", f"{duracao:.2f}",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
