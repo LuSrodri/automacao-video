@@ -1,8 +1,10 @@
-"""Coleta de posts recentes das contas selecionadas do X.
+"""Coleta das trends mais faladas do X nas últimas 24h.
 
 Usa a ferramenta X Search da xAI (via Responses API compatível com OpenAI),
 o que dispensa credenciais e créditos da X API: tudo é cobrado na mesma
-conta xAI usada pelo Grok Imagine.
+conta xAI usada pelo Grok. A coleta devolve as N trends mais discutidas,
+cada uma com um resumo do que está sendo dito e uma nota de apelo visual,
+para o roteirista escolher a de maior chance de viralizar.
 """
 
 import json
@@ -13,30 +15,39 @@ from openai import OpenAI
 
 from .config import Config
 
-INSTRUCOES_CONTAS = """\
-Use a busca no X para listar os posts e trends mais relevantes sobre tecnologia e
-inteligência artificial publicados por contas de alto engajamento (sendo em português ou inglês)
-ou temas que estão em alta no momento.\
+INSTRUCOES_TRENDING = """\
+Use a busca no X para mapear AS {n} TRENDS MAIS FALADAS das últimas {horas} horas
+sobre tecnologia e inteligência artificial: anúncios e lançamentos de empresas e
+modelos, polêmicas, rumores, quedas de serviço, pesquisas e viradas que estão
+DOMINANDO a conversa. Priorize o que tem maior volume de posts, engajamento e
+reverberação, vindo de fontes confiáveis e usuários reconhecidos.\
 """
 
-INSTRUCOES_TRENDING = """\
-Use a busca no X para encontrar as threads e posts MAIS DISCUTIDOS da últimas horas
-sobre tecnologia e inteligência artificial: anúncios de empresas, lançamentos
-de modelos e produtos, pesquisas e polêmicas que estão dominando a conversa, 
-startups brasileiras e internacionais, rumores, quedas de serviços e afins.
-Priorize posts virais e de grande engajamento, vindos de fontes confiáveis,
-usuários reconhecidos e recorrentes, ou temas altamente em discussão ou polêmicos.\
+INSTRUCOES_CONTAS = """\
+Use a busca no X para mapear AS {n} TRENDS MAIS FALADAS das últimas {horas} horas
+sobre tecnologia e inteligência artificial nas contas indicadas. Priorize os
+assuntos com maior engajamento e reverberação.\
 """
 
 FORMATO_RESPOSTA = """
 
-Responda SOMENTE com um array JSON, sem texto antes ou depois, no formato:
-[{"conta": "username", "texto": "conteúdo completo do post", "data": "YYYY-MM-DD"}]
+Responda SOMENTE com um array JSON com EXATAMENTE {n} objetos (ou menos, se não
+houver tantas trends reais), ordenado da MAIS falada para a menos falada, no
+formato:
+[{{
+  "trend": "nome curto e claro do assunto",
+  "resumo": "2 a 4 frases explicando o que está sendo dito, com os fatos, nomes,
+             empresas e números concretos que apareceram nos posts",
+  "engajamento": "uma frase sobre o quão quente está (volume de posts, reações,
+                  quem está comentando)",
+  "apelo_visual": "uma frase sobre o quanto o assunto rende boas imagens reais
+                   (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo
+                   e por quê",
+  "data": "YYYY-MM-DD"
+}}]
 
-Inclua posts, anúncios, lançamentos, notícias de maior
-impacto, posts de usuários gerais com informações e insights relevantes,
-e opiniões com maiores reverberações. 
-Reproduza o texto dos posts fielmente, sem resumir demais.\
+Reproduza os fatos com fidelidade, sem inventar. Não escreva nada antes nem
+depois do array JSON.\
 """
 
 
@@ -50,8 +61,8 @@ def _extrair_json(texto: str) -> list[dict]:
     return json.loads(texto[inicio : fim + 1])
 
 
-def coletar_tweets(cfg: Config) -> list[dict]:
-    """Busca os posts das últimas N horas das contas configuradas."""
+def coletar_trends(cfg: Config) -> list[dict]:
+    """Busca as N trends mais faladas do X nas últimas `janela_horas` horas."""
     cliente = OpenAI(api_key=cfg.xai_api_key, base_url="https://api.x.ai/v1")
 
     agora = datetime.now(timezone.utc)
@@ -64,18 +75,22 @@ def coletar_tweets(cfg: Config) -> list[dict]:
     }
     foco_usa = (
         "\nPriorize o que está dominando a conversa NOS ESTADOS UNIDOS: "
-        "contas americanas, empresas americanas e notícias com impacto no "
-        "EUA."
+        "contas e empresas americanas e notícias com impacto nos EUA."
         if cfg.publico == "usa"
         else ""
     )
+    base = INSTRUCOES_CONTAS if cfg.contas else INSTRUCOES_TRENDING
     if cfg.contas:
         ferramenta["allowed_x_handles"] = cfg.contas
-        instrucoes = INSTRUCOES_CONTAS + foco_usa + FORMATO_RESPOSTA
-        print(f"[x] Buscando posts de {len(cfg.contas)} contas via X Search da xAI...")
+        print(f"[x] Mapeando as {cfg.num_trends} trends de {len(cfg.contas)} contas...")
     else:
-        instrucoes = INSTRUCOES_TRENDING + foco_usa + FORMATO_RESPOSTA
-        print("[x] Buscando as threads de tech/AI mais discutidas do dia...")
+        print(f"[x] Mapeando as {cfg.num_trends} trends de tech/AI mais faladas do dia...")
+
+    instrucoes = (
+        base.format(n=cfg.num_trends, horas=cfg.janela_horas)
+        + foco_usa
+        + FORMATO_RESPOSTA.format(n=cfg.num_trends)
+    )
 
     resposta = cliente.responses.create(
         model=cfg.search_model,
@@ -83,22 +98,24 @@ def coletar_tweets(cfg: Config) -> list[dict]:
         tools=[ferramenta],
     )
 
-    posts = _extrair_json(resposta.output_text)
-    tweets = [
+    brutos = _extrair_json(resposta.output_text)
+    trends = [
         {
-            "conta": p.get("conta", ""),
-            "texto": p.get("texto", ""),
-            "data": p.get("data", ""),
+            "trend": t.get("trend", "").strip(),
+            "resumo": t.get("resumo", "").strip(),
+            "engajamento": t.get("engajamento", "").strip(),
+            "apelo_visual": t.get("apelo_visual", "").strip(),
+            "data": t.get("data", ""),
         }
-        for p in posts
-        if p.get("texto")
+        for t in brutos
+        if t.get("trend") and t.get("resumo")
     ]
 
-    if not tweets:
+    if not trends:
         raise SystemExit(
-            f"Nenhum post encontrado nas últimas {cfg.janela_horas}h. "
+            f"Nenhuma trend encontrada nas últimas {cfg.janela_horas}h. "
             "Aumente JANELA_HORAS no .env ou revise as contas."
         )
 
-    print(f"[x] {len(tweets)} posts coletados")
-    return tweets
+    print(f"[x] {len(trends)} trends coletadas")
+    return trends

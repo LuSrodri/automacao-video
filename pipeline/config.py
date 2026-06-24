@@ -25,6 +25,8 @@ class Config:
     tts_model: str = "eleven_v3"
     video_duracao: int = 60
     janela_horas: int = 24
+    num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
+    num_noticias: int = 6  # quantas notícias buscar (Firecrawl news) p/ enriquecer
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
@@ -95,6 +97,8 @@ def carregar_config() -> Config:
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
         video_duracao=int(os.getenv("VIDEO_DURACAO", "60")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
+        num_trends=int(os.getenv("NUM_TRENDS", "10")),
+        num_noticias=int(os.getenv("NUM_NOTICIAS", "6")),
         youtube_client_id=os.getenv("YOUTUBE_CLIENT_ID", ""),
         youtube_client_secret=os.getenv("YOUTUBE_CLIENT_SECRET", ""),
         youtube_refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN", ""),

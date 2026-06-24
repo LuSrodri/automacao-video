@@ -227,7 +227,7 @@ def _buscar_um(cfg: Config, consulta: str) -> list[str]:
 
 def buscar_imagens(cfg: Config, itens: list[dict], pasta: Path) -> list[dict]:
     """Busca e baixa as imagens; devolve [{"caminho": Path, "trecho": str}, ...]."""
-    itens = itens[:6]
+    itens = itens[:10]
     print(f"[imagens] Buscando {len(itens)} imagens via Firecrawl Search...")
 
     # Sequencial e com um pequeno intervalo entre as chamadas.

@@ -1,8 +1,11 @@
 """Montagem final do vídeo com ffmpeg.
 
-O fundo é uma tela branca; a narração TTS entra como trilha. Cada imagem-chave
-entra centralizada ocupando toda a largura, estática, sincronizada com o
-trecho da narração a que se refere.
+O fundo de cada momento é a PRÓPRIA imagem daquele trecho, ampliada para cobrir
+a tela toda e BORRADA; por cima entra a imagem nítida em largura total, com uma
+animação suave de zoom (Ken Burns). As imagens cobrem 100% da narração — nunca
+há um instante sem figura na tela — e fazem crossfade entre si. A narração TTS
+(sem silêncios) é a trilha, e o branding (logo do Shorts + @usuário) fica no
+topo com bordas brancas.
 """
 
 import subprocess
@@ -13,17 +16,22 @@ from .config import RAIZ
 
 FPS = 30
 MIN_EXIBICAO = 2.0  # segundos mínimos de exibição de cada imagem
-MAX_EXIBICAO = 6.0  # segundos máximos de exibição de cada imagem
-FOLGA = 0.25  # intervalo entre uma imagem e a seguinte
-FADE = 0.35  # duração do fade de entrada/saída da imagem
+MAX_EXIBICAO = 10.0  # segundos máximos de exibição de cada imagem
+CROSSFADE = 0.4  # duração do crossfade entre imagens consecutivas
+FADE = 0.35  # duração do fade de entrada do branding
+BLUR_SIGMA = 18  # intensidade do desfoque do fundo
+ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça a imagem nítida)
+ZOOM_MAX = 1.15  # zoom máximo da animação
+ZOOM_RATE = 0.0008  # incremento de zoom por quadro
 
 # Branding discreto no topo: logo do YouTube Shorts + @usuário do canal.
 LOGO_PADRAO = RAIZ / "assets" / "YouTube-Shorts-Logo.png"
 FONTE_HANDLE = RAIZ / "fonts" / "Barlow-Bold.ttf"
 LOGO_LARGURA_FRAC = 0.30  # largura do logo como fração da largura do vídeo
-LOGO_OPACIDADE = 0.55  # opacidade do logo (0 a 1)
+LOGO_OPACIDADE = 0.85  # opacidade do logo (0 a 1)
 LOGO_Y_FRAC = 0.06  # distância do topo como fração da altura
-HANDLE_OPACIDADE = 0.65  # opacidade do nome de usuário
+LOGO_BORDA_FRAC = 0.02  # espessura da borda branca do logo (fração da sua largura)
+HANDLE_OPACIDADE = 0.9  # opacidade do nome de usuário
 HANDLE_FONTE_FRAC = 0.030  # tamanho da fonte como fração da largura
 HANDLE_GAP_FRAC = 0.80  # posição do @usuário dentro da caixa do logo
 
@@ -83,52 +91,46 @@ def _ordenar(sobreposicoes: list[dict]) -> list[dict]:
 
 def _calcular_janelas(
     sobreposicoes: list[dict], duracao: float
-) -> list[tuple[float, float] | None]:
-    """Converte frações da narração em janelas (início, fim) em segundos.
+) -> list[tuple[float, float]]:
+    """Janelas (início, fim) contíguas que cobrem TODA a narração.
 
-    Devolve uma lista alinhada com `sobreposicoes`; None indica que não
-    sobrou espaço no vídeo para exibir aquela imagem.
+    Cada imagem começa no ponto da narração do seu trecho e fica na tela até a
+    próxima começar (a última vai até o fim do vídeo), sem buracos. Imagens sem
+    sincronização conhecida são distribuídas uniformemente.
     """
-    janelas = []
-    passo = duracao / max(len(sobreposicoes), 1)
-    for i, s in enumerate(sobreposicoes):
-        if s.get("inicio_frac") is None:
-            # Sem sincronização conhecida: distribui uniformemente
-            ini, fim = i * passo + 0.3, (i + 1) * passo - 0.3
-        else:
-            ini = s["inicio_frac"] * duracao
-            fim = max(s["fim_frac"] * duracao, ini + MIN_EXIBICAO)
-        # Cada imagem fica no máximo MAX_EXIBICAO segundos na tela
-        fim = min(fim, ini + MAX_EXIBICAO)
-        janelas.append((ini, fim))
+    n = len(sobreposicoes)
+    if n == 0:
+        return []
 
-    # Remove sobreposições entre janelas consecutivas (a lista já chega
-    # ordenada pelo início da narração)
-    ajustadas: list[tuple[float, float] | None] = []
-    fim_anterior = 0.0
-    for ini, fim in janelas:
-        ini = max(0.0, ini, fim_anterior + FOLGA)
-        fim = min(max(fim, ini + MIN_EXIBICAO), ini + MAX_EXIBICAO, duracao - 0.1)
-        if fim - ini < 1.0:
-            # Sem espaço restante no vídeo para esta imagem
-            ajustadas.append(None)
-            continue
-        ajustadas.append((ini, fim))
-        fim_anterior = fim
-    return ajustadas
+    passo = duracao / n
+    inicios = [i * passo for i in range(n)]
+    for i, s in enumerate(sobreposicoes):
+        frac = s.get("inicio_frac")
+        if frac is not None:
+            inicios[i] = max(0.0, frac * duracao)
+
+    # Garante ordem crescente com um mínimo de espaçamento e início em 0
+    inicios[0] = 0.0
+    for i in range(1, n):
+        inicios[i] = max(inicios[i], inicios[i - 1] + 0.5)
+        inicios[i] = min(inicios[i], duracao - (n - i) * 0.5)
+
+    janelas = []
+    for i in range(n):
+        ini = inicios[i]
+        fim = inicios[i + 1] if i + 1 < n else duracao
+        janelas.append((ini, fim))
+    return janelas
 
 
 def intervalos_imagens(
     sobreposicoes: list[dict], duracao: float
 ) -> list[tuple[float, float]]:
-    """Janelas (início, fim) em que alguma imagem está na tela.
+    """Janelas em que há imagem na tela (com a cobertura total, é o vídeo todo).
 
-    Usado pelas legendas para decidir a posição de cada trecho (centralizado
-    quando não há imagem; mais abaixo quando há). Determinístico: produz as
-    mesmas janelas que `montar_video` usa para posicionar as imagens.
+    Mantido para as legendas decidirem a posição de cada trecho.
     """
-    janelas = _calcular_janelas(_ordenar(sobreposicoes), duracao)
-    return [j for j in janelas if j is not None]
+    return _calcular_janelas(_ordenar(sobreposicoes), duracao)
 
 
 def _caminho_filtro(caminho: Path) -> str:
@@ -141,6 +143,10 @@ def _texto_drawtext(texto: str) -> str:
     return texto.replace("\\", "\\\\").replace("'", r"'\''")
 
 
+def _par(valor: int) -> int:
+    return valor if valor % 2 == 0 else valor + 1
+
+
 def montar_video(
     narracao: Path,
     sobreposicoes: list[dict],
@@ -151,48 +157,95 @@ def montar_video(
     handle: str | None = None,
     logo: Path | None = LOGO_PADRAO,
 ) -> Path:
-    """Monta o vídeo final sobre um fundo branco.
+    """Monta o vídeo final com fundo borrado da própria imagem e zoom suave.
 
     `sobreposicoes`: [{"caminho": Path, "inicio_frac": float|None,
     "fim_frac": float|None}, ...] — frações (0 a 1) da narração em que a
-    imagem entra e sai; None usa distribuição uniforme.
+    imagem entra; None usa distribuição uniforme. As imagens cobrem 100% da
+    narração (sem instante vazio) e fazem crossfade entre si.
 
-    `logo`/`handle`: branding discreto no topo — o logo do YouTube Shorts e o
-    nome de usuário do canal (ex.: "@CanalDeTecnologia"). Cada um é opcional;
-    o logo só entra se o arquivo existir e o @usuário só entra se informado.
+    `logo`/`handle`: branding no topo (logo do YouTube Shorts e @usuário), ambos
+    com borda branca para destacar sobre o fundo da imagem.
     """
     _exigir_ffmpeg()
 
     duracao = duracao_audio(narracao) + 0.6
 
-    # Mantém janela e imagem pareadas: ordena pelo ponto da narração em que
-    # cada imagem entra (sem sincronização conhecida vai para o final)
     sobreposicoes = _ordenar(sobreposicoes)
     janelas = _calcular_janelas(sobreposicoes, duracao)
-    pares = [(s, j) for s, j in zip(sobreposicoes, janelas) if j is not None]
-    descartadas = len(sobreposicoes) - len(pares)
-    if descartadas:
-        print(f"[edicao] {descartadas} imagem(ns) sem espaço no vídeo, descartada(s)")
+    pares = list(zip(sobreposicoes, janelas))
+    n = len(pares)
+    for s, (ini, fim) in pares:
+        if fim - ini > MAX_EXIBICAO + 0.01:
+            print(
+                f"[edicao] aviso: imagem fica {fim - ini:.1f}s na tela "
+                f"(acima do alvo de {MAX_EXIBICAO:.0f}s)"
+            )
 
-    # Fundo branco gerado pelo ffmpeg (entrada 0); narração é a entrada 1.
+    # Base preta (entrada 0); narração é a entrada 1. Com cobertura total, a
+    # base só aparece se faltarem imagens.
     filtros = [f"[0:v]fps={FPS},format=rgba[base]"]
     corrente = "base"
 
+    comando = [
+        "ffmpeg", "-y", "-hide_banner",
+        "-f", "lavfi",
+        "-i", f"color=c=black:s={largura}x{altura}:r={FPS}:d={duracao:.2f}",
+        "-i", str(narracao),
+    ]
+
     for i, (s, (ini, fim)) in enumerate(pares):
-        dur_j = fim - ini
-        # Imagem estática: escala para a largura total (altura par via -2),
-        # com fade de entrada/saída, posicionada no instante da narração.
+        fim_render = min(fim + CROSSFADE, duracao)
+        dur_render = fim_render - ini
+        comando += ["-loop", "1", "-t", f"{dur_render:.2f}", "-i", str(s["caminho"])]
+
+        idx = i + 2
+        larg_img, alt_img = _dimensoes(s["caminho"])
+        fg_h = _par(round(largura * alt_img / max(larg_img, 1)))
+
+        fade_in = (
+            f"fade=t=in:st=0:d={CROSSFADE}:alpha=1," if i > 0 else ""
+        )
+        fade_out = (
+            f"fade=t=out:st={max(0.0, dur_render - CROSSFADE):.2f}:d={CROSSFADE}:alpha=1,"
+            if i < n - 1 else ""
+        )
+
+        # Divide a entrada em fundo (borrado) e frente (nítida, com zoom).
+        filtros.append(f"[{idx}:v]fps={FPS},format=rgba,split[in_bg{i}][in_fg{i}]")
+
+        # Fundo: a própria imagem cobrindo a tela toda, borrada e levemente escura.
         filtros.append(
-            f"[{i + 2}:v]fps={FPS},format=rgba,scale={largura}:-2,"
-            f"fade=t=in:st=0:d={FADE}:alpha=1,"
-            f"fade=t=out:st={max(0.0, dur_j - FADE):.2f}:d={FADE}:alpha=1,"
-            f"setpts=PTS-STARTPTS+{ini:.2f}/TB[img{i}]"
+            f"[in_bg{i}]scale={largura}:{altura}:force_original_aspect_ratio=increase,"
+            f"crop={largura}:{altura},gblur=sigma={BLUR_SIGMA},"
+            f"eq=brightness={ESCURECER},"
+            f"{fade_in}{fade_out}"
+            f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
+        )
+
+        # Frente: imagem nítida em largura total com zoom suave (alterna a direção).
+        if i % 2 == 0:
+            zoom = f"min(1+{ZOOM_RATE}*on,{ZOOM_MAX})"
+        else:
+            zoom = f"max({ZOOM_MAX}-{ZOOM_RATE}*on,1.0)"
+        filtros.append(
+            f"[in_fg{i}]scale={largura}:-2,"
+            f"zoompan=z='{zoom}':d=1:s={largura}x{fg_h}:fps={FPS}"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',"
+            f"format=rgba,{fade_in}{fade_out}"
+            f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
+        )
+
+        # Sobrepõe fundo e depois a frente, ambos ativos na janela (+ crossfade).
+        filtros.append(
+            f"[{corrente}][bg{i}]overlay=0:0:eof_action=pass"
+            f":enable='between(t,{ini:.2f},{fim_render:.2f})'[b{i}]"
         )
         filtros.append(
-            f"[{corrente}][img{i}]overlay=(W-w)/2:(H-h)/2"
-            f":eof_action=pass:enable='between(t,{ini:.2f},{fim:.2f})'[v{i}]"
+            f"[b{i}][fg{i}]overlay=(W-w)/2:(H-h)/2:eof_action=pass"
+            f":enable='between(t,{ini:.2f},{fim_render:.2f})'[f{i}]"
         )
-        corrente = f"v{i}"
+        corrente = f"f{i}"
 
     if legendas is not None:
         fontes = RAIZ / "fonts"
@@ -202,19 +255,28 @@ def montar_video(
         filtros.append(f"[{corrente}]{filtro_ass}[vleg]")
         corrente = "vleg"
 
-    # Branding no topo (sobre as legendas, sempre visível). O logo entra como
-    # a última entrada do ffmpeg; seu índice vem depois do fundo, da narração
-    # e de todas as imagens.
+    # Branding no topo (sobre tudo). O logo é a última entrada do ffmpeg.
     usar_logo = logo is not None and Path(logo).is_file()
     if usar_logo:
-        idx_logo = 2 + len(pares)
+        idx_logo = 2 + n
+        comando += ["-loop", "1", "-i", str(logo)]
         log_l, log_a = _dimensoes(logo)
         largura_logo = round(largura * LOGO_LARGURA_FRAC)
         altura_logo = round(largura_logo * log_a / log_l)
         y_logo = round(altura * LOGO_Y_FRAC)
+        borda = max(3, round(largura_logo * LOGO_BORDA_FRAC))
+        # Borda branca: uma cópia branca do logo, um pouco maior, atrás do logo.
         filtros.append(
-            f"[{idx_logo}:v]format=rgba,scale={largura_logo}:-1,"
-            f"colorchannelmixer=aa={LOGO_OPACIDADE},"
+            f"[{idx_logo}:v]format=rgba,scale={largura_logo}:-1,split[lg][lg2]"
+        )
+        filtros.append(
+            f"[lg2]lutrgb=r=255:g=255:b=255,scale={largura_logo + 2 * borda}:-1[halo]"
+        )
+        filtros.append(
+            f"[halo][lg]overlay=(W-w)/2:(H-h)/2[logocb]"
+        )
+        filtros.append(
+            f"[logocb]colorchannelmixer=aa={LOGO_OPACIDADE},"
             f"fade=t=in:st=0:d={FADE}:alpha=1[logo]"
         )
         filtros.append(
@@ -223,36 +285,24 @@ def montar_video(
         corrente = "vlogo"
 
     if handle and FONTE_HANDLE.is_file():
-        # Sem logo, ancora o @usuário no mesmo ponto onde o logo começaria.
         y_base = round(altura * LOGO_Y_FRAC)
         if usar_logo:
             y_handle = y_base + round(altura_logo * HANDLE_GAP_FRAC)
         else:
             y_handle = y_base
+        fonte = round(largura * HANDLE_FONTE_FRAC)
+        borda_txt = max(2, round(fonte * 0.12))
         filtros.append(
             f"[{corrente}]drawtext=fontfile='{_caminho_filtro(FONTE_HANDLE)}'"
             f":text='{_texto_drawtext(handle)}':fontcolor=black"
-            f":fontsize={round(largura * HANDLE_FONTE_FRAC)}"
+            f":borderw={borda_txt}:bordercolor=white"
+            f":fontsize={fonte}"
             f":x=(w-text_w)/2:y={y_handle}"
             f":alpha='if(lt(t,{FADE}),{HANDLE_OPACIDADE}*t/{FADE},{HANDLE_OPACIDADE})'"
             f"[vbrand]"
         )
         corrente = "vbrand"
 
-    comando = [
-        "ffmpeg", "-y",
-        "-f", "lavfi",
-        "-i", f"color=c=white:s={largura}x{altura}:r={FPS}:d={duracao:.2f}",
-        "-i", str(narracao),
-    ]
-    # -loop 1 -t: cada imagem é um PNG/JPG de um quadro; o loop a mantém na
-    # tela durante toda a sua janela (o filtro fps/fade depois faz o resto).
-    for s, (ini, fim) in pares:
-        comando += ["-loop", "1", "-t", f"{fim - ini:.2f}", "-i", str(s["caminho"])]
-    if usar_logo:
-        # -loop 1: o PNG é um único quadro; sem isso o logo apareceria só no
-        # primeiro instante. O loop é limitado pela duração do vídeo (-t).
-        comando += ["-loop", "1", "-i", str(logo)]
     comando += [
         "-filter_complex", ";".join(filtros),
         "-map", f"[{corrente}]",

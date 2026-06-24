@@ -1,15 +1,19 @@
-"""Automação de vídeos de notícias tech/AI a partir de posts do X.
+"""Automação de vídeos de notícias tech/AI a partir das trends do X.
 
 Fluxo:
-1. Coleta posts das últimas 24h no X (X Search da xAI).
-2. GPT escolhe o tema do dia e gera título, descrição e texto do vídeo (~60s),
-   evitando repetir os temas dos últimos vídeos do canal (lidos do YouTube).
-3. Firecrawl Search busca de 4 a 6 imagens-chave reais na web.
-4. ElevenLabs narra o texto (TTS).
-5. ffmpeg monta: fundo branco + narração + imagens estáticas centralizadas em
-   largura total (até 6s cada) + legendas sincronizadas (centralizadas quando
-   não há imagem, na parte inferior quando há).
-6. O resultado é salvo em output/ e registrado em videos.txt.
+1. Coleta as 10 trends mais faladas das últimas 24h no X (X Search da xAI).
+2. GPT escolhe a trend de maior apelo visual e chance de viralizar (evitando
+   repetir os últimos vídeos do canal) e define uma consulta de notícias.
+3. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
+4. GPT escreve o roteiro com curva de retenção (gancho nos 3s, desenvolvimento
+   que prende, recompensa no final) e define de 8 a 10 imagens-chave.
+5. Firecrawl Search busca as imagens reais na web.
+6. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
+7. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem instante
+   vazio) + imagem nítida com zoom suave + crossfade + legendas + branding com
+   borda branca.
+8. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
+   YouTube.
 """
 
 import argparse
@@ -22,10 +26,12 @@ from pipeline.audio import gerar_narracao
 from pipeline.busca_imagens import buscar_imagens
 from pipeline.config import carregar_config
 from pipeline.edicao import duracao_audio, intervalos_imagens, montar_video
-from pipeline.escritor import gerar_roteiro
+from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.legendas import gerar_legendas
+from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
-from pipeline.x_client import coletar_tweets
+from pipeline.silencio import aparar_silencios
+from pipeline.x_client import coletar_trends
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
 from pipeline.youtube import ultimos_publicados
@@ -86,9 +92,11 @@ def main() -> None:
         cfg.publico = "usa"
         print("[config] Modo USA: conteúdo em inglês para o público americano")
 
-    tweets = coletar_tweets(cfg)
+    trends = coletar_trends(cfg)
     recentes = ultimos_publicados(cfg, n=9)
-    roteiro = gerar_roteiro(cfg, tweets, videos_recentes=recentes)
+    selecao = selecionar_trend(cfg, trends, videos_recentes=recentes)
+    noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
+    roteiro = gerar_roteiro(cfg, selecao, trends, noticias)
 
     pasta = cfg.output_dir / f"{datetime.now():%Y-%m-%d}_{_slug(roteiro['titulo'])}"
     pasta.mkdir(parents=True, exist_ok=True)
@@ -100,6 +108,7 @@ def main() -> None:
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
     )
+    narracao, alinhamento, _ = aparar_silencios(narracao, alinhamento)
 
     largura, altura = cfg.video_largura, cfg.video_altura
     sobreposicoes = _sobreposicoes(roteiro["texto_video"], imagens)
