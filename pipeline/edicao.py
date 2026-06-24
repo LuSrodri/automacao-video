@@ -89,31 +89,51 @@ def _ordenar(sobreposicoes: list[dict]) -> list[dict]:
     )
 
 
+# Quanto puxar o início de cada imagem para a distribuição uniforme (0 = usa só
+# o ponto do trecho, gerando durações bem irregulares; 1 = ignora o trecho e
+# espaça tudo igual). 0.6 equilibra: cada imagem fica perto do momento da
+# narração que ilustra, mas sem piscar nem eternizar.
+PESO_UNIFORME = 0.6
+# Piso de duração de cada imagem, como fração do passo médio (duração/n). Garante
+# que nenhuma imagem fique pouco tempo demais na tela.
+PISO_FRACAO_PASSO = 0.5
+
+
 def _calcular_janelas(
     sobreposicoes: list[dict], duracao: float
 ) -> list[tuple[float, float]]:
     """Janelas (início, fim) contíguas que cobrem TODA a narração.
 
-    Cada imagem começa no ponto da narração do seu trecho e fica na tela até a
-    próxima começar (a última vai até o fim do vídeo), sem buracos. Imagens sem
-    sincronização conhecida são distribuídas uniformemente.
+    Cada imagem entra perto do ponto da narração do seu trecho e fica até a
+    próxima entrar (a última vai até o fim), sem buracos. Para evitar durações
+    irregulares (umas piscando, outras eternas), o início de cada imagem é uma
+    MISTURA entre o ponto do trecho e uma distribuição uniforme, e um piso de
+    duração impede janelas curtas demais. Imagens sem sincronização conhecida
+    entram na posição uniforme.
     """
     n = len(sobreposicoes)
     if n == 0:
         return []
 
     passo = duracao / n
-    inicios = [i * passo for i in range(n)]
-    for i, s in enumerate(sobreposicoes):
-        frac = s.get("inicio_frac")
-        if frac is not None:
-            inicios[i] = max(0.0, frac * duracao)
+    piso = PISO_FRACAO_PASSO * passo
 
-    # Garante ordem crescente com um mínimo de espaçamento e início em 0
+    inicios = []
+    for i, s in enumerate(sobreposicoes):
+        uniforme = i * passo
+        frac = s.get("inicio_frac")
+        if frac is None:
+            inicios.append(uniforme)
+        else:
+            alvo = max(0.0, frac * duracao)
+            inicios.append(PESO_UNIFORME * uniforme + (1 - PESO_UNIFORME) * alvo)
+
+    # Garante ordem crescente, início em 0 e duração mínima (piso) em todas,
+    # inclusive na última (reservando 'piso' para cada imagem ainda por vir).
     inicios[0] = 0.0
     for i in range(1, n):
-        inicios[i] = max(inicios[i], inicios[i - 1] + 0.5)
-        inicios[i] = min(inicios[i], duracao - (n - i) * 0.5)
+        inicios[i] = max(inicios[i], inicios[i - 1] + piso)
+        inicios[i] = min(inicios[i], duracao - (n - i) * piso)
 
     janelas = []
     for i in range(n):
