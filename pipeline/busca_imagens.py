@@ -8,6 +8,7 @@ sequência com um pequeno intervalo entre elas.
 """
 
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -20,6 +21,12 @@ INTERVALO_REQ = 0.5  # s entre chamadas (margem para o limite de taxa do Firecra
 RESULTADOS_POR_BUSCA = 15  # quantos resultados pedir por consulta (mais opções boas)
 LADO_MINIMO = 600  # px; menor lado "bom" — imagens deste tamanho p/ cima vêm primeiro
 LADO_RECUSA = 200  # px; piso duro: abaixo disto é ícone/sprite, sempre descartado
+# px; teto do MAIOR lado da imagem salva. O vídeo tem 1080 de largura e o fundo
+# de cada momento é a própria imagem borrada, então resolução acima disto não
+# agrega nada visual — só faz a montagem (edicao.py) carregar frames RGBA enormes
+# e estourar a memória do ffmpeg. As imagens vêm da web em resolução nativa (até
+# milhares de px), por isso o teto é aplicado no download.
+LADO_MAXIMO = 1280
 
 # Assinaturas de formatos aceitos (o ffmpeg lê todos)
 MAGICAS = {
@@ -124,6 +131,34 @@ def _requisitar(url: str) -> bytes | None:
         return None
 
 
+def _limitar_resolucao(caminho: Path, larg: int, alt: int) -> None:
+    """Reduz a imagem para no máximo LADO_MAXIMO no maior lado (nunca amplia).
+
+    Reescreve o arquivo no lugar via ffmpeg (já exigido pelo projeto). O filtro
+    com force_original_aspect_ratio=decrease só encolhe: imagens já pequenas
+    passam intactas. Em caso de falha, mantém o original para não interromper o
+    pipeline — uma imagem que escape o teto é melhor que um vídeo sem imagem.
+    """
+    if larg and alt and max(larg, alt) <= LADO_MAXIMO:
+        return
+    temporario = caminho.with_name(f"{caminho.stem}_tmp{caminho.suffix}")
+    filtro = (
+        f"scale=w='min({LADO_MAXIMO},iw)':h='min({LADO_MAXIMO},ih)'"
+        ":force_original_aspect_ratio=decrease"
+    )
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(caminho), "-vf", filtro, str(temporario)],
+            check=True, capture_output=True, text=True,
+        )
+        temporario.replace(caminho)
+    except (subprocess.CalledProcessError, OSError) as erro:
+        detalhe = getattr(erro, "stderr", "") or str(erro)
+        print(f"[aviso] Não consegui reduzir {caminho.name}: {detalhe[:200].strip()}")
+        temporario.unlink(missing_ok=True)
+
+
 def _baixar(url: str, destino_sem_ext: Path) -> Path | None:
     """Baixa a imagem; se a URL for uma página HTML, tenta a og:image dela."""
     conteudo = _requisitar(url)
@@ -158,6 +193,7 @@ def _baixar(url: str, destino_sem_ext: Path) -> Path | None:
 
     destino = destino_sem_ext.with_suffix(ext)
     destino.write_bytes(conteudo)
+    _limitar_resolucao(destino, larg, alt)
     return destino
 
 
