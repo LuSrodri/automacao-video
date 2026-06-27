@@ -15,6 +15,7 @@ A publicação roda sempre, independente da flag ``-usa``.
 import http.server
 import json
 import os
+import re
 import secrets
 import threading
 import urllib.parse
@@ -49,7 +50,72 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
+COMMENT_THREADS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
 ENV_PATH = RAIZ / ".env"
+
+# Comentário "fixado" postado automaticamente só no canal US. A YouTube Data API
+# permite postar o comentário como dono do canal, mas NÃO expõe endpoint para
+# fixá-lo — a fixação, se desejada, é manual no YouTube Studio. Os links ficam na
+# bio do canal, então os textos não trazem URLs (comentário com link costuma ser
+# segurado/filtrado pelo YouTube).
+COMENTARIO_JOBS = (
+    "Get paid to train AI working fully remote 🌎 Turing hires AI trainers "
+    "(coding skills required) — make money from anywhere in the world. "
+    "Check my bio."
+)
+COMENTARIO_PADRAO = (
+    "Power your AI agents with clean web data. Use Firecrawl 🔥. "
+    "The complete toolkit to search, scrape, and interact with the web at scale. "
+    "Check my bio."
+)
+
+
+def _texto_comentario(titulo: str, descricao: str) -> str:
+    """Escolhe o comentário pelo conteúdo: tema de 'job(s)' usa o da Turing.
+
+    Procura a palavra 'job' ou 'jobs' (limites de palavra, sem diferenciar
+    maiúsculas) no título e na descrição; havendo menção, devolve o convite da
+    Turing, senão o texto padrão do Firecrawl.
+    """
+    texto = f"{titulo}\n{descricao}".lower()
+    if re.search(r"\bjobs?\b", texto):
+        return COMENTARIO_JOBS
+    return COMENTARIO_PADRAO
+
+
+def _postar_comentario(cfg: Config, token: str, video_id: str, titulo: str, descricao: str) -> None:
+    """Posta o comentário do dono no vídeo (apenas canal US). Não fixa.
+
+    Falhas são apenas avisadas: o vídeo já foi publicado e um comentário ausente
+    não justifica derrubar o fluxo.
+    """
+    if cfg.publico != "usa":
+        return
+
+    texto = _texto_comentario(titulo, descricao)
+    try:
+        resp = requests.post(
+            COMMENT_THREADS_URL,
+            params={"part": "snippet"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=UTF-8",
+            },
+            data=json.dumps(
+                {
+                    "snippet": {
+                        "videoId": video_id,
+                        "topLevelComment": {"snippet": {"textOriginal": texto}},
+                    }
+                }
+            ).encode("utf-8"),
+            timeout=60,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"{resp.status_code}: {resp.text[:300]}")
+        print(f"[youtube] Comentário postado no vídeo {video_id} (fixe manualmente no Studio).")
+    except Exception as erro:  # noqa: BLE001 — comentário opcional não derruba o fluxo
+        print(f"[youtube] Falha ao postar o comentário (ignorada): {erro}")
 
 
 def _atualizar_env(chave: str, valor: str) -> None:
@@ -229,6 +295,7 @@ def publicar(
         video_id = envio.json()["id"]
         url = f"https://youtu.be/{video_id}"
         print(f"[youtube] Publicado: {url}")
+        _postar_comentario(cfg, token, video_id, titulo, descricao)
         return url
     except Exception as erro:  # noqa: BLE001 — falha de upload não derruba o fluxo
         print(f"[youtube] Falha na publicação (ignorada): {erro}")
