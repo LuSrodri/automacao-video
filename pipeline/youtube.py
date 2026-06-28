@@ -59,14 +59,14 @@ ENV_PATH = RAIZ / ".env"
 # bio do canal, então os textos não trazem URLs (comentário com link costuma ser
 # segurado/filtrado pelo YouTube).
 COMENTARIO_JOBS = (
-    "Get paid to train AI working fully remote 🌎 Turing hires AI trainers "
+    "Get paid to train AI working fully remote. Turing hires AI trainers "
     "(coding skills required) — make money from anywhere in the world. "
-    "Check my bio."
+    "Apply now via the link in our bio!"
 )
 COMENTARIO_PADRAO = (
-    "Power your AI agents with clean web data. Use Firecrawl 🔥. "
+    "Power your AI agents with clean web data. Use Firecrawl. "
     "The complete toolkit to search, scrape, and interact with the web at scale. "
-    "Check my bio."
+    "Try it out via the link in our bio!"
 )
 
 
