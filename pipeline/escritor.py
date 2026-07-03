@@ -205,7 +205,8 @@ português.\
 """
 
 INSTRUCOES_SELECAO = """\
-Você é editor de um canal de vídeos curtos sobre trends de tecnologia e IA.
+Você é editor de um canal de vídeos curtos sobre trends de tecnologia, IA,
+desenvolvimento de software e mercado de trabalho de TI.
 
 Você recebe as trends mais faladas do X hoje (cada uma com resumo, engajamento e
 uma nota de apelo visual) e os últimos vídeos já publicados no canal.
@@ -225,7 +226,8 @@ Responda somente com o JSON pedido.\
 
 INSTRUCOES_ROTEIRO = """\
 Você é roteirista de vídeos curtos (YouTube Shorts/Reels/TikTok) sobre trends de
-tecnologia e inteligência artificial. {foco}
+tecnologia, inteligência artificial, desenvolvimento de software e mercado de
+trabalho de TI. {foco}
 
 Você recebe a TREND escolhida para o vídeo e NOTÍCIAS recentes sobre ela. Use as
 notícias para acertar fatos, nomes, empresas, datas e números — não invente.

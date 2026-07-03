@@ -1,4 +1,5 @@
-"""Automação de vídeos de notícias tech/AI a partir das trends do X.
+"""Automação de vídeos de notícias de tech/AI, dev e mercado de trabalho de TI
+a partir das trends do X.
 
 Fluxo:
 1. Coleta as 10 trends mais faladas das últimas 24h no X (X Search da xAI).

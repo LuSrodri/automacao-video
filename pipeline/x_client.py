@@ -17,16 +17,20 @@ from .config import Config
 
 INSTRUCOES_TRENDING = """\
 Use a busca no X para mapear AS {n} TRENDS MAIS FALADAS das últimas {horas} horas
-sobre tecnologia e inteligência artificial: anúncios e lançamentos de empresas e
-modelos, polêmicas, rumores, quedas de serviço, pesquisas e viradas que estão
+sobre tecnologia, inteligência artificial, desenvolvimento de software e o
+mercado de trabalho de TI: anúncios e lançamentos de empresas e modelos,
+polêmicas, rumores, quedas de serviço, pesquisas, linguagens/ferramentas/
+frameworks em alta ou em declínio, demissões e contratações em massa nas big
+techs, salários, trabalho remoto, impacto da IA nas vagas e viradas que estão
 DOMINANDO a conversa. Priorize o que tem maior volume de posts, engajamento e
 reverberação, vindo de fontes confiáveis e usuários reconhecidos.\
 """
 
 INSTRUCOES_CONTAS = """\
 Use a busca no X para mapear AS {n} TRENDS MAIS FALADAS das últimas {horas} horas
-sobre tecnologia e inteligência artificial nas contas indicadas. Priorize os
-assuntos com maior engajamento e reverberação.\
+sobre tecnologia, inteligência artificial, desenvolvimento de software e o
+mercado de trabalho de TI nas contas indicadas. Priorize os assuntos com maior
+engajamento e reverberação.\
 """
 
 FORMATO_RESPOSTA = """
@@ -87,7 +91,10 @@ def coletar_trends(cfg: Config) -> list[dict]:
         ferramenta["allowed_x_handles"] = cfg.contas
         print(f"[x] Mapeando as {cfg.num_trends} trends de {len(cfg.contas)} contas...")
     else:
-        print(f"[x] Mapeando as {cfg.num_trends} trends de tech/AI mais faladas do dia...")
+        print(
+            f"[x] Mapeando as {cfg.num_trends} trends de tech/AI/dev/mercado de TI "
+            "mais faladas do dia..."
+        )
 
     instrucoes = (
         base.format(n=cfg.num_trends, horas=cfg.janela_horas)
