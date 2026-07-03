@@ -8,7 +8,8 @@ Fluxo:
 3. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 4. GPT escreve o roteiro com curva de retenção (gancho nos 3s, desenvolvimento
    que prende, recompensa no final) e define de 8 a 10 imagens-chave.
-5. Firecrawl Search busca as imagens reais na web.
+5. X API (opcional) baixa as fotos e vídeos dos posts originais da trend, e o
+   Firecrawl Search busca as demais imagens reais na web.
 6. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
 7. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem instante
    vazio) + imagem nítida com zoom suave + crossfade + legendas + branding com
@@ -29,6 +30,7 @@ from pipeline.config import carregar_config
 from pipeline.edicao import duracao_audio, intervalos_imagens, montar_video
 from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.legendas import gerar_legendas
+from pipeline.midia_x import baixar_midias_posts
 from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
 from pipeline.silencio import aparar_silencios
@@ -42,6 +44,19 @@ def _slug(texto: str, limite: int = 40) -> str:
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
     texto = re.sub(r"[^a-zA-Z0-9]+", "-", texto).strip("-").lower()
     return texto[:limite].rstrip("-") or "video"
+
+
+def _trend_escolhida(trends: list[dict], nome: str) -> dict:
+    """Localiza a trend escolhida pela seleção (por nome, com folga p/ paráfrase)."""
+    alvo = nome.strip().lower()
+    for t in trends:
+        if t["trend"].strip().lower() == alvo:
+            return t
+    for t in trends:
+        candidato = t["trend"].strip().lower()
+        if candidato and (candidato in alvo or alvo in candidato):
+            return t
+    return trends[0]
 
 
 def _sobreposicoes(texto_video: str, imagens: list[dict]) -> list[dict]:
@@ -105,6 +120,9 @@ def main() -> None:
         json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+    midias_x = baixar_midias_posts(
+        cfg, _trend_escolhida(trends, selecao["trend"]).get("posts") or [], pasta
+    )
     imagens = buscar_imagens(cfg, roteiro["imagens"], pasta)
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
@@ -113,6 +131,16 @@ def main() -> None:
 
     largura, altura = cfg.video_largura, cfg.video_altura
     sobreposicoes = _sobreposicoes(roteiro["texto_video"], imagens)
+    # Mídias dos posts originais espalhadas pelo vídeo, com a primeira abrindo
+    # o gancho (frações 0, 1/n, 2/n...) — são o material mais fiel à trend.
+    sobreposicoes += [
+        {
+            "caminho": m["caminho"],
+            "inicio_frac": k / max(len(midias_x), 1),
+            "fim_frac": None,
+        }
+        for k, m in enumerate(midias_x)
+    ]
     duracao = duracao_audio(narracao) + 0.6
 
     legendas = gerar_legendas(

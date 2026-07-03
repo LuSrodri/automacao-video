@@ -85,6 +85,15 @@ def _dimensoes(imagem: Path) -> tuple[int, int]:
     return int(valores[0]), int(valores[1])
 
 
+# Extensões tratadas como clipe de vídeo nas sobreposições (mídias dos posts do
+# X baixadas pelo midia_x.py). O resto é tratado como imagem estática.
+EXTENSOES_VIDEO = {".mp4", ".mov", ".webm", ".mkv"}
+
+
+def _e_video(caminho: Path) -> bool:
+    return Path(caminho).suffix.lower() in EXTENSOES_VIDEO
+
+
 def _ordenar(sobreposicoes: list[dict]) -> list[dict]:
     """Ordena as imagens pelo ponto da narração em que cada uma entra."""
     return sorted(
@@ -221,7 +230,13 @@ def montar_video(
     for i, (s, (ini, fim)) in enumerate(pares):
         fim_render = min(fim + CROSSFADE, duracao)
         dur_render = fim_render - ini
-        comando += ["-loop", "1", "-t", f"{dur_render:.2f}", "-i", str(s["caminho"])]
+        e_video = _e_video(s["caminho"])
+        if e_video:
+            # Clipe: repete em loop se for mais curto que a janela; -t corta.
+            comando += ["-stream_loop", "-1", "-t", f"{dur_render:.2f}",
+                        "-i", str(s["caminho"])]
+        else:
+            comando += ["-loop", "1", "-t", f"{dur_render:.2f}", "-i", str(s["caminho"])]
 
         idx = i + 2
         larg_img, alt_img = _dimensoes(s["caminho"])
@@ -238,12 +253,19 @@ def montar_video(
         # Achata sobre BRANCO antes de dividir: imagens com fundo transparente
         # (logos, recortes em PNG) ganham um fundo branco sólido em vez de deixar
         # o vídeo vazar por trás. Fotos opacas não mudam (o branco fica coberto).
-        filtros.append(f"color=c=white:s={larg_img}x{alt_img}:r={FPS}[wbg{i}]")
-        filtros.append(f"[{idx}:v]fps={FPS},format=rgba[src{i}]")
-        filtros.append(
-            f"[wbg{i}][src{i}]overlay=0:0:shortest=1,format=rgba,"
-            f"split[in_bg{i}][in_fg{i}]"
-        )
+        # Clipes de vídeo são opacos e pulam a etapa — e o canvas de ffprobe não
+        # é confiável para eles (rotação de celular troca largura/altura).
+        if e_video:
+            filtros.append(
+                f"[{idx}:v]fps={FPS},format=rgba,split[in_bg{i}][in_fg{i}]"
+            )
+        else:
+            filtros.append(f"color=c=white:s={larg_img}x{alt_img}:r={FPS}[wbg{i}]")
+            filtros.append(f"[{idx}:v]fps={FPS},format=rgba[src{i}]")
+            filtros.append(
+                f"[wbg{i}][src{i}]overlay=0:0:shortest=1,format=rgba,"
+                f"split[in_bg{i}][in_fg{i}]"
+            )
 
         # Fundo: a própria imagem cobrindo a tela toda, borrada e levemente escura.
         filtros.append(
@@ -254,18 +276,27 @@ def montar_video(
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
         )
 
-        # Frente: imagem nítida em largura total com zoom suave (alterna a direção).
-        if i % 2 == 0:
-            zoom = f"min(1+{ZOOM_RATE}*on,{ZOOM_MAX})"
+        # Frente: imagem nítida em largura total com zoom suave (alterna a
+        # direção). Clipes de vídeo dispensam o zoompan: já têm movimento
+        # próprio, e o zoompan quadro a quadro os congelaria.
+        if e_video:
+            filtros.append(
+                f"[in_fg{i}]scale={largura}:-2,"
+                f"format=rgba,{fade_in}{fade_out}"
+                f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
+            )
         else:
-            zoom = f"max({ZOOM_MAX}-{ZOOM_RATE}*on,1.0)"
-        filtros.append(
-            f"[in_fg{i}]scale={largura}:-2,"
-            f"zoompan=z='{zoom}':d=1:s={largura}x{fg_h}:fps={FPS}"
-            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',"
-            f"format=rgba,{fade_in}{fade_out}"
-            f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
-        )
+            if i % 2 == 0:
+                zoom = f"min(1+{ZOOM_RATE}*on,{ZOOM_MAX})"
+            else:
+                zoom = f"max({ZOOM_MAX}-{ZOOM_RATE}*on,1.0)"
+            filtros.append(
+                f"[in_fg{i}]scale={largura}:-2,"
+                f"zoompan=z='{zoom}':d=1:s={largura}x{fg_h}:fps={FPS}"
+                f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',"
+                f"format=rgba,{fade_in}{fade_out}"
+                f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
+            )
 
         # Sobrepõe fundo e depois a frente, ambos ativos na janela (+ crossfade).
         filtros.append(

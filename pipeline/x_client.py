@@ -50,6 +50,9 @@ formato:
   "apelo_visual": "uma frase sobre o quanto o assunto rende boas imagens reais
                    (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo
                    e por quê",
+  "posts": ["até 4 URLs dos posts mais virais/centrais da trend, no formato
+             https://x.com/usuario/status/ID — PRIORIZE posts com foto ou vídeo
+             anexado; use somente URLs REAIS vistas na busca, nunca inventadas"],
   "data": "YYYY-MM-DD"
 }}]
 
@@ -116,6 +119,7 @@ def coletar_trends(cfg: Config) -> list[dict]:
             "engajamento": t.get("engajamento", "").strip(),
             "sentimento": t.get("sentimento", "").strip(),
             "apelo_visual": t.get("apelo_visual", "").strip(),
+            "posts": [u for u in (t.get("posts") or []) if isinstance(u, str)],
             "data": t.get("data", ""),
         }
         for t in brutos

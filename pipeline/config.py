@@ -16,6 +16,8 @@ class Config:
     elevenlabs_api_key: str
     firecrawl_api_key: str
     contas: list[str]
+    x_consumer_key: str = ""  # X API oficial (opcional): mídias dos posts originais
+    x_consumer_secret: str = ""
     video_largura: int = 1080
     video_altura: int = 1920
     text_model: str = "gpt-5.4-mini"
@@ -88,6 +90,8 @@ def carregar_config() -> Config:
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
         firecrawl_api_key=os.environ["FIRECRAWL_API_KEY"],
         contas=contas,
+        x_consumer_key=os.getenv("X_CONSUMER_KEY", ""),
+        x_consumer_secret=os.getenv("X_CONSUMER_SECRET", ""),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
         text_model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"),
