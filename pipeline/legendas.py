@@ -92,6 +92,26 @@ def _agrupar(palavras: list[dict]) -> list[dict]:
     return eventos
 
 
+# Largura aproximada dos glifos maiúsculos da Barlow, em frações do tamanho da
+# fonte. Serve só para estimar se a palavra cabe na tela; o que não estiver na
+# tabela usa a média.
+_LARGURA_GLIFO = {
+    "I": 0.32, "J": 0.48, "L": 0.54, "F": 0.56, "T": 0.58, "E": 0.58,
+    "B": 0.62, "P": 0.60, "R": 0.62, "S": 0.60, "Z": 0.58,
+    "M": 0.92, "W": 0.98,
+    "-": 0.40, "'": 0.25, ",": 0.28, ".": 0.28, "!": 0.32, "?": 0.55,
+}
+_LARGURA_PADRAO = 0.66
+
+
+def _tamanho_que_cabe(palavra: str, tam_base: int, largura_util: float) -> int:
+    """Reduz o tamanho da fonte quando a palavra não cabe na largura útil."""
+    largura_est = sum(_LARGURA_GLIFO.get(c, _LARGURA_PADRAO) for c in palavra) * tam_base
+    if largura_est <= largura_util:
+        return tam_base
+    return max(round(tam_base * largura_util / largura_est), 28)
+
+
 def _tem_imagem(ini: float, fim: float, intervalos: list[tuple[float, float]]) -> bool:
     """Indica se alguma imagem está na tela durante a legenda (ini, fim)."""
     return any(ini < fi and fim > ii for ii, fi in intervalos)
@@ -133,13 +153,20 @@ def gerar_legendas(
         margem_v=round(altura * 0.26),
     )
 
+    # Largura disponível para o texto: tela menos as margens laterais (40+40)
+    # e a borda, com uma folga de segurança para a estimativa de largura.
+    largura_util = (largura - 80 - 8) * 0.95
+
     linhas = []
     for ev in eventos:
         central = not _tem_imagem(ev["inicio"], ev["fim"], intervalos)
         estilo = "Centro" if central else "Inferior"
         palavra = ev["texto"].replace("{", "(").replace("}", ")").upper()
+        tam_base = tam_centro if central else tam_inferior
+        tam = _tamanho_que_cabe(palavra, tam_base, largura_util)
+        ajuste = f"{{\\fs{tam}}}" if tam != tam_base else ""
         linhas.append(
-            f"Dialogue: 0,{_ts(ev['inicio'])},{_ts(ev['fim'])},{estilo},,0,0,0,,{ANIM}{palavra}"
+            f"Dialogue: 0,{_ts(ev['inicio'])},{_ts(ev['fim'])},{estilo},,0,0,0,,{ajuste}{ANIM}{palavra}"
         )
 
     destino.write_text(corpo + "\n".join(linhas) + "\n", encoding="utf-8")

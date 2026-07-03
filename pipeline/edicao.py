@@ -304,15 +304,20 @@ def montar_video(
         altura_logo = round(largura_logo * log_a / log_l)
         y_logo = round(altura * LOGO_Y_FRAC)
         borda = max(3, round(largura_logo * LOGO_BORDA_FRAC))
-        # Borda branca: uma cópia branca do logo, um pouco maior, atrás do logo.
+        # Borda branca: cópia branca do logo com o alfa dilatado (cada passe de
+        # `dilation` engrossa 1 px), posta atrás. O pad garante espaço para a
+        # borda crescer sem ser cortada na beirada da imagem.
         filtros.append(
-            f"[{idx_logo}:v]format=rgba,scale={largura_logo}:-1,split[lg][lg2]"
+            f"[{idx_logo}:v]format=rgba,scale={largura_logo}:{altura_logo},"
+            f"pad={largura_logo + 2 * borda}:{altura_logo + 2 * borda}"
+            f":{borda}:{borda}:color=black@0,split[lg][lg2]"
+        )
+        dilatacao = ",".join(["dilation"] * borda)
+        filtros.append(
+            f"[lg2]lutrgb=r=255:g=255:b=255,{dilatacao}[halo]"
         )
         filtros.append(
-            f"[lg2]lutrgb=r=255:g=255:b=255,scale={largura_logo + 2 * borda}:-1[halo]"
-        )
-        filtros.append(
-            f"[halo][lg]overlay=(W-w)/2:(H-h)/2[logocb]"
+            f"[halo][lg]overlay=0:0[logocb]"
         )
         filtros.append(
             f"[logocb]colorchannelmixer=aa={LOGO_OPACIDADE},"
