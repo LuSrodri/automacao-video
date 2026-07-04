@@ -11,10 +11,13 @@ Fluxo:
 5. X API (opcional) baixa as fotos e vídeos dos posts originais da trend, e o
    Firecrawl Search busca as demais imagens reais na web.
 6. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
-7. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem instante
+7. A IA planeja os cortes: o x_search descreve as mídias dos posts (análise de
+   imagem/vídeo) e um "editor de cortes" casa cada mídia com o momento exato da
+   narração (citações do texto -> timestamps do alinhamento).
+8. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem instante
    vazio) + imagem nítida com zoom suave + crossfade + legendas + branding com
    borda branca.
-8. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
+9. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
    YouTube.
 """
 
@@ -27,6 +30,7 @@ from datetime import datetime
 from pipeline.audio import gerar_narracao
 from pipeline.busca_imagens import buscar_imagens
 from pipeline.config import carregar_config
+from pipeline.cortes import planejar_cortes
 from pipeline.edicao import duracao_audio, intervalos_imagens, montar_video
 from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.legendas import gerar_legendas
@@ -34,7 +38,7 @@ from pipeline.midia_x import baixar_midias_posts
 from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
 from pipeline.silencio import aparar_silencios
-from pipeline.x_client import coletar_trends
+from pipeline.x_client import coletar_trends, descrever_midias_posts
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
 from pipeline.youtube import ultimos_publicados
@@ -120,9 +124,8 @@ def main() -> None:
         json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    midias_x = baixar_midias_posts(
-        cfg, _trend_escolhida(trends, selecao["trend"]).get("posts") or [], pasta
-    )
+    trend_video = _trend_escolhida(trends, selecao["trend"])
+    midias_x = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
     imagens = buscar_imagens(cfg, roteiro["imagens"], pasta)
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
@@ -130,9 +133,11 @@ def main() -> None:
     narracao, alinhamento, _ = aparar_silencios(narracao, alinhamento)
 
     largura, altura = cfg.video_largura, cfg.video_altura
+    duracao = duracao_audio(narracao) + 0.6
+
+    # Posicionamento automático (reserva): imagens perto dos seus trechos e
+    # mídias do X espalhadas, com a primeira abrindo o gancho.
     sobreposicoes = _sobreposicoes(roteiro["texto_video"], imagens)
-    # Mídias dos posts originais espalhadas pelo vídeo, com a primeira abrindo
-    # o gancho (frações 0, 1/n, 2/n...) — são o material mais fiel à trend.
     sobreposicoes += [
         {
             "caminho": m["caminho"],
@@ -141,7 +146,55 @@ def main() -> None:
         }
         for k, m in enumerate(midias_x)
     ]
-    duracao = duracao_audio(narracao) + 0.6
+
+    # Planejador de cortes: a IA casa cada mídia com o momento da narração.
+    # As mídias do X são descritas pela análise de imagem/vídeo do x_search;
+    # as da web, pela consulta/trecho do roteirista.
+    descricoes = (
+        descrever_midias_posts(cfg, trend_video.get("posts") or [])
+        if midias_x
+        else {}
+    )
+    midias_plano = [
+        {
+            "caminho": m["caminho"],
+            "tipo": m.get("tipo", ""),
+            "dur_s": m.get("dur_s"),
+            "origem": "x",
+            "descricao": descricoes.get(
+                m.get("post_id", ""), "mídia anexada a um post original da trend"
+            ),
+        }
+        for m in midias_x
+    ] + [
+        {
+            "caminho": img["caminho"],
+            "tipo": "photo",
+            "dur_s": None,
+            "origem": "web",
+            "descricao": (
+                f"imagem buscada por \"{img.get('consulta', '')}\"; ilustra o "
+                f"trecho: \"{img.get('trecho', '')}\""
+            ),
+        }
+        for img in imagens
+    ]
+    plano = planejar_cortes(
+        cfg, roteiro["texto_video"], midias_plano, alinhamento, duracao
+    )
+    if plano:
+        sobreposicoes = plano
+        (pasta / "cortes.json").write_text(
+            json.dumps(
+                [
+                    {"midia": str(p["caminho"].name), "inicio_s": p["inicio_s"]}
+                    for p in plano
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     legendas = gerar_legendas(
         roteiro["texto_video"],

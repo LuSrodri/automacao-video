@@ -95,11 +95,18 @@ def _e_video(caminho: Path) -> bool:
 
 
 def _ordenar(sobreposicoes: list[dict]) -> list[dict]:
-    """Ordena as imagens pelo ponto da narração em que cada uma entra."""
-    return sorted(
-        sobreposicoes,
-        key=lambda s: (s.get("inicio_frac") is None, s.get("inicio_frac") or 0.0),
-    )
+    """Ordena as imagens pelo ponto da narração em que cada uma entra.
+
+    Entradas com "inicio_s" (tempo explícito do planejador de cortes) ordenam
+    por ele; as demais, pela fração do texto. As duas formas não se misturam na
+    prática (o plano ou vale para todas as mídias, ou é descartado inteiro).
+    """
+    def chave(s: dict) -> tuple:
+        if s.get("inicio_s") is not None:
+            return (False, s["inicio_s"])
+        return (s.get("inicio_frac") is None, s.get("inicio_frac") or 0.0)
+
+    return sorted(sobreposicoes, key=chave)
 
 
 # Quanto puxar o início de cada imagem para a distribuição uniforme (0 = usa só
@@ -110,6 +117,9 @@ PESO_UNIFORME = 0.6
 # Piso de duração de cada imagem, como fração do passo médio (duração/n). Garante
 # que nenhuma imagem fique pouco tempo demais na tela.
 PISO_FRACAO_PASSO = 0.5
+# Piso de duração quando os tempos vêm do planejador de cortes (segundos). O
+# plano manda; o piso só protege de cortes colados por citações vizinhas.
+PISO_PLANO = 1.0
 
 
 def _calcular_janelas(
@@ -117,29 +127,32 @@ def _calcular_janelas(
 ) -> list[tuple[float, float]]:
     """Janelas (início, fim) contíguas que cobrem TODA a narração.
 
-    Cada imagem entra perto do ponto da narração do seu trecho e fica até a
-    próxima entrar (a última vai até o fim), sem buracos. Para evitar durações
-    irregulares (umas piscando, outras eternas), o início de cada imagem é uma
-    MISTURA entre o ponto do trecho e uma distribuição uniforme, e um piso de
-    duração impede janelas curtas demais. Imagens sem sincronização conhecida
-    entram na posição uniforme.
+    Com tempos explícitos do planejador de cortes ("inicio_s" em todas as
+    entradas), os inícios são usados como estão, só com saneamento (ordem,
+    piso, limites). Sem plano, cada imagem entra perto do ponto da narração do
+    seu trecho e fica até a próxima entrar, misturando o ponto do trecho com
+    uma distribuição uniforme para evitar durações irregulares; imagens sem
+    sincronização conhecida entram na posição uniforme.
     """
     n = len(sobreposicoes)
     if n == 0:
         return []
 
-    passo = duracao / n
-    piso = PISO_FRACAO_PASSO * passo
-
-    inicios = []
-    for i, s in enumerate(sobreposicoes):
-        uniforme = i * passo
-        frac = s.get("inicio_frac")
-        if frac is None:
-            inicios.append(uniforme)
-        else:
-            alvo = max(0.0, frac * duracao)
-            inicios.append(PESO_UNIFORME * uniforme + (1 - PESO_UNIFORME) * alvo)
+    if all(s.get("inicio_s") is not None for s in sobreposicoes):
+        piso = PISO_PLANO
+        inicios = [min(max(0.0, float(s["inicio_s"])), duracao) for s in sobreposicoes]
+    else:
+        passo = duracao / n
+        piso = PISO_FRACAO_PASSO * passo
+        inicios = []
+        for i, s in enumerate(sobreposicoes):
+            uniforme = i * passo
+            frac = s.get("inicio_frac")
+            if frac is None:
+                inicios.append(uniforme)
+            else:
+                alvo = max(0.0, frac * duracao)
+                inicios.append(PESO_UNIFORME * uniforme + (1 - PESO_UNIFORME) * alvo)
 
     # Garante ordem crescente, início em 0 e duração mínima (piso) em todas,
     # inclusive na última (reservando 'piso' para cada imagem ainda por vir).

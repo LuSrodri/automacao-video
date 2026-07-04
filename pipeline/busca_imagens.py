@@ -302,7 +302,13 @@ def buscar_imagens(cfg: Config, itens: list[dict], pasta: Path) -> list[dict]:
         for url in urls[:6]:
             caminho = _baixar(url, pasta / f"imagem_{i}")
             if caminho:
-                baixadas.append({"caminho": caminho, "trecho": item.get("trecho", "")})
+                baixadas.append(
+                    {
+                        "caminho": caminho,
+                        "trecho": item.get("trecho", ""),
+                        "consulta": item.get("consulta", ""),
+                    }
+                )
                 print(f"[imagens] {caminho.name} <- {url}")
                 break
         else:

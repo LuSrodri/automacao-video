@@ -9,12 +9,14 @@ qualquer falha da API, o pipeline segue só com as imagens da busca web.
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 import requests
 
 from .busca_imagens import _baixar as _baixar_imagem
 from .config import Config
+from .edicao import duracao_audio
 
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 TWEETS_ENDPOINT = "https://api.x.com/2/tweets"
@@ -118,7 +120,9 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
             params={
                 "ids": ",".join(ids),
                 "expansions": "attachments.media_keys",
-                "media.fields": "type,url,variants,preview_image_url,width,height",
+                "media.fields": (
+                    "media_key,type,url,variants,preview_image_url,width,height"
+                ),
             },
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
@@ -134,6 +138,12 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
         print("[midia-x] Nenhuma mídia anexada nos posts consultados")
         return []
 
+    # De qual post veio cada mídia (para casar com as descrições do x_search)
+    dono_da_midia: dict[str, str] = {}
+    for post in dados.get("data") or []:
+        for chave in (post.get("attachments") or {}).get("media_keys") or []:
+            dono_da_midia.setdefault(chave, post.get("id", ""))
+
     baixadas: list[dict] = []
     for k, m in enumerate(midias[:MAX_MIDIAS], 1):
         tipo = m.get("type")
@@ -145,7 +155,21 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
             if url_mp4:
                 caminho = _baixar_video(url_mp4, pasta / f"midia_x_{k}.mp4")
         if caminho:
-            baixadas.append({"caminho": caminho, "trecho": ""})
+            dur_s = None
+            if caminho.suffix == ".mp4":
+                try:
+                    dur_s = duracao_audio(caminho)  # ffprobe format=duration
+                except (subprocess.CalledProcessError, ValueError, OSError):
+                    dur_s = None
+            baixadas.append(
+                {
+                    "caminho": caminho,
+                    "trecho": "",
+                    "tipo": tipo,
+                    "post_id": dono_da_midia.get(m.get("media_key", ""), ""),
+                    "dur_s": dur_s,
+                }
+            )
             print(f"[midia-x] {caminho.name} ({tipo})")
 
     if not baixadas:

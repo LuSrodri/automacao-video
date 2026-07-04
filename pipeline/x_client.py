@@ -71,6 +71,66 @@ def _extrair_json(texto: str) -> list[dict]:
     return json.loads(texto[inicio : fim + 1])
 
 
+INSTRUCOES_MIDIAS = """\
+Busque no X os posts abaixo e ANALISE A MÍDIA (foto ou vídeo) anexada a cada um.
+
+Para cada post, descreva a mídia em 2 a 4 frases OBJETIVAS: o que aparece
+(pessoas, produtos, telas, lugares), o que acontece (em vídeos: a ação do começo
+ao fim) e qualquer texto legível na imagem. A descrição vai orientar um editor
+de vídeo que NÃO viu a mídia — seja concreto, sem opinião.
+
+Posts:
+{urls}
+
+Responda SOMENTE com um array JSON no formato:
+[{{"url": "https://x.com/usuario/status/ID", "descricao": "..."}}]
+Um objeto por post, na mesma ordem. Se um post não tiver mídia ou não for
+encontrado, use "descricao": "".\
+"""
+
+
+def descrever_midias_posts(cfg: Config, urls_posts: list[str]) -> dict[str, str]:
+    """Descreve as mídias dos posts via x_search com análise de imagem/vídeo.
+
+    Devolve {id_do_post: descrição}; vazio em qualquer falha (etapa opcional).
+    """
+    urls = [u for u in urls_posts if "status/" in u]
+    if not urls:
+        return {}
+
+    cliente = OpenAI(api_key=cfg.xai_api_key, base_url="https://api.x.ai/v1")
+    print(f"[midia-x] Analisando as mídias de {len(urls)} posts (x_search)...")
+    try:
+        resposta = cliente.responses.create(
+            model=cfg.search_model,
+            input=[{
+                "role": "user",
+                "content": INSTRUCOES_MIDIAS.format(urls="\n".join(urls)),
+            }],
+            tools=[{
+                "type": "x_search",
+                "enable_image_understanding": True,
+                "enable_video_understanding": True,
+            }],
+        )
+        itens = _extrair_json(resposta.output_text)
+    # Etapa opcional: nunca derruba o pipeline (_extrair_json usa SystemExit)
+    except (Exception, SystemExit) as erro:
+        print(f"[aviso] Análise de mídias via x_search falhou: {erro}")
+        return {}
+
+    descricoes: dict[str, str] = {}
+    for item in itens:
+        if not isinstance(item, dict):
+            continue
+        m = re.search(r"status/(\d+)", str(item.get("url", "")))
+        descricao = str(item.get("descricao", "")).strip()
+        if m and descricao:
+            descricoes[m.group(1)] = descricao
+    print(f"[midia-x] {len(descricoes)} mídias descritas")
+    return descricoes
+
+
 def coletar_trends(cfg: Config) -> list[dict]:
     """Busca as N trends mais faladas do X nas últimas `janela_horas` horas."""
     cliente = OpenAI(api_key=cfg.xai_api_key, base_url="https://api.x.ai/v1")
