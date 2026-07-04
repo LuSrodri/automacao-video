@@ -209,14 +209,20 @@ Você é editor de um canal de vídeos curtos sobre trends de tecnologia, IA,
 desenvolvimento de software e mercado de trabalho de TI.
 
 Você recebe as trends mais faladas do X hoje (cada uma com resumo, engajamento e
-uma nota de apelo visual) e os últimos vídeos já publicados no canal.
+uma nota de apelo visual), os vídeos CAMPEÕES DE RETENÇÃO do canal (quando
+houver) e os últimos vídeos publicados.
 
 Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta ordem:
-1. MAIOR chance de viralizar (impacto, polêmica, novidade, curiosidade) E maior
+1. PARECIDA COM O QUE SEGURA A AUDIÊNCIA: os campeões de retenção mostram o
+   tipo de tema, tensão e promessa que o público DESTE canal assiste até o fim.
+   Priorize trends com o mesmo DNA dos campeões. Repetir um tema que performa é
+   BEM-VINDO e encorajado.
+2. MAIOR chance de viralizar (impacto, polêmica, novidade, curiosidade) E maior
    APELO VISUAL — assuntos com pessoas conhecidas, produtos, eventos e lugares
    que rendem boas imagens reais.
-2. NÃO repetir os temas dos vídeos recentes do canal, salvo se houver novidade
-   real e relevante.
+3. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
+   com ângulo ou desenvolvimento NOVO é ótimo; o que não pode é escolher uma
+   trend que renderia praticamente o MESMO vídeo de novo, sem nada novo a dizer.
 
 Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
 nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
@@ -398,8 +404,27 @@ def _resumo_recentes(videos_recentes: list[dict] | None) -> str:
         f"- ({v.get('data') or '?'}) {v.get('titulo', '')}" for v in videos_recentes
     )
     return (
-        "\n\nÚltimos vídeos já publicados neste canal (NÃO repita esses temas, "
-        "salvo novidade real):\n" + recentes
+        "\n\nÚltimos vídeos publicados neste canal (contexto anti-clone: voltar "
+        "a um tema com ângulo novo é ótimo; refazer a mesma notícia sem nada "
+        "novo, não):\n" + recentes
+    )
+
+
+def _resumo_campeoes(campeoes: list[dict] | None) -> str:
+    if not campeoes:
+        return ""
+    linhas = []
+    for c in campeoes:
+        partes = []
+        if c.get("retencao_gancho") is not None:
+            partes.append(f"gancho segura {c['retencao_gancho']}% de quem abre")
+        partes.append(f"assistem em média {c.get('retencao_media', '?')}% do vídeo")
+        partes.append(f"{c.get('views', '?')} views")
+        linhas.append(f"- {c.get('titulo', '')} ({'; '.join(partes)})")
+    return (
+        "\n\nVídeos CAMPEÕES DE RETENÇÃO deste canal, de todos os tempos (o tipo "
+        "de vídeo que o público assiste até o fim — priorize trends com este "
+        "DNA):\n" + "\n".join(linhas)
     )
 
 
@@ -407,13 +432,19 @@ def selecionar_trend(
     cfg: Config,
     trends: list[dict],
     videos_recentes: list[dict] | None = None,
+    campeoes: list[dict] | None = None,
 ) -> dict:
-    """Escolhe a trend de maior apelo visual/viral e a consulta de notícias."""
+    """Escolhe a trend guiada pelos campeões de retenção do canal.
+
+    `campeoes`: top vídeos do canal em retenção (de ``youtube.top_retencao``),
+    usados como sinal positivo do que o público assiste até o fim.
+    """
     cliente = OpenAI(api_key=cfg.openai_api_key)
 
     conteudo = (
         "Trends mais faladas do X hoje:\n"
         + _resumo_trends(trends)
+        + _resumo_campeoes(campeoes)
         + _resumo_recentes(videos_recentes)
     )
 

@@ -20,6 +20,7 @@ import secrets
 import threading
 import urllib.parse
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -43,6 +44,9 @@ ESCOPO = " ".join(
         "https://www.googleapis.com/auth/youtube.force-ssl",
         "https://www.googleapis.com/auth/youtube.channel-memberships.creator",
         "https://www.googleapis.com/auth/youtubepartner",
+        # Analytics (métricas de retenção). Tokens antigos não têm este escopo:
+        # reautorize com --auth-youtube / --auth-youtube-usa para ativar.
+        "https://www.googleapis.com/auth/yt-analytics.readonly",
     ]
 )
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -51,7 +55,13 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 COMMENT_THREADS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
+VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 ENV_PATH = RAIZ / ".env"
+
+# Piso de views para o ranking de retenção: vídeo com pouquíssimas views tem
+# retenção estatisticamente sem valor (3 amigos assistindo até o fim = 100%).
+VIEWS_MINIMO_RETENCAO = 50
 
 # Comentário "fixado" postado automaticamente só no canal US. A YouTube Data API
 # permite postar o comentário como dono do canal, mas NÃO expõe endpoint para
@@ -215,6 +225,124 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
         return videos
     except Exception as erro:  # noqa: BLE001 — leitura opcional não derruba o fluxo
         print(f"[youtube] Não foi possível ler os últimos vídeos (ignorado): {erro}")
+        return []
+
+
+def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
+    """Top `n` vídeos do canal em retenção, de todos os tempos.
+
+    Retenção combina duas métricas da YouTube Analytics API: a taxa de gancho
+    (``engagedViews/views`` — quem passou dos segundos iniciais vs quem ignorou
+    o Short no feed) e a profundidade (``averageViewPercentage`` — quanto do
+    vídeo quem ficou assistiu). Vídeos abaixo de VIEWS_MINIMO_RETENCAO views
+    ficam fora do ranking (retenção sem base estatística).
+
+    Requer o escopo ``yt-analytics.readonly`` no refresh token; tokens antigos
+    precisam de reautorização (``--auth-youtube``/``--auth-youtube-usa``). Em
+    qualquer falha devolve lista vazia sem derrubar o fluxo.
+    """
+    refresh = _refresh_token_do_publico(cfg)
+    if not (cfg.youtube_client_id and cfg.youtube_client_secret and refresh):
+        return []
+
+    try:
+        token = _renovar_access_token(cfg, refresh)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        params = {
+            "ids": "channel==MINE",
+            "startDate": "2005-01-01",  # antes do YouTube existir = desde sempre
+            "endDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "dimensions": "video",
+            "metrics": "views,engagedViews,averageViewPercentage",
+            "sort": "-views",
+            "maxResults": 200,
+        }
+        resp = requests.get(ANALYTICS_URL, params=params, headers=headers, timeout=60)
+        if resp.status_code == 400:
+            # engagedViews pode não estar disponível; refaz só com as clássicas
+            params["metrics"] = "views,averageViewPercentage"
+            resp = requests.get(
+                ANALYTICS_URL, params=params, headers=headers, timeout=60
+            )
+        if resp.status_code == 403:
+            if "has not been used in project" in resp.text or "disabled" in resp.text:
+                print(
+                    "[youtube] A YouTube Analytics API está desligada no projeto "
+                    "do Google Cloud das credenciais. Ative em "
+                    "https://console.developers.google.com/apis/api/"
+                    "youtubeanalytics.googleapis.com/overview e tente de novo; "
+                    "seguindo sem os campeões de retenção."
+                )
+            else:
+                print(
+                    "[youtube] Sem permissão para o Analytics (escopo novo). "
+                    "Reautorize com 'python main.py --auth-youtube' (e "
+                    "--auth-youtube-usa); seguindo sem os campeões de retenção."
+                )
+            return []
+        if resp.status_code != 200:
+            raise RuntimeError(f"{resp.status_code}: {resp.text[:300]}")
+
+        corpo = resp.json()
+        colunas = [c.get("name") for c in corpo.get("columnHeaders", [])]
+        linhas = [dict(zip(colunas, valores)) for valores in corpo.get("rows") or []]
+        if not linhas:
+            return []
+
+        candidatos = [
+            r for r in linhas if float(r.get("views") or 0) >= VIEWS_MINIMO_RETENCAO
+        ] or linhas  # canal novo: sem vídeos acima do piso, usa o que houver
+
+        def pontuacao(r: dict) -> float:
+            views = float(r.get("views") or 0)
+            gancho = (
+                float(r.get("engagedViews") or 0) / views
+                if views and "engagedViews" in r
+                else 1.0
+            )
+            profundidade = float(r.get("averageViewPercentage") or 0) / 100
+            return gancho * profundidade
+
+        top = sorted(candidatos, key=pontuacao, reverse=True)[:n]
+
+        # Títulos dos escolhidos (Data API), numa única chamada
+        ids = ",".join(str(r.get("video", "")) for r in top)
+        detalhes = requests.get(
+            VIDEOS_URL,
+            params={"part": "snippet", "id": ids},
+            headers=headers,
+            timeout=60,
+        )
+        titulos = {}
+        if detalhes.status_code == 200:
+            titulos = {
+                item["id"]: item.get("snippet", {}).get("title", "")
+                for item in detalhes.json().get("items", [])
+            }
+
+        campeoes = []
+        for r in top:
+            views = float(r.get("views") or 0)
+            gancho = (
+                round(float(r.get("engagedViews") or 0) / views * 100)
+                if views and "engagedViews" in r
+                else None
+            )
+            campeoes.append(
+                {
+                    "titulo": titulos.get(str(r.get("video")), str(r.get("video"))),
+                    "views": int(views),
+                    "retencao_gancho": gancho,
+                    "retencao_media": round(
+                        float(r.get("averageViewPercentage") or 0)
+                    ),
+                }
+            )
+        print(f"[youtube] {len(campeoes)} campeões de retenção carregados.")
+        return campeoes
+    except Exception as erro:  # noqa: BLE001 — leitura opcional não derruba o fluxo
+        print(f"[youtube] Não foi possível ler os campeões de retenção (ignorado): {erro}")
         return []
 
 

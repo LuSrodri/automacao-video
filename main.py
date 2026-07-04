@@ -3,8 +3,10 @@ a partir das trends do X.
 
 Fluxo:
 1. Coleta as 10 trends mais faladas das últimas 24h no X (X Search da xAI).
-2. GPT escolhe a trend de maior apelo visual e chance de viralizar (evitando
-   repetir os últimos vídeos do canal) e define uma consulta de notícias.
+2. GPT escolhe a trend guiado pelos campeões de retenção do canal (YouTube
+   Analytics: engagedViews/views + averageViewPercentage) e pelo apelo
+   visual/viral, evitando só clonar vídeos recentes sem novidade; e define uma
+   consulta de notícias.
 3. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 4. GPT escreve o roteiro com curva de retenção (gancho nos 3s, desenvolvimento
    que prende, recompensa no final) e define de 8 a 10 imagens-chave.
@@ -41,7 +43,7 @@ from pipeline.silencio import aparar_silencios
 from pipeline.x_client import coletar_trends, descrever_midias_posts
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
-from pipeline.youtube import ultimos_publicados
+from pipeline.youtube import top_retencao, ultimos_publicados
 
 
 def _slug(texto: str, limite: int = 40) -> str:
@@ -114,7 +116,10 @@ def main() -> None:
 
     trends = coletar_trends(cfg)
     recentes = ultimos_publicados(cfg, n=9)
-    selecao = selecionar_trend(cfg, trends, videos_recentes=recentes)
+    campeoes = top_retencao(cfg, n=6)
+    selecao = selecionar_trend(
+        cfg, trends, videos_recentes=recentes, campeoes=campeoes
+    )
     noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
     roteiro = gerar_roteiro(cfg, selecao, trends, noticias)
 
