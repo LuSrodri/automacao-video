@@ -86,10 +86,19 @@ da narração cada uma ENTRA. Cada mídia fica na tela até a próxima entrar (a
    Fotos rendem 2 a 4s. Clipe de vídeo bom merece 4 a 8s — não corte um clipe
    no meio da ação (a duração de cada clipe está indicada; clipe mais curto que
    a janela repete em loop).
-5. DINÂMICA: sequência de fatos rápidos pede cortes rápidos; a revelação/clímax
-   pede um corte mais longo com a mídia mais forte.
-6. Mídia fraca, redundante ou fora do assunto: NÃO use (basta omitir). Não
-   repita mídia.
+5. DINÂMICA COM PROGRESSÃO: durações parecidas hipnotizam — os cortes NÃO podem
+   ser uniformes. Comece com cortes médios (3–4s) apresentando a situação,
+   ACELERE na escalada de fatos (1,5–2,5s por corte) e segure o corte mais
+   longo (5–8s) na revelação/clímax, de preferência com a mídia mais forte
+   (clipe de vídeo ou a foto-prova). DENSIDADE: mire em um corte a cada 2–4s em
+   média — num vídeo de 30–40s, isso significa usar de 8 a 15 mídias. Só fique
+   muito abaixo disso se as mídias disponíveis forem realmente fracas.
+6. HIERARQUIA DE FORÇA: clipe de vídeo > foto contextualizada (pessoas em ação,
+   evento com público, produto em uso) > foto de lugar/retrato > logo, planilha
+   ou documento. Mídia fraca (logo em fundo branco, documento, gráfico solto),
+   redundante ou fora do assunto: NÃO use (basta omitir) — EXCETO quando o
+   documento É a prova da notícia (memo vazado, e-mail da demissão): aí ele
+   merece um corte de destaque. Não repita mídia.
 
 Responda somente com o JSON pedido.\
 """

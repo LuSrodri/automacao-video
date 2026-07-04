@@ -23,7 +23,11 @@ polêmicas, rumores, quedas de serviço, pesquisas, linguagens/ferramentas/
 frameworks em alta ou em declínio, demissões e contratações em massa nas big
 techs, salários, trabalho remoto, impacto da IA nas vagas e viradas que estão
 DOMINANDO a conversa. Priorize o que tem maior volume de posts, engajamento e
-reverberação, vindo de fontes confiáveis e usuários reconhecidos.\
+reverberação, vindo de fontes confiáveis e usuários reconhecidos.
+
+Cada trend deve ser um ACONTECIMENTO específico e datado — quem fez o quê, com
+número quando houver — NUNCA um tema guarda-chuva. "Oracle corta 21.000 vagas e
+cita IA no comunicado" é trend; "demissões em tech por causa da IA" não é.\
 """
 
 INSTRUCOES_CONTAS = """\
@@ -39,7 +43,9 @@ Responda SOMENTE com um array JSON com EXATAMENTE {n} objetos (ou menos, se não
 houver tantas trends reais), ordenado da MAIS falada para a menos falada, no
 formato:
 [{{
-  "trend": "nome curto e claro do assunto",
+  "trend": "o ACONTECIMENTO específico, com nome próprio e número exato quando
+            houver (ex.: 'Oracle corta 21.000 vagas citando IA', nunca
+            'demissões em tech')",
   "resumo": "2 a 4 frases explicando o que está sendo dito, com os fatos, nomes,
              empresas e números concretos que apareceram nos posts",
   "engajamento": "uma frase sobre o quão quente está (volume de posts, reações,
@@ -50,9 +56,10 @@ formato:
   "apelo_visual": "uma frase sobre o quanto o assunto rende boas imagens reais
                    (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo
                    e por quê",
-  "posts": ["até 4 URLs dos posts mais virais/centrais da trend, no formato
-             https://x.com/usuario/status/ID — PRIORIZE posts com foto ou vídeo
-             anexado; use somente URLs REAIS vistas na busca, nunca inventadas"],
+  "posts": ["até 5 URLs dos posts mais virais/centrais da trend, no formato
+             https://x.com/usuario/status/ID — PRIORIZE posts com VÍDEO anexado,
+             depois foto; use somente URLs REAIS vistas na busca, nunca
+             inventadas"],
   "data": "YYYY-MM-DD"
 }}]
 

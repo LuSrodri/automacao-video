@@ -21,8 +21,8 @@ from .edicao import duracao_audio
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 TWEETS_ENDPOINT = "https://api.x.com/2/tweets"
 
-MAX_POSTS = 4  # posts consultados por vídeo (cada um custa ~US$ 0,005)
-MAX_MIDIAS = 4  # mídias baixadas por vídeo (as primeiras encontradas)
+MAX_POSTS = 5  # posts consultados por vídeo (cada um custa ~US$ 0,005)
+MAX_MIDIAS = 6  # mídias baixadas por vídeo (as primeiras encontradas)
 MAX_VIDEO_BYTES = 60_000_000  # ~60 MB; vídeo maior que isso é descartado
 
 PADRAO_ID_POST = re.compile(r"(?:x|twitter)\.com/[^/]+/status/(\d+)")

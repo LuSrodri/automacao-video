@@ -73,6 +73,18 @@ ESQUEMA_ROTEIRO = {
                     "fatos e onde fica o clímax."
                 ),
             },
+            "stakes": {
+                "type": "string",
+                "description": (
+                    "O que está em JOGO — decida ANTES de escrever o roteiro: "
+                    "(a) por que isso afeta a VIDA de quem assiste (bolso, "
+                    "emprego, as ferramentas que usa, preço, privacidade) e "
+                    "(b) o que muda no MUNDO/na indústria. Concreto, não vago: "
+                    "'seu plano do ChatGPT pode dobrar de preço' vale; 'isso é "
+                    "muito importante' não. O texto_video DEVE costurar esses "
+                    "stakes no desenvolvimento."
+                ),
+            },
             "ganchos_candidatos": {
                 "type": "array",
                 "minItems": 4,
@@ -140,14 +152,17 @@ ESQUEMA_ROTEIRO = {
                             "type": "string",
                             "description": (
                                 "Consulta de busca de imagem em inglês para "
-                                "encontrar UMA imagem real e coerente com este "
+                                "encontrar UMA cena real e coerente com este "
                                 "momento da narração. Priorize a foto do "
-                                "próprio fato (pessoas e empresas envolvidas "
-                                "na ação, o evento, o produto em uso real). "
-                                "Para contextualizar, também valem: foto da "
-                                "figura pública citada, o logo/identidade "
-                                "visual da empresa mencionada, foto do produto "
-                                "e foto do local/lugar relevante. REGRAS DURAS: "
+                                "próprio fato: pessoas envolvidas EM AÇÃO (no "
+                                "palco, falando, no contexto da notícia — não "
+                                "retrato posado), o evento com público, o "
+                                "produto em uso real, o lugar com movimento. "
+                                "Logo só como último recurso (máximo um no "
+                                "vídeo todo); planilha/documento/slide/gráfico "
+                                "é PROIBIDO salvo quando o artefato É a "
+                                "notícia (memo vazado, carta oficial). "
+                                "REGRAS DURAS: "
                                 "(1) UM único assunto concreto e fotografável "
                                 "por consulta — PROIBIDO consulta composta tipo "
                                 "'X and Y side by side' ou 'logos A e B juntos' "
@@ -183,6 +198,7 @@ ESQUEMA_ROTEIRO = {
         "required": [
             "tema",
             "sentimento",
+            "stakes",
             "ganchos_candidatos",
             "gancho_escolhido",
             "titulo",
@@ -219,8 +235,12 @@ Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta 
    BEM-VINDO e encorajado.
 2. MAIOR chance de viralizar (impacto, polêmica, novidade, curiosidade) E maior
    APELO VISUAL — assuntos com pessoas conhecidas, produtos, eventos e lugares
-   que rendem boas imagens reais.
-3. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
+   que rendem boas imagens e VÍDEOS reais dos posts.
+3. ESPECIFICIDADE: escolha o ACONTECIMENTO concreto (quem, número exato, data),
+   nunca o panorama. Se a trend for guarda-chuva ("IA no mercado de trabalho"),
+   ou você acha dentro dela o fato específico mais forte (a empresa, o corte, o
+   valor) ou escolhe outra trend.
+4. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
    com ângulo ou desenvolvimento NOVO é ótimo; o que não pode é escolher uma
    trend que renderia praticamente o MESMO vídeo de novo, sem nada novo a dizer.
 
@@ -345,23 +365,50 @@ clímax e a entrega da narração (as audio tags). Indignação pede tom de den�
 medo, tom de alerta; deboche, ironia; fascínio, deslumbre. Um roteiro sem emoção
 clara fica neutro e CHATO — comprometa-se com o sentimento do começo ao fim.
 
+STAKES — POR QUE ISSO IMPORTA: fato interessante sem consequência é curiosidade
+descartável — a pessoa assiste, esquece e não compartilha. Decida os stakes no
+campo "stakes" ANTES de escrever e COSTURE-OS no desenvolvimento: em algum ponto
+do meio, a narração tem que aterrissar o assunto na vida de quem assiste ("o app
+que você usa", "seu emprego", "o preço que você paga") E no tamanho da
+consequência para o mundo/indústria. O clímax não é só "o que aconteceu" — é "o
+que isso significa pra você".
+
+CONCRETUDE OBRIGATÓRIA: generalidade mata a credibilidade e o interesse. A cada
+1–2 frases do desenvolvimento deve entrar um fato NOVO e VERIFICÁVEL vindo das
+notícias: número exato, nome próprio, empresa real, data, valor. PROIBIDO:
+"várias empresas", "muito dinheiro", "especialistas apontam", "nos últimos
+tempos". Se as notícias não dão o número exato, use o mais específico que elas
+sustentam ("mais de 21 mil", "quase um terço") — nunca o genérico.
+
+RITMO COM PROGRESSÃO: ritmo constante hipnotiza e a pessoa desliza pro próximo.
+Alterne o comprimento das frases: depois de duas frases médias, uma CURTÍSSIMA
+(3 a 6 palavras) de impacto. A urgência deve SUBIR ao longo do vídeo: começo
+contido apresentando a situação, meio acelerando fato após fato, pico no clímax.
+Use as audio tags como dinâmica: [short pause] antes da revelação, emoção
+crescendo ([curious] no início → [excited]/[surprised] perto do clímax). A frase
+final volta a ser seca — o contraste fecha o vídeo.
+
 O roteiro deve ser narrável em cerca de {duracao} segundos (aproximadamente
 {palavras} palavras).
 
 IMAGENS — defina de 8 a 10 imagens-chave, distribuídas do começo ao fim do
 roteiro (NUNCA pode haver um trecho da narração sem imagem na tela). REGRAS:
 - As imagens serão buscadas na web (fotos REAIS, nada gerado por IA). Em
-  "consulta", escreva a busca em inglês que encontra a imagem mais COERENTE com
-  a notícia daquele momento. Use uma MISTURA de tipos: a foto do próprio
-  fato/evento, a figura pública envolvida, o logo da empresa, o produto e o
-  lugar/local relevante.
-  Exemplo (OpenAI lançando o GPT-6): "Sam Altman GPT-6 launch keynote 2026",
-  "OpenAI GPT-6 announcement event", "OpenAI logo",
-  "OpenAI headquarters San Francisco".
+  "consulta", escreva a busca em inglês que encontra a CENA mais COERENTE com a
+  notícia daquele momento. Priorize, nesta ordem: (1) a foto do próprio
+  fato/evento acontecendo; (2) a figura pública envolvida EM AÇÃO — no palco,
+  falando, gesticulando, no contexto da notícia (não retrato posado de arquivo);
+  (3) o produto EM USO real; (4) o lugar do acontecimento com gente/movimento.
+  Exemplo (OpenAI lançando o GPT-6): "Sam Altman GPT-6 launch keynote stage",
+  "OpenAI GPT-6 announcement event audience",
+  "OpenAI DevDay San Francisco crowd".
+- LOGO: no máximo UMA consulta de logo no vídeo inteiro, e só se aquele momento
+  não tiver cena melhor. Logo em fundo branco é a imagem mais fraca que existe.
+- PROIBIDO consulta que devolve planilha, documento, slide, print de parágrafo
+  de texto ou gráfico — EXCETO quando esse artefato É a própria notícia (a carta
+  oficial, o memo vazado, o e-mail da demissão: aí ele é a prova e vale ouro).
 - Prefira a imagem do acontecimento real em vez de ilustração genérica; evite
-  fotos de banco de imagens (stock) e imagens geradas por IA. Logos, retratos e
-  fotos de lugares são bem-vindos como contexto — só não deixe que TODAS as
-  imagens sejam apenas logos.
+  fotos de banco de imagens (stock) e imagens geradas por IA.
 - UM assunto por consulta. NÃO peça imagem composta ("Claude and ChatGPT logos
   side by side", "A e B juntos") — isso não existe como foto; busque um de cada
   vez. NÃO use consulta de conceito abstrato que só devolve stock ("data center
