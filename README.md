@@ -1,11 +1,11 @@
-# Automação de Vídeos — Notícias Tech & AI
+﻿# Automação de Vídeos — Notícias Tech & AI
 
 Pipeline em Python que transforma as trends de tech/AI mais quentes do X (Twitter) em um vídeo vertical narrado, pronto para publicar:
 
-1. **Coleta** as **10 trends mais faladas** das últimas 24h no X usando a **X Search da xAI** (com `from_date`/`to_date`), cada uma com resumo, engajamento e uma nota de apelo visual. Opcionalmente restringe a contas específicas.
-2. **GPT 5.4 mini** escolhe a trend de **maior apelo visual e maior chance de viralizar**. Antes de decidir, recebe os **últimos 9 vídeos já publicados no canal selecionado** (lidos da própria YouTube Data API) e é instruído a **não repetir tema recente** — só repete um assunto se houver novidade real.
+1. **Coleta** os posts das últimas 24h das **contas que você segue no X** (X API oficial v2, pay-per-use, com teto de leitura configurável) e o **GPT** os sumariza nas **10 trends mais quentes** — notícias, lançamentos, novidades, curiosidades e tretas — cada uma com resumo, engajamento e uma nota de apelo visual. A lista de seguidos fica em cache local por 7 dias; `X_ACCOUNTS` permite fixar contas específicas no lugar dela.
+2. **GPT 5.6 Luna** escolhe a trend de **maior apelo visual e maior chance de viralizar**. Antes de decidir, recebe os **últimos 9 vídeos já publicados no canal selecionado** (lidos da própria YouTube Data API) e é instruído a **não repetir tema recente** — só repete um assunto se houver novidade real.
 3. **Firecrawl (sources=news)** busca **notícias recentes** sobre a trend escolhida (título, link, resumo e data) para complementar o material com fatos, nomes e números corretos.
-4. **GPT 5.4 mini** escreve o roteiro seguindo a **curva de retenção** de um vídeo curto: **gancho impecável nos 3 primeiros segundos**, desenvolvimento que prende até o fim e uma **recompensa no final** (a pessoa não pode se sentir enganada). Dinâmico, rápido e direto ao ponto. O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz e define de **8 a 10 imagens-chave**.
+4. **GPT 5.6 Luna** escreve o roteiro seguindo a **curva de retenção** de um vídeo curto: **gancho impecável nos 3 primeiros segundos**, desenvolvimento que prende até o fim e uma **recompensa no final** (a pessoa não pode se sentir enganada). Dinâmico, rápido e direto ao ponto. O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz e define de **8 a 10 imagens-chave**.
 5. **Firecrawl Search** encontra as **imagens reais** na web — fotos jornalísticas do próprio fato (pessoas, eventos e produtos), nada gerado por IA.
 6. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere) e o pipeline **corta os silêncios** da narração (remapeando os timestamps para as legendas continuarem sincronizadas), deixando o áudio sem trechos parados.
 7. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é a própria imagem daquele trecho, ampliada para cobrir a tela e borrada**; por cima entra a **imagem nítida em largura total com zoom suave** (Ken Burns). As imagens **cobrem 100% da narração** (nunca há um instante sem figura) e fazem **crossfade** entre si — de **8 a 10 imagens**, até **10 segundos** cada. **Legendas** sincronizadas palavra a palavra são queimadas no vídeo, e o **branding** (logo do YouTube Shorts + `@usuário`) fica no topo **com borda branca**.
@@ -17,8 +17,8 @@ Pipeline em Python que transforma as trends de tech/AI mais quentes do X (Twitte
 - **ffmpeg** no PATH. No Windows: `winget install Gyan.FFmpeg` (reabra o terminal depois)
 - O fundo é montado a partir das próprias imagens (não há fundo de cor); a resolução (padrão vertical 9:16, `1080x1920`) é configurável por `VIDEO_LARGURA`/`VIDEO_ALTURA`.
 - Chaves de API (quatro):
-  - **OpenAI** — em [platform.openai.com/api-keys](https://platform.openai.com/api-keys) (roteiro com `gpt-5.4-mini`).
-  - **xAI** — em [console.x.ai](https://console.x.ai) (coleta de posts via X Search).
+  - **OpenAI** — em [platform.openai.com/api-keys](https://platform.openai.com/api-keys) (sumarização das trends, roteiro e descrição das mídias com `gpt-5.6-luna`).
+  - **X API** — Consumer Key + Secret do app em [developer.x.com](https://developer.x.com) (coleta dos posts de quem você segue e download das mídias; pay-per-use).
   - **Firecrawl** — em [firecrawl.dev](https://firecrawl.dev) (busca das imagens via Search API com `sources=["images"]`).
   - **ElevenLabs** — em [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys) (narração TTS).
 
@@ -62,12 +62,13 @@ output/
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
-| `X_ACCOUNTS` | vazio | Opcional: restringe a busca a contas específicas (máx. 20). Vazio = trends mais faladas do dia |
+| `X_USERNAME` | — | Seu @ no X (sem @): a coleta pega os posts das contas que você segue |
+| `X_ACCOUNTS` | vazio | Opcional: usa somente estas contas no lugar da lista de seguidos |
+| `X_MAX_POSTS` | `60` | Teto de posts lidos por execução (a X API cobra por post lido) |
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
 | `NUM_NOTICIAS` | `6` | Quantas notícias (Firecrawl news) buscar para enriquecer a trend |
-| `TEXT_MODEL` | `gpt-5.4-mini` | Modelo do roteiro |
-| `SEARCH_MODEL` | `grok-4.3` | Modelo da xAI para a X Search (coleta de posts) |
+| `TEXT_MODEL` | `gpt-5.6-luna` | Modelo do roteiro, da sumarização das trends e da visão |
 | `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
 | `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
@@ -127,16 +128,18 @@ O GPT define, para cada imagem, uma **consulta de busca** coerente com o fato da
 
 | Etapa | Custo |
 | --- | --- |
-| Coleta de trends (xAI: tokens grok-4.3 + tools a US$ 5/1.000 chamadas) | ~US$ 0,05–0,12 |
+| Coleta de posts (X API pay-per-use, ~US$ 0,005/post, teto `X_MAX_POSTS`) | ~US$ 0,30 com o padrão de 60 posts |
+| Mídias dos posts da trend (X API, até 5 posts) | ~US$ 0,03 |
 | Busca de imagens + notícias (Firecrawl Search) | ~2 créditos por consulta |
-| GPT 5.4 mini (seleção da trend + roteiro) | < US$ 0,02 |
+| GPT 5.6 Luna (sumarização das trends + seleção + roteiro + visão das mídias) | < US$ 0,04 |
 | ElevenLabs (~1.000 caracteres por narração de 60s) | ~1.000 créditos do plano |
 
-Em dinheiro de API (xAI + OpenAI + Firecrawl), cada vídeo sai por **centavos**. O custo real vira o plano da ElevenLabs: o plano gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana. Total estimado: **~US$ 6–7/mês**.
+A lista de quem você segue é lida no máximo 1x por semana (cache em `seguindo.json`). O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para equilibrar cobertura e preço. O custo fixo segue sendo o plano da ElevenLabs: o gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana.
 
 ## Problemas comuns
 
-- **Erro na coleta de posts** — verifique o saldo de créditos da xAI no [console.x.ai](https://console.x.ai).
+- **Erro na coleta de posts** — confira `X_CONSUMER_KEY`/`X_CONSUMER_SECRET` e o saldo/plano do app em [developer.x.com](https://developer.x.com). Se a leitura da lista de seguidos for negada (403), preencha `X_ACCOUNTS` no `.env` com as contas desejadas.
+- **Trocou as contas que segue e a coleta não refletiu** — apague `seguindo.json` (cache de 7 dias da lista de seguidos).
 - **Erro/429 na busca de imagens** — confira a `FIRECRAWL_API_KEY` e o saldo de créditos no [dashboard do Firecrawl](https://firecrawl.dev); o pipeline já espaça as buscas e tenta de novo em 429.
 - **HTTP 401 na ElevenLabs** — chave errada no `.env`; **422** — texto/parâmetros inválidos (a mensagem detalha).
 - **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal.

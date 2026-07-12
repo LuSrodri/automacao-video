@@ -12,16 +12,16 @@ RAIZ = Path(__file__).resolve().parent.parent
 @dataclass
 class Config:
     openai_api_key: str
-    xai_api_key: str
     elevenlabs_api_key: str
     firecrawl_api_key: str
     contas: list[str]
-    x_consumer_key: str = ""  # X API oficial (opcional): mídias dos posts originais
-    x_consumer_secret: str = ""
+    x_consumer_key: str  # X API oficial: coleta dos posts + mídias
+    x_consumer_secret: str
+    x_username: str = ""  # @usuário cuja lista de seguidos alimenta a coleta
+    x_max_posts: int = 60  # teto de posts lidos por execução (leitura é paga)
     video_largura: int = 1080
     video_altura: int = 1920
-    text_model: str = "gpt-5.4-mini"
-    search_model: str = "grok-4.3"
+    text_model: str = "gpt-5.6-luna"
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
     tts_model: str = "eleven_v3"
@@ -62,9 +62,10 @@ def carregar_config() -> Config:
         nome
         for nome in (
             "OPENAI_API_KEY",
-            "XAI_API_KEY",
             "ELEVENLABS_API_KEY",
             "FIRECRAWL_API_KEY",
+            "X_CONSUMER_KEY",
+            "X_CONSUMER_SECRET",
         )
         if not os.getenv(nome)
     ]
@@ -74,28 +75,32 @@ def carregar_config() -> Config:
             "Copie o .env.example para .env e preencha as chaves."
         )
 
-    # X_ACCOUNTS é opcional: vazio = busca aberta pelas threads de tech/AI
-    # mais discutidas do dia; preenchido = restringe às contas listadas.
+    # X_ACCOUNTS é opcional: vazio = coleta dos posts das contas que
+    # X_USERNAME segue; preenchido = usa somente as contas listadas.
     contas = [
         c.strip().lstrip("@")
         for c in os.getenv("X_ACCOUNTS", "").split(",")
         if c.strip()
     ]
-    if len(contas) > 20:
-        raise SystemExit("X_ACCOUNTS aceita no máximo 20 contas (limite da X Search).")
+    x_username = os.getenv("X_USERNAME", "").strip().lstrip("@")
+    if not contas and not x_username:
+        raise SystemExit(
+            "Preencha X_USERNAME no .env (seu @ no X, para coletar os posts de "
+            "quem você segue) ou liste contas em X_ACCOUNTS."
+        )
 
     cfg = Config(
         openai_api_key=os.environ["OPENAI_API_KEY"],
-        xai_api_key=os.environ["XAI_API_KEY"],
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
         firecrawl_api_key=os.environ["FIRECRAWL_API_KEY"],
         contas=contas,
-        x_consumer_key=os.getenv("X_CONSUMER_KEY", ""),
-        x_consumer_secret=os.getenv("X_CONSUMER_SECRET", ""),
+        x_consumer_key=os.environ["X_CONSUMER_KEY"],
+        x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
+        x_username=x_username,
+        x_max_posts=int(os.getenv("X_MAX_POSTS", "60")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
-        text_model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"),
-        search_model=os.getenv("SEARCH_MODEL", "grok-4.3"),
+        text_model=os.getenv("TEXT_MODEL", "gpt-5.6-luna"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),

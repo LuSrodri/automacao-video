@@ -1,8 +1,8 @@
 """Planejamento dos cortes: a IA decide quando cada mídia entra e quanto fica.
 
 O modelo recebe a narração e as mídias disponíveis (com descrições — as dos
-posts do X vêm da análise de imagem/vídeo do x_search; as da web, da consulta
-do roteirista) e devolve a sequência de cortes. Cada corte é ancorado numa
+posts do X vêm do GPT com visão sobre os arquivos baixados; as da web, da
+consulta do roteirista) e devolve a sequência de cortes. Cada corte é ancorado numa
 CITAÇÃO EXATA do texto da narração — nunca em segundos, que LLM chuta — e a
 citação é convertida em tempo real pelos timestamps por caractere do
 alinhamento do ElevenLabs (já remapeados após o corte de silêncios).

@@ -1,24 +1,31 @@
-"""Download das mídias (fotos e vídeos) dos posts originais da trend, via X API.
+"""Download e descrição das mídias (fotos e vídeos) dos posts da trend.
 
-Usa a X API oficial v2 em modo pay-per-use (~US$ 0,005 por post/mídia lida):
-um único GET /2/tweets com `expansions=attachments.media_keys` resolve todos os
-posts da trend de uma vez. Fotos vêm por URL direta (pbs.twimg.com, pedida em
-resolução original); vídeos vêm como variantes MP4, das quais baixamos a de
-maior bitrate. A etapa é opcional: sem X_CONSUMER_KEY/SECRET no .env, ou em
-qualquer falha da API, o pipeline segue só com as imagens da busca web.
+Download via X API oficial v2 em modo pay-per-use (~US$ 0,005 por post/mídia
+lida): um único GET /2/tweets com `expansions=attachments.media_keys` resolve
+todos os posts da trend de uma vez. Fotos vêm por URL direta (pbs.twimg.com,
+pedida em resolução original); vídeos vêm como variantes MP4, das quais
+baixamos a de maior bitrate. Em qualquer falha da API, o pipeline segue só com
+as imagens da busca web.
+
+Descrição via GPT com visão sobre os arquivos baixados: fotos vão direto; de
+vídeos o ffmpeg extrai alguns frames. As descrições orientam o planejador de
+cortes (cortes.py) a casar cada mídia com o momento certo da narração.
 """
 
+import base64
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import requests
+from openai import OpenAI
 
 from .busca_imagens import _baixar as _baixar_imagem
 from .config import Config
 from .edicao import duracao_audio
+from .x_client import obter_bearer
 
-TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 TWEETS_ENDPOINT = "https://api.x.com/2/tweets"
 
 MAX_POSTS = 5  # posts consultados por vídeo (cada um custa ~US$ 0,005)
@@ -26,22 +33,6 @@ MAX_MIDIAS = 6  # mídias baixadas por vídeo (as primeiras encontradas)
 MAX_VIDEO_BYTES = 60_000_000  # ~60 MB; vídeo maior que isso é descartado
 
 PADRAO_ID_POST = re.compile(r"(?:x|twitter)\.com/[^/]+/status/(\d+)")
-
-
-def _bearer(cfg: Config) -> str | None:
-    """Token OAuth2 app-only a partir do consumer key/secret."""
-    try:
-        resp = requests.post(
-            TOKEN_ENDPOINT,
-            auth=(cfg.x_consumer_key, cfg.x_consumer_secret),
-            data={"grant_type": "client_credentials"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["access_token"]
-    except (requests.RequestException, KeyError, ValueError) as erro:
-        print(f"[aviso] X API: falha ao obter token ({erro}); etapa de mídias pulada")
-        return None
 
 
 def _ids_dos_posts(urls: list[str]) -> list[str]:
@@ -109,8 +100,9 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
     if not ids:
         return []
 
-    token = _bearer(cfg)
+    token = obter_bearer(cfg)
     if token is None:
+        print("[aviso] X API sem token; etapa de mídias pulada")
         return []
 
     print(f"[midia-x] Consultando {len(ids)} posts da trend na X API...")
@@ -119,6 +111,7 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
             TWEETS_ENDPOINT,
             params={
                 "ids": ",".join(ids),
+                "tweet.fields": "text",
                 "expansions": "attachments.media_keys",
                 "media.fields": (
                     "media_key,type,url,variants,preview_image_url,width,height"
@@ -138,9 +131,11 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
         print("[midia-x] Nenhuma mídia anexada nos posts consultados")
         return []
 
-    # De qual post veio cada mídia (para casar com as descrições do x_search)
+    # De qual post veio cada mídia e o texto do post (contexto para a descrição)
     dono_da_midia: dict[str, str] = {}
+    texto_do_post: dict[str, str] = {}
     for post in dados.get("data") or []:
+        texto_do_post[post.get("id", "")] = post.get("text", "")
         for chave in (post.get("attachments") or {}).get("media_keys") or []:
             dono_da_midia.setdefault(chave, post.get("id", ""))
 
@@ -161,12 +156,14 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
                     dur_s = duracao_audio(caminho)  # ffprobe format=duration
                 except (subprocess.CalledProcessError, ValueError, OSError):
                     dur_s = None
+            post_id = dono_da_midia.get(m.get("media_key", ""), "")
             baixadas.append(
                 {
                     "caminho": caminho,
                     "trecho": "",
                     "tipo": tipo,
-                    "post_id": dono_da_midia.get(m.get("media_key", ""), ""),
+                    "post_id": post_id,
+                    "texto_post": texto_do_post.get(post_id, ""),
                     "dur_s": dur_s,
                 }
             )
@@ -175,3 +172,103 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
     if not baixadas:
         print("[midia-x] Nenhuma mídia dos posts pôde ser baixada")
     return baixadas
+
+
+# ---- Descrição das mídias baixadas (GPT com visão) ----
+
+LADO_VISAO = 768  # px; lado máximo das imagens enviadas ao GPT (custo de visão)
+FRAMES_VIDEO = 3  # frames extraídos por vídeo (início, meio e fim)
+
+PROMPT_DESCRICAO = """\
+Descreva a mídia em 2 a 4 frases OBJETIVAS: o que aparece (pessoas, produtos,
+telas, lugares), o que acontece e qualquer texto legível na imagem. A descrição
+vai orientar um editor de vídeo que NÃO viu a mídia — seja concreto, sem
+opinião, e responda somente com a descrição.\
+"""
+
+
+def _reduzir(origem: Path, destino: Path, ss: float | None = None) -> Path | None:
+    """JPEG reduzido para a visão; com `ss`, extrai o frame do vídeo nesse ponto."""
+    comando = ["ffmpeg", "-y", "-loglevel", "error"]
+    if ss is not None:
+        comando += ["-ss", f"{ss:.2f}"]
+    comando += [
+        "-i", str(origem),
+        "-frames:v", "1",
+        "-vf", f"scale='min({LADO_VISAO},iw)':-2",
+        str(destino),
+    ]
+    try:
+        subprocess.run(comando, check=True, capture_output=True)
+        return destino if destino.exists() else None
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+def _data_uri(caminho: Path) -> str:
+    dados = base64.b64encode(caminho.read_bytes()).decode()
+    return f"data:image/jpeg;base64,{dados}"
+
+
+def _imagens_da_midia(m: dict, pasta_tmp: Path) -> list[Path]:
+    """Fotos viram um JPEG reduzido; vídeos, FRAMES_VIDEO frames espaçados."""
+    caminho: Path = m["caminho"]
+    if caminho.suffix != ".mp4":
+        jpeg = _reduzir(caminho, pasta_tmp / f"{caminho.stem}.jpg")
+        return [jpeg] if jpeg else []
+    dur = m.get("dur_s") or 0
+    pontos = (
+        [dur * f for f in (0.1, 0.5, 0.85)][:FRAMES_VIDEO] if dur else [0.0, 1.0, 2.0]
+    )
+    frames = []
+    for i, ponto in enumerate(pontos):
+        frame = _reduzir(caminho, pasta_tmp / f"{caminho.stem}_f{i}.jpg", ss=ponto)
+        if frame:
+            frames.append(frame)
+    return frames
+
+
+def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, str]:
+    """Descreve cada mídia baixada com o GPT (visão); {str(caminho): descrição}.
+
+    Etapa opcional: qualquer falha só pula a mídia, nunca derruba o pipeline.
+    """
+    if not midias:
+        return {}
+    cliente = OpenAI(api_key=cfg.openai_api_key)
+    print(f"[midia-x] Descrevendo {len(midias)} mídias com o GPT (visão)...")
+
+    descricoes: dict[str, str] = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        pasta_tmp = Path(tmp)
+        for m in midias:
+            imagens = _imagens_da_midia(m, pasta_tmp)
+            if not imagens:
+                continue
+            contexto = ""
+            if m["caminho"].suffix == ".mp4":
+                contexto += (
+                    f"\nAs imagens são {len(imagens)} frames, em ordem, de um "
+                    f"vídeo de {m.get('dur_s') or '?'} segundos — descreva a "
+                    "ação do começo ao fim."
+                )
+            if m.get("texto_post"):
+                contexto += f"\nTexto do post de origem: \"{m['texto_post']}\""
+            conteudo = [{"type": "text", "text": PROMPT_DESCRICAO + contexto}] + [
+                {"type": "image_url", "image_url": {"url": _data_uri(img)}}
+                for img in imagens
+            ]
+            try:
+                resposta = cliente.chat.completions.create(
+                    model=cfg.text_model,
+                    messages=[{"role": "user", "content": conteudo}],
+                )
+                descricao = (resposta.choices[0].message.content or "").strip()
+            except Exception as erro:
+                print(f"[aviso] Descrição de {m['caminho'].name} falhou: {erro}")
+                continue
+            if descricao:
+                descricoes[str(m["caminho"])] = descricao
+
+    print(f"[midia-x] {len(descricoes)} mídias descritas")
+    return descricoes

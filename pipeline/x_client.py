@@ -1,184 +1,349 @@
-"""Coleta das trends mais faladas do X nas últimas 24h.
+"""Coleta dos posts das contas seguidas no X e sumarização das trends via GPT.
 
-Usa a ferramenta X Search da xAI (via Responses API compatível com OpenAI),
-o que dispensa credenciais e créditos da X API: tudo é cobrado na mesma
-conta xAI usada pelo Grok. A coleta devolve as N trends mais discutidas,
-cada uma com um resumo do que está sendo dito e uma nota de apelo visual,
-para o roteirista escolher a de maior chance de viralizar.
+Usa a X API oficial v2 em modo pay-per-use (a mesma credencial do download de
+mídias em midia_x.py): resolve o usuário de X_USERNAME, busca a lista de contas
+que ele segue (com cache local em seguindo.json, renovado a cada 7 dias, para
+não pagar essa leitura toda execução) e coleta os posts dessas contas na janela
+configurada via /2/tweets/search/recent. Como a leitura é cobrada por post
+(~US$ 0,005 cada), X_MAX_POSTS limita o total lido por execução.
+
+Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes —
+notícias, lançamentos, novidades, curiosidades e tretas — no mesmo formato que
+o resto do pipeline já consome (trend, resumo, engajamento, sentimento,
+apelo_visual, posts, data).
 """
 
 import json
-import re
+import random
+import time
 from datetime import datetime, timedelta, timezone
 
+import requests
 from openai import OpenAI
 
-from .config import Config
+from .config import RAIZ, Config
 
-INSTRUCOES_TRENDING = """\
-Use a busca no X para mapear AS {n} TRENDS MAIS FALADAS das últimas {horas} horas
-sobre tecnologia, inteligência artificial, desenvolvimento de software e o
-mercado de trabalho de TI: anúncios e lançamentos de empresas e modelos,
-polêmicas, rumores, quedas de serviço, pesquisas, linguagens/ferramentas/
-frameworks em alta ou em declínio, demissões e contratações em massa nas big
-techs, salários, trabalho remoto, impacto da IA nas vagas e viradas que estão
-DOMINANDO a conversa. Priorize o que tem maior volume de posts, engajamento e
-reverberação, vindo de fontes confiáveis e usuários reconhecidos.
+TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
+USERS_BY_USERNAME_ENDPOINT = "https://api.x.com/2/users/by/username/{username}"
+FOLLOWING_ENDPOINT = "https://api.x.com/2/users/{id}/following"
+SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
+
+CACHE_SEGUINDO = RAIZ / "seguindo.json"
+CACHE_SEGUINDO_DIAS = 7  # idade máxima do cache da lista de seguidos
+
+MAX_QUERY = 512  # limite de caracteres da query do search/recent
+MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
+
+
+def obter_bearer(cfg: Config) -> str | None:
+    """Token OAuth2 app-only a partir do consumer key/secret."""
+    try:
+        resp = requests.post(
+            TOKEN_ENDPOINT,
+            auth=(cfg.x_consumer_key, cfg.x_consumer_secret),
+            data={"grant_type": "client_credentials"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+    except (requests.RequestException, KeyError, ValueError) as erro:
+        print(f"[aviso] X API: falha ao obter token ({erro})")
+        return None
+
+
+def _get(token: str, url: str, params: dict) -> dict:
+    resp = requests.get(
+        url, params=params, headers={"Authorization": f"Bearer {token}"}, timeout=30
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _contas_seguidas(cfg: Config, token: str) -> list[str]:
+    """Lista de @usuários que X_USERNAME segue, com cache local de alguns dias."""
+    if CACHE_SEGUINDO.exists():
+        try:
+            cache = json.loads(CACHE_SEGUINDO.read_text(encoding="utf-8"))
+            idade = time.time() - cache.get("quando", 0)
+            if (
+                cache.get("usuario") == cfg.x_username
+                and idade < CACHE_SEGUINDO_DIAS * 86400
+                and cache.get("contas")
+            ):
+                print(
+                    f"[x] {len(cache['contas'])} contas seguidas (cache de "
+                    f"{idade / 86400:.0f} dia(s))"
+                )
+                return cache["contas"]
+        except (ValueError, OSError):
+            pass
+
+    dados = _get(
+        token, USERS_BY_USERNAME_ENDPOINT.format(username=cfg.x_username), {}
+    )
+    id_usuario = dados["data"]["id"]
+
+    contas: list[str] = []
+    params: dict = {"max_results": 1000, "user.fields": "username"}
+    while True:
+        pagina = _get(token, FOLLOWING_ENDPOINT.format(id=id_usuario), params)
+        contas += [u["username"] for u in pagina.get("data") or []]
+        proximo = (pagina.get("meta") or {}).get("next_token")
+        if not proximo:
+            break
+        params["pagination_token"] = proximo
+
+    if not contas:
+        raise SystemExit(
+            f"A conta @{cfg.x_username} não segue ninguém no X. "
+            "Siga as contas que quer acompanhar ou preencha X_ACCOUNTS no .env."
+        )
+
+    CACHE_SEGUINDO.write_text(
+        json.dumps(
+            {"usuario": cfg.x_username, "quando": time.time(), "contas": contas},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    print(f"[x] {len(contas)} contas seguidas por @{cfg.x_username}")
+    return contas
+
+
+def _lotes_de_query(contas: list[str]) -> list[str]:
+    """Agrupa as contas em queries `from:a OR from:b ...` de até 512 caracteres."""
+    sufixo = " -is:retweet -is:reply"
+    lotes, atual = [], []
+    for conta in contas:
+        candidato = "(" + " OR ".join(f"from:{c}" for c in atual + [conta]) + ")"
+        if atual and len(candidato) + len(sufixo) > MAX_QUERY:
+            lotes.append("(" + " OR ".join(f"from:{c}" for c in atual) + ")" + sufixo)
+            atual = [conta]
+        else:
+            atual.append(conta)
+    if atual:
+        lotes.append("(" + " OR ".join(f"from:{c}" for c in atual) + ")" + sufixo)
+    return lotes
+
+
+def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
+    """Posts das contas na janela, limitados a cfg.x_max_posts (leitura é paga)."""
+    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
+    lotes = _lotes_de_query(contas)
+
+    # Orçamento de leitura: divide o teto entre os lotes. O mínimo da API é 10
+    # por chamada; se há lotes demais para o teto, sorteia quais entram nesta
+    # execução (dia a dia a rotação cobre todas as contas).
+    max_lotes = max(cfg.x_max_posts // 10, 1)
+    if len(lotes) > max_lotes:
+        print(
+            f"[aviso] {len(contas)} contas geram {len(lotes)} consultas, mas "
+            f"X_MAX_POSTS={cfg.x_max_posts} só cobre {max_lotes}; sorteando "
+            "quais contas entram hoje (aumente X_MAX_POSTS para cobrir todas)"
+        )
+        lotes = random.sample(lotes, max_lotes)
+    por_lote = min(max(cfg.x_max_posts // len(lotes), 10), 100)
+
+    posts: list[dict] = []
+    for query in lotes:
+        try:
+            dados = _get(
+                token,
+                SEARCH_ENDPOINT,
+                {
+                    "query": query,
+                    "max_results": por_lote,
+                    "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "sort_order": "relevancy",
+                    "tweet.fields": "created_at,public_metrics,attachments,text",
+                    "expansions": "author_id,attachments.media_keys",
+                    "user.fields": "username",
+                    "media.fields": "type",
+                },
+            )
+        except requests.RequestException as erro:
+            print(f"[aviso] X API: consulta de posts falhou ({erro}); lote pulado")
+            continue
+
+        includes = dados.get("includes") or {}
+        autores = {u["id"]: u["username"] for u in includes.get("users") or []}
+        tipos_midia = {m["media_key"]: m.get("type", "") for m in includes.get("media") or []}
+
+        for post in dados.get("data") or []:
+            metricas = post.get("public_metrics") or {}
+            chaves = (post.get("attachments") or {}).get("media_keys") or []
+            midias = [tipos_midia.get(k, "") for k in chaves]
+            usuario = autores.get(post.get("author_id"), "")
+            posts.append(
+                {
+                    "url": f"https://x.com/{usuario}/status/{post['id']}",
+                    "usuario": usuario,
+                    "texto": post.get("text", ""),
+                    "data": (post.get("created_at") or "")[:16].replace("T", " "),
+                    "likes": metricas.get("like_count", 0),
+                    "reposts": metricas.get("retweet_count", 0)
+                    + metricas.get("quote_count", 0),
+                    "respostas": metricas.get("reply_count", 0),
+                    "midia": (
+                        "vídeo"
+                        if any(t in ("video", "animated_gif") for t in midias)
+                        else "foto" if "photo" in midias else ""
+                    ),
+                }
+            )
+
+    # Mais engajados primeiro; corta no teto configurado
+    posts.sort(
+        key=lambda p: p["likes"] + 3 * p["reposts"] + p["respostas"], reverse=True
+    )
+    return posts[: cfg.x_max_posts]
+
+
+def _listar_posts(posts: list[dict]) -> str:
+    linhas = []
+    for p in posts:
+        texto = " ".join(p["texto"].split())[:MAX_TEXTO_POST]
+        midia = f" | mídia: {p['midia']}" if p["midia"] else ""
+        linhas.append(
+            f"- @{p['usuario']} | {p['data']} UTC | {p['likes']} likes, "
+            f"{p['reposts']} reposts, {p['respostas']} respostas{midia}\n"
+            f"  {p['url']}\n"
+            f"  \"{texto}\""
+        )
+    return "\n".join(linhas)
+
+
+INSTRUCOES_RESUMO = """\
+Você é curador de um canal de vídeos curtos sobre tecnologia, inteligência
+artificial, desenvolvimento de software e mercado de trabalho de TI.
+
+Você recebe os posts publicados nas últimas {horas} horas pelas contas que o
+canal acompanha no X, com autor, data, métricas de engajamento, mídia anexada e
+texto. Agrupe-os nas ATÉ {n} TRENDS mais quentes: notícias, anúncios e
+lançamentos, novidades, curiosidades, tretas/polêmicas, rumores, quedas de
+serviço, demissões/contratações e viradas que estão dominando a conversa.
+Ordene da mais quente para a menos quente, pesando engajamento (likes, reposts,
+respostas) e quantos posts falam do mesmo assunto.
 
 Cada trend deve ser um ACONTECIMENTO específico e datado — quem fez o quê, com
 número quando houver — NUNCA um tema guarda-chuva. "Oracle corta 21.000 vagas e
-cita IA no comunicado" é trend; "demissões em tech por causa da IA" não é.\
+cita IA no comunicado" é trend; "demissões em tech por causa da IA" não é.
+{foco_usa}
+Regras dos campos:
+- "trend": o acontecimento específico, com nome próprio e número exato quando
+  houver (ex.: "Oracle corta 21.000 vagas citando IA", nunca "demissões em tech").
+- "resumo": 2 a 4 frases com os fatos, nomes, empresas e números concretos que
+  apareceram nos posts. Reproduza com fidelidade, sem inventar nada.
+- "engajamento": uma frase sobre o quão quente está (some as métricas dos posts
+  do assunto e cite quem está falando).
+- "sentimento": a EMOÇÃO dominante nos posts (indignação, medo, deboche,
+  euforia, ceticismo, fascínio...) e por quê — o que está movendo a conversa.
+- "apelo_visual": uma frase sobre o quanto o assunto rende boas imagens reais
+  (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo e por quê.
+- "posts": até 5 URLs escolhidas SOMENTE entre as listadas acima, dos posts
+  mais centrais da trend — PRIORIZE os marcados com "mídia: vídeo", depois
+  "mídia: foto". Nunca invente URL.
+- "data": YYYY-MM-DD do acontecimento.\
 """
 
-INSTRUCOES_CONTAS = """\
-Use a busca no X para mapear AS {n} TRENDS MAIS FALADAS das últimas {horas} horas
-sobre tecnologia, inteligência artificial, desenvolvimento de software e o
-mercado de trabalho de TI nas contas indicadas. Priorize os assuntos com maior
-engajamento e reverberação.\
-"""
-
-FORMATO_RESPOSTA = """
-
-Responda SOMENTE com um array JSON com EXATAMENTE {n} objetos (ou menos, se não
-houver tantas trends reais), ordenado da MAIS falada para a menos falada, no
-formato:
-[{{
-  "trend": "o ACONTECIMENTO específico, com nome próprio e número exato quando
-            houver (ex.: 'Oracle corta 21.000 vagas citando IA', nunca
-            'demissões em tech')",
-  "resumo": "2 a 4 frases explicando o que está sendo dito, com os fatos, nomes,
-             empresas e números concretos que apareceram nos posts",
-  "engajamento": "uma frase sobre o quão quente está (volume de posts, reações,
-                  quem está comentando)",
-  "sentimento": "a EMOÇÃO dominante nos posts (ex.: indignação, medo, deboche,
-                 euforia, ceticismo, fascínio) e por quê — qual sentimento está
-                 movendo a conversa, não só o fato",
-  "apelo_visual": "uma frase sobre o quanto o assunto rende boas imagens reais
-                   (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo
-                   e por quê",
-  "posts": ["até 5 URLs dos posts mais virais/centrais da trend, no formato
-             https://x.com/usuario/status/ID — PRIORIZE posts com VÍDEO anexado,
-             depois foto; use somente URLs REAIS vistas na busca, nunca
-             inventadas"],
-  "data": "YYYY-MM-DD"
-}}]
-
-Reproduza os fatos com fidelidade, sem inventar. Não escreva nada antes nem
-depois do array JSON.\
-"""
-
-
-def _extrair_json(texto: str) -> list[dict]:
-    texto = texto.strip()
-    # Remove cerca de código markdown, se o modelo usar
-    texto = re.sub(r"^```(?:json)?\s*|\s*```$", "", texto)
-    inicio, fim = texto.find("["), texto.rfind("]")
-    if inicio == -1 or fim == -1:
-        raise SystemExit(f"Resposta da X Search sem JSON reconhecível:\n{texto[:500]}")
-    return json.loads(texto[inicio : fim + 1])
+ESQUEMA_TRENDS = {
+    "name": "trends_do_x",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "trends": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "trend": {"type": "string"},
+                        "resumo": {"type": "string"},
+                        "engajamento": {"type": "string"},
+                        "sentimento": {"type": "string"},
+                        "apelo_visual": {"type": "string"},
+                        "posts": {"type": "array", "items": {"type": "string"}},
+                        "data": {"type": "string"},
+                    },
+                    "required": [
+                        "trend",
+                        "resumo",
+                        "engajamento",
+                        "sentimento",
+                        "apelo_visual",
+                        "posts",
+                        "data",
+                    ],
+                },
+            }
+        },
+        "required": ["trends"],
+    },
+}
 
 
-INSTRUCOES_MIDIAS = """\
-Busque no X os posts abaixo e ANALISE A MÍDIA (foto ou vídeo) anexada a cada um.
+def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
+    """GPT agrupa os posts coletados nas N trends mais quentes."""
+    cliente = OpenAI(api_key=cfg.openai_api_key)
 
-Para cada post, descreva a mídia em 2 a 4 frases OBJETIVAS: o que aparece
-(pessoas, produtos, telas, lugares), o que acontece (em vídeos: a ação do começo
-ao fim) e qualquer texto legível na imagem. A descrição vai orientar um editor
-de vídeo que NÃO viu a mídia — seja concreto, sem opinião.
-
-Posts:
-{urls}
-
-Responda SOMENTE com um array JSON no formato:
-[{{"url": "https://x.com/usuario/status/ID", "descricao": "..."}}]
-Um objeto por post, na mesma ordem. Se um post não tiver mídia ou não for
-encontrado, use "descricao": "".\
-"""
-
-
-def descrever_midias_posts(cfg: Config, urls_posts: list[str]) -> dict[str, str]:
-    """Descreve as mídias dos posts via x_search com análise de imagem/vídeo.
-
-    Devolve {id_do_post: descrição}; vazio em qualquer falha (etapa opcional).
-    """
-    urls = [u for u in urls_posts if "status/" in u]
-    if not urls:
-        return {}
-
-    cliente = OpenAI(api_key=cfg.xai_api_key, base_url="https://api.x.ai/v1")
-    print(f"[midia-x] Analisando as mídias de {len(urls)} posts (x_search)...")
-    try:
-        resposta = cliente.responses.create(
-            model=cfg.search_model,
-            input=[{
-                "role": "user",
-                "content": INSTRUCOES_MIDIAS.format(urls="\n".join(urls)),
-            }],
-            tools=[{
-                "type": "x_search",
-                "enable_image_understanding": True,
-                "enable_video_understanding": True,
-            }],
-        )
-        itens = _extrair_json(resposta.output_text)
-    # Etapa opcional: nunca derruba o pipeline (_extrair_json usa SystemExit)
-    except (Exception, SystemExit) as erro:
-        print(f"[aviso] Análise de mídias via x_search falhou: {erro}")
-        return {}
-
-    descricoes: dict[str, str] = {}
-    for item in itens:
-        if not isinstance(item, dict):
-            continue
-        m = re.search(r"status/(\d+)", str(item.get("url", "")))
-        descricao = str(item.get("descricao", "")).strip()
-        if m and descricao:
-            descricoes[m.group(1)] = descricao
-    print(f"[midia-x] {len(descricoes)} mídias descritas")
-    return descricoes
-
-
-def coletar_trends(cfg: Config) -> list[dict]:
-    """Busca as N trends mais faladas do X nas últimas `janela_horas` horas."""
-    cliente = OpenAI(api_key=cfg.xai_api_key, base_url="https://api.x.ai/v1")
-
-    agora = datetime.now(timezone.utc)
-    inicio = agora - timedelta(hours=cfg.janela_horas)
-
-    ferramenta = {
-        "type": "x_search",
-        "from_date": inicio.strftime("%Y-%m-%d"),
-        "to_date": agora.strftime("%Y-%m-%d"),
-    }
     foco_usa = (
-        "\nPriorize o que está dominando a conversa NOS ESTADOS UNIDOS: "
-        "contas e empresas americanas e notícias com impacto nos EUA."
+        "\nPriorize o que está dominando a conversa NOS ESTADOS UNIDOS: contas e "
+        "empresas americanas e notícias com impacto nos EUA.\n"
         if cfg.publico == "usa"
         else ""
     )
-    base = INSTRUCOES_CONTAS if cfg.contas else INSTRUCOES_TRENDING
-    if cfg.contas:
-        ferramenta["allowed_x_handles"] = cfg.contas
-        print(f"[x] Mapeando as {cfg.num_trends} trends de {len(cfg.contas)} contas...")
-    else:
-        print(
-            f"[x] Mapeando as {cfg.num_trends} trends de tech/AI/dev/mercado de TI "
-            "mais faladas do dia..."
+    instrucoes = INSTRUCOES_RESUMO.format(
+        horas=cfg.janela_horas, n=cfg.num_trends, foco_usa=foco_usa
+    )
+
+    resposta = cliente.chat.completions.create(
+        model=cfg.text_model,
+        messages=[
+            {"role": "system", "content": instrucoes},
+            {"role": "user", "content": "Posts coletados:\n" + _listar_posts(posts)},
+        ],
+        response_format={"type": "json_schema", "json_schema": ESQUEMA_TRENDS},
+    )
+    return json.loads(resposta.choices[0].message.content)["trends"]
+
+
+def coletar_trends(cfg: Config) -> list[dict]:
+    """Posts das contas seguidas (X API) sumarizados em trends pelo GPT."""
+    token = obter_bearer(cfg)
+    if token is None:
+        raise SystemExit(
+            "Sem token da X API não há coleta de posts. Confira X_CONSUMER_KEY "
+            "e X_CONSUMER_SECRET no .env."
         )
 
-    instrucoes = (
-        base.format(n=cfg.num_trends, horas=cfg.janela_horas)
-        + foco_usa
-        + FORMATO_RESPOSTA.format(n=cfg.num_trends)
-    )
+    if cfg.contas:
+        contas = cfg.contas
+        print(f"[x] Usando as {len(contas)} contas de X_ACCOUNTS")
+    else:
+        try:
+            contas = _contas_seguidas(cfg, token)
+        except requests.RequestException as erro:
+            raise SystemExit(
+                f"X API: falha ao ler as contas seguidas ({erro}). Se o seu "
+                "plano não permite essa leitura, preencha X_ACCOUNTS no .env."
+            )
 
-    resposta = cliente.responses.create(
-        model=cfg.search_model,
-        input=[{"role": "user", "content": instrucoes}],
-        tools=[ferramenta],
+    print(
+        f"[x] Coletando até {cfg.x_max_posts} posts das últimas "
+        f"{cfg.janela_horas}h de {len(contas)} contas..."
     )
+    posts = _coletar_posts(cfg, token, contas)
+    if not posts:
+        raise SystemExit(
+            f"Nenhum post encontrado nas últimas {cfg.janela_horas}h. "
+            "Aumente JANELA_HORAS no .env ou revise as contas."
+        )
+    print(f"[x] {len(posts)} posts coletados; resumindo as trends com o GPT...")
 
-    brutos = _extrair_json(resposta.output_text)
+    brutos = _resumir_trends(cfg, posts)
+    urls_reais = {p["url"] for p in posts}
     trends = [
         {
             "trend": t.get("trend", "").strip(),
@@ -186,7 +351,8 @@ def coletar_trends(cfg: Config) -> list[dict]:
             "engajamento": t.get("engajamento", "").strip(),
             "sentimento": t.get("sentimento", "").strip(),
             "apelo_visual": t.get("apelo_visual", "").strip(),
-            "posts": [u for u in (t.get("posts") or []) if isinstance(u, str)],
+            # Garante que só URLs realmente coletadas seguem no pipeline
+            "posts": [u for u in (t.get("posts") or []) if u in urls_reais],
             "data": t.get("data", ""),
         }
         for t in brutos
@@ -195,9 +361,9 @@ def coletar_trends(cfg: Config) -> list[dict]:
 
     if not trends:
         raise SystemExit(
-            f"Nenhuma trend encontrada nas últimas {cfg.janela_horas}h. "
-            "Aumente JANELA_HORAS no .env ou revise as contas."
+            f"Nenhuma trend identificada nos {len(posts)} posts coletados. "
+            "Aumente JANELA_HORAS ou X_MAX_POSTS no .env."
         )
 
-    print(f"[x] {len(trends)} trends coletadas")
+    print(f"[x] {len(trends)} trends identificadas")
     return trends

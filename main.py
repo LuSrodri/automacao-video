@@ -2,7 +2,8 @@
 a partir das trends do X.
 
 Fluxo:
-1. Coleta as 10 trends mais faladas das últimas 24h no X (X Search da xAI).
+1. X API coleta os posts das últimas 24h das contas que você segue no X e o
+   GPT os sumariza nas 10 trends mais quentes (notícias, novidades, tretas).
 2. GPT escolhe a trend guiado pelos campeões de retenção do canal (YouTube
    Analytics: engagedViews/views + averageViewPercentage) e pelo apelo
    visual/viral, evitando só clonar vídeos recentes sem novidade; e define uma
@@ -10,12 +11,12 @@ Fluxo:
 3. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 4. GPT escreve o roteiro com curva de retenção (gancho nos 3s, desenvolvimento
    que prende, recompensa no final) e define de 8 a 10 imagens-chave.
-5. X API (opcional) baixa as fotos e vídeos dos posts originais da trend, e o
-   Firecrawl Search busca as demais imagens reais na web.
+5. X API baixa as fotos e vídeos dos posts originais da trend, e o Firecrawl
+   Search busca as demais imagens reais na web.
 6. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
-7. A IA planeja os cortes: o x_search descreve as mídias dos posts (análise de
-   imagem/vídeo) e um "editor de cortes" casa cada mídia com o momento exato da
-   narração (citações do texto -> timestamps do alinhamento).
+7. A IA planeja os cortes: o GPT (visão) descreve as mídias baixadas dos posts
+   e um "editor de cortes" casa cada mídia com o momento exato da narração
+   (citações do texto -> timestamps do alinhamento).
 8. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem instante
    vazio) + imagem nítida com zoom suave + crossfade + legendas + branding com
    borda branca.
@@ -36,11 +37,11 @@ from pipeline.cortes import planejar_cortes
 from pipeline.edicao import duracao_audio, intervalos_imagens, montar_video
 from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.legendas import gerar_legendas
-from pipeline.midia_x import baixar_midias_posts
+from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
 from pipeline.silencio import aparar_silencios
-from pipeline.x_client import coletar_trends, descrever_midias_posts
+from pipeline.x_client import coletar_trends
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
 from pipeline.youtube import top_retencao, ultimos_publicados
@@ -153,13 +154,9 @@ def main() -> None:
     ]
 
     # Planejador de cortes: a IA casa cada mídia com o momento da narração.
-    # As mídias do X são descritas pela análise de imagem/vídeo do x_search;
-    # as da web, pela consulta/trecho do roteirista.
-    descricoes = (
-        descrever_midias_posts(cfg, trend_video.get("posts") or [])
-        if midias_x
-        else {}
-    )
+    # As mídias do X são descritas pelo GPT com visão (fotos e frames dos
+    # vídeos baixados); as da web, pela consulta/trecho do roteirista.
+    descricoes = descrever_midias(cfg, midias_x) if midias_x else {}
     midias_plano = [
         {
             "caminho": m["caminho"],
@@ -167,7 +164,7 @@ def main() -> None:
             "dur_s": m.get("dur_s"),
             "origem": "x",
             "descricao": descricoes.get(
-                m.get("post_id", ""), "mídia anexada a um post original da trend"
+                str(m["caminho"]), "mídia anexada a um post original da trend"
             ),
         }
         for m in midias_x
