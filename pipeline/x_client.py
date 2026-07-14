@@ -344,20 +344,35 @@ def coletar_trends(cfg: Config) -> list[dict]:
 
     brutos = _resumir_trends(cfg, posts)
     urls_reais = {p["url"] for p in posts}
-    trends = [
-        {
-            "trend": t.get("trend", "").strip(),
-            "resumo": t.get("resumo", "").strip(),
-            "engajamento": t.get("engajamento", "").strip(),
-            "sentimento": t.get("sentimento", "").strip(),
-            "apelo_visual": t.get("apelo_visual", "").strip(),
-            # Garante que só URLs realmente coletadas seguem no pipeline
-            "posts": [u for u in (t.get("posts") or []) if u in urls_reais],
-            "data": t.get("data", ""),
-        }
-        for t in brutos
-        if t.get("trend") and t.get("resumo")
-    ]
+    midia_por_url = {p["url"]: p["midia"] for p in posts}
+
+    def _midia_posts(urls: list[str]) -> str:
+        """Melhor mídia disponível nos posts da trend: vídeo > foto > só texto."""
+        midias = {midia_por_url.get(u, "") for u in urls}
+        if "vídeo" in midias:
+            return "vídeo"
+        if "foto" in midias:
+            return "foto"
+        return "só texto"
+
+    trends = []
+    for t in brutos:
+        if not (t.get("trend") and t.get("resumo")):
+            continue
+        # Garante que só URLs realmente coletadas seguem no pipeline
+        urls = [u for u in (t.get("posts") or []) if u in urls_reais]
+        trends.append(
+            {
+                "trend": t.get("trend", "").strip(),
+                "resumo": t.get("resumo", "").strip(),
+                "engajamento": t.get("engajamento", "").strip(),
+                "sentimento": t.get("sentimento", "").strip(),
+                "apelo_visual": t.get("apelo_visual", "").strip(),
+                "posts": urls,
+                "midia_posts": _midia_posts(urls),
+                "data": t.get("data", ""),
+            }
+        )
 
     if not trends:
         raise SystemExit(
