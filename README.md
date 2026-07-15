@@ -73,7 +73,7 @@ output/
 | `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
 | `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
-| `VIDEO_DURACAO` | `45` | Duração-alvo da narração em segundos (a duração final segue o áudio; com o corte de silêncios, 45s de alvo ≈ vídeo final de ~29s, a faixa que melhor retém) |
+| `VIDEO_DURACAO` | `32` | Duração-alvo da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%, então 32s de alvo ≈ vídeo final de ~29s, a faixa que melhor retém) |
 | `VIDEO_LARGURA` | `1080` | Largura do vídeo |
 | `VIDEO_ALTURA` | `1920` | Altura do vídeo |
 | `YOUTUBE_CLIENT_ID` | — | Client ID OAuth (Google Cloud, tipo "Desktop app") |

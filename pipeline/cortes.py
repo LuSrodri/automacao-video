@@ -178,6 +178,10 @@ def planejar_cortes(
     texto_baixo = texto_video.lower()
     plano: list[dict] = []
     usadas: set[int] = set()
+    # Os cortes vêm em ordem cronológica; a busca avança um cursor para que
+    # uma citação repetida no texto case com a ocorrência DEPOIS do corte
+    # anterior, não sempre com a primeira.
+    cursor = 0
     for corte in cortes:
         id_bruto = str(corte.get("midia", "")).strip().lstrip("m")
         try:
@@ -186,11 +190,14 @@ def planejar_cortes(
             continue
         if not 0 <= indice < len(midias) or indice in usadas:
             continue
-        citacao = str(corte.get("entra_em", "")).strip()
-        pos = texto_baixo.find(citacao.lower()) if citacao else -1
+        citacao = str(corte.get("entra_em", "")).strip().lower()
+        pos = texto_baixo.find(citacao, cursor) if citacao else -1
+        if pos < 0 and citacao:
+            pos = texto_baixo.find(citacao)
         if pos < 0:
             print(f"[cortes] citação não encontrada, corte ignorado: \"{citacao}\"")
             continue
+        cursor = pos + 1
         usadas.add(indice)
         inicio = _tempo_do_char(alinhamento, texto_video, pos, dur_total)
         plano.append(

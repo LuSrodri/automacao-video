@@ -12,10 +12,18 @@ Duas etapas:
 """
 
 import json
+import re
 
 from openai import OpenAI
 
 from .config import Config
+
+# Ritmo real médio da narração do ElevenLabs (medido nas narrações do canal:
+# ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
+# duração-alvo do .env (VIDEO_DURACAO) no teto de palavras do roteiro.
+PALAVRAS_POR_SEGUNDO = 2.3
+# Tolerância sobre o teto de palavras antes de pedir ao modelo para encurtar.
+FOLGA_PALAVRAS = 1.15
 
 ESQUEMA_SELECAO = {
     "name": "selecao_trend",
@@ -111,7 +119,10 @@ ESQUEMA_ROTEIRO = {
                     "hook) → FATO (o que aconteceu, coisa concreta primeiro) → "
                     "IMPLICAÇÃO (uma única consequência simples) → CORTE "
                     "(termina em tensão emendando de volta no hook — o vídeo "
-                    "roda em loop — sem conclusão e sem CTA falado)."
+                    "roda em loop — sem conclusão e sem CTA falado). A última "
+                    "frase deve ser NOVA: é PROIBIDO repetir o hook (ou "
+                    "qualquer frase anterior) palavra por palavra — quem "
+                    "repete o hook é o reinício do loop, não o texto."
                 ),
             },
             "imagens": {
@@ -278,7 +289,10 @@ ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
    história, sem CTA falado, sem frase de encerramento. O Shorts REINICIA
    sozinho: a última frase deve emendar na primeira (o hook) como se a história
    continuasse — o loop bem feito faz a pessoa assistir de novo sem perceber,
-   e replay multiplica a distribuição.
+   e replay multiplica a distribuição. EMENDAR NÃO É REPETIR: é PROIBIDO
+   copiar o hook (ou qualquer frase já dita) no final do texto — escreva uma
+   frase NOVA de tensão que, quando o vídeo reiniciar, desemboque naturalmente
+   no hook.
 
 PROIBIDO NO TEXTO:
 - Frases de analista: "no cenário geopolítico", "especialistas afirmam",
@@ -292,8 +306,11 @@ PROIBIDO NO TEXTO:
 PAYLOAD OBRIGATÓRIO: o roteiro entrega 1 fato real e 1 implicação. Clickbait
 sem payload é PROIBIDO — o título promete exatamente o que o vídeo entrega.
 
-O roteiro deve ser narrável em cerca de {duracao} segundos (aproximadamente
-{palavras} palavras).
+DURAÇÃO — a narração deve caber em {duracao} segundos: escreva NO MÁXIMO
+{palavras} palavras faladas no texto_video (audio tags entre colchetes não
+contam). O limite é DURO, não uma sugestão: estourar alonga o vídeo e derruba a
+retenção. Se faltar espaço, corte detalhes do FATO — nunca o hook, a implicação
+única nem o corte final.
 
 IMAGENS — defina de 8 a 10 imagens-chave, distribuídas do começo ao fim do
 roteiro (NUNCA pode haver um trecho da narração sem imagem na tela). REGRAS:
@@ -430,6 +447,38 @@ def _resumo_noticias(noticias: list[dict]) -> str:
     return "\n".join(linhas)
 
 
+def _contar_palavras(texto: str) -> int:
+    """Palavras faladas do roteiro (audio tags entre colchetes não contam)."""
+    return len(re.sub(r"\[[^\]]*\]", " ", texto).split())
+
+
+def _aparar_hook_final(roteiro: dict) -> None:
+    """Remove o hook repetido literalmente no fim do texto_video.
+
+    O loop emenda no hook do REINÍCIO do vídeo; quando o modelo copia o hook
+    no final da narração, o gancho fica duplicado e o trecho da última imagem
+    passa a existir duas vezes no texto, desalinhando os cortes.
+    """
+    hook = (roteiro.get("hook") or "").strip()
+    texto = (roteiro.get("texto_video") or "").rstrip()
+    if not hook or not texto:
+        return
+    baixo, alvo = texto.lower(), hook.lower()
+    ultima = baixo.rfind(alvo)
+    if ultima <= baixo.find(alvo):
+        return  # o hook só aparece na abertura — nada a aparar
+    cauda = re.sub(r"\[[^\]]*\]", "", texto[ultima + len(hook):])
+    if cauda.strip(" \t\n.!?…"):
+        return  # a repetição não está no fim do texto
+    novo = re.sub(r"(?:\s*\[[^\]]*\])*\s*$", "", texto[:ultima])
+    if novo:
+        roteiro["texto_video"] = novo
+        print(
+            "[roteiro] Hook repetido no fim do texto removido "
+            "(o loop emenda no reinício, não dentro da narração)."
+        )
+
+
 def gerar_roteiro(
     cfg: Config,
     selecao: dict,
@@ -452,10 +501,11 @@ def gerar_roteiro(
         "NOTÍCIAS RECENTES SOBRE A TREND:\n" + _resumo_noticias(noticias)
     )
 
+    limite = int(cfg.video_duracao * PALAVRAS_POR_SEGUNDO)
     instrucoes = INSTRUCOES_ROTEIRO.format(
         foco=FOCO_USA if cfg.publico == "usa" else FOCO_BRASIL,
         duracao=cfg.video_duracao,
-        palavras=int(cfg.video_duracao * 2.5),
+        palavras=limite,
     )
 
     resposta = cliente.chat.completions.create(
@@ -468,6 +518,42 @@ def gerar_roteiro(
     )
 
     roteiro = json.loads(resposta.choices[0].message.content)
+    _aparar_hook_final(roteiro)
+
+    # Teto de palavras: o TTS cobra por caractere e vídeo longo mata a
+    # retenção, então um estouro grande merece UMA nova tentativa pedindo corte.
+    palavras = _contar_palavras(roteiro["texto_video"])
+    if palavras > limite * FOLGA_PALAVRAS:
+        print(
+            f"[roteiro] texto_video com {palavras} palavras faladas "
+            f"(máximo {limite}); pedindo versão mais curta..."
+        )
+        resposta = cliente.chat.completions.create(
+            model=cfg.text_model,
+            messages=[
+                {"role": "system", "content": instrucoes},
+                {"role": "user", "content": conteudo},
+                {"role": "assistant", "content": resposta.choices[0].message.content},
+                {
+                    "role": "user",
+                    "content": (
+                        f"O texto_video ficou com {palavras} palavras faladas; "
+                        f"o máximo é {limite}. Reescreva o JSON completo "
+                        "cortando detalhes do FATO (mantenha o hook, a "
+                        "implicação única e o corte final em tensão) até caber "
+                        "no limite, e ajuste os trechos das imagens para "
+                        "continuarem substrings exatas do novo texto_video."
+                    ),
+                },
+            ],
+            response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},
+        )
+        encurtado = json.loads(resposta.choices[0].message.content)
+        _aparar_hook_final(encurtado)
+        if _contar_palavras(encurtado["texto_video"]) < palavras:
+            roteiro = encurtado
+        palavras = _contar_palavras(roteiro["texto_video"])
+    print(f"[roteiro] {palavras} palavras faladas (alvo <= {limite})")
     print(f"[roteiro] Tema do dia: {roteiro['tema']}")
     print(f"[roteiro] Título: {roteiro['titulo']}")
     if roteiro.get("hook"):

@@ -73,16 +73,26 @@ def _trend_escolhida(trends: list[dict], nome: str) -> dict:
 
 
 def _sobreposicoes(texto_video: str, imagens: list[dict]) -> list[dict]:
-    """Posiciona cada imagem na fração da narração em que seu trecho ocorre."""
+    """Posiciona cada imagem na fração da narração em que seu trecho ocorre.
+
+    As imagens vêm em ordem de narração, então a busca avança um cursor: se o
+    texto repete uma frase, cada trecho casa com a ocorrência a partir da
+    imagem anterior — não sempre com a primeira do texto.
+    """
     resultado = []
+    texto_baixo = texto_video.lower()
+    cursor = 0
     for img in imagens:
-        trecho = img["trecho"].strip()
-        pos = texto_video.lower().find(trecho.lower()) if trecho else -1
+        trecho = img["trecho"].strip().lower()
+        pos = texto_baixo.find(trecho, cursor) if trecho else -1
+        if pos < 0 and trecho:
+            pos = texto_baixo.find(trecho)
         if pos < 0:
             resultado.append(
                 {"caminho": img["caminho"], "inicio_frac": None, "fim_frac": None}
             )
         else:
+            cursor = pos + 1
             resultado.append(
                 {
                     "caminho": img["caminho"],
