@@ -13,9 +13,9 @@ Fluxo:
    pelos campeões de retenção do canal (YouTube Analytics) e evitando clonar
    vídeos recentes sem novidade; e define uma consulta de notícias.
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
-5. GPT escreve o roteiro pré-conceitual (frases de até 8 palavras, vocabulário
-   de criança, HOOK -> FATO -> IMPLICAÇÃO -> CORTE) e define de 8 a 10
-   imagens-chave.
+5. GPT escreve o roteiro pré-conceitual em tom adulto (frases curtas,
+   vocabulário leigo, HOOK -> FATO -> IMPLICAÇÃO -> CORTE emendando no hook
+   para rodar em loop) e define de 8 a 10 imagens-chave.
 6. X API baixa as fotos e vídeos dos posts originais da trend, e o Firecrawl
    Search busca as demais imagens reais na web.
 7. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.

@@ -6,8 +6,9 @@ Duas etapas:
    depois com foto e por último só texto (evitando repetir vídeos recentes), e
    devolve uma consulta de notícias para enriquecer o material.
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
-   roteiro pré-conceitual (frases de até 8 palavras, vocabulário de criança,
-   estrutura HOOK → FATO → IMPLICAÇÃO → CORTE) e define de 8 a 10 imagens-chave.
+   roteiro pré-conceitual em tom adulto (frases curtas, vocabulário leigo,
+   estrutura HOOK → FATO → IMPLICAÇÃO → CORTE em loop) e define de 8 a 10
+   imagens-chave.
 """
 
 import json
@@ -103,13 +104,14 @@ ESQUEMA_ROTEIRO = {
                 "type": "string",
                 "description": (
                     "Texto/roteiro narrado do vídeo, no idioma definido nas "
-                    "instruções. Frases de no MÁXIMO 8 palavras, uma ideia por "
-                    "frase, vocabulário que uma criança de 12 anos entende. "
+                    "instruções. Frases curtas (mire em 8 palavras, máximo "
+                    "12), uma ideia por frase, vocabulário do dia a dia de um "
+                    "adulto leigo — tom adulto e urgente, nunca infantil. "
                     "Estrutura obrigatória: HOOK (a primeira frase = campo "
                     "hook) → FATO (o que aconteceu, coisa concreta primeiro) → "
                     "IMPLICAÇÃO (uma única consequência simples) → CORTE "
-                    "(termina em tensão ou de forma vaga, sem conclusão e sem "
-                    "CTA falado)."
+                    "(termina em tensão emendando de volta no hook — o vídeo "
+                    "roda em loop — sem conclusão e sem CTA falado)."
                 ),
             },
             "imagens": {
@@ -211,11 +213,16 @@ Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta 
    tipo de tema, tensão e promessa que o público DESTE canal assiste até o fim.
    Priorize trends com o mesmo DNA dos campeões. Repetir um tema que performa é
    BEM-VINDO e encorajado.
-4. ESPECIFICIDADE: escolha o ACONTECIMENTO concreto (quem, número exato, data),
+4. COMPARTILHÁVEL: em empate, vença a notícia que um profissional de tech
+   mandaria para um colega com "viu isso?" — corte de empregos com número,
+   dinheiro grande mudando de mão, decisão que afeta quem trabalha com
+   tecnologia. Share é o que multiplica a distribuição no feed, e é esse tipo
+   de notícia que gera share neste canal.
+5. ESPECIFICIDADE: escolha o ACONTECIMENTO concreto (quem, número exato, data),
    nunca o panorama. Se a trend for guarda-chuva ("IA no mercado de trabalho"),
    ou você acha dentro dela o fato específico mais forte (a empresa, o corte, o
    valor) ou escolhe outra trend.
-5. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
+6. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
    com ângulo ou desenvolvimento NOVO é ótimo; o que não pode é escolher uma
    trend que renderia praticamente o MESMO vídeo de novo, sem nada novo a dizer.
 
@@ -234,28 +241,44 @@ Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca) e NOTÍCIAS
 recentes sobre ela. Use as notícias para acertar fatos, nomes, empresas, datas e
 números — não invente.
 
-PÚBLICO — A REGRA QUE MANDA EM TODAS AS OUTRAS: escreva como se fosse para
-alguém de 12 anos assistindo com METADE da atenção. O espectador de Shorts é
-passivo: se UMA frase exigir esforço ou conhecimento prévio para entender, ele
-desliza para o próximo vídeo.
+PÚBLICO — A REGRA QUE MANDA EM TODAS AS OUTRAS: escreva para um ADULTO leigo
+(o espectador real do canal: homem de 25 a 54 anos, curioso por tecnologia,
+sem formação técnica) assistindo com METADE da atenção. O espectador de Shorts
+é passivo: se UMA frase exigir esforço ou conhecimento prévio para entender,
+ele desliza para o próximo vídeo.
 
-FRASES: no máximo 8 palavras por frase. Uma ideia por frase. (Audio tags entre
+TOM: adulto e urgente — como quem conta um furo de notícia a um amigo, com
+autoridade seca. Simples NÃO é infantil: PROIBIDO tom didático de professor,
+entusiasmo fofo, moral da história e qualquer frase que soaria natural num
+desenho animado. Se a frase parece escrita para criança, reescreva como um
+âncora de telejornal falaria num corte de 30 segundos.
+
+FRASES: curtas e diretas — mire em 8 palavras, nunca passe de 12. Uma ideia por
+frase. Varie o ritmo: só frases mínimas em sequência soa robótico e infantil;
+alterne frases de 3-4 palavras com frases mais cheias. (Audio tags entre
 colchetes não contam como palavras.)
 
-VOCABULÁRIO: apenas palavras que uma criança conhece. PROIBIDO jargão, sigla sem
-explicação e termo técnico. Se o fato depende de um conceito (tarifa, sanção,
-benchmark, protocolo), traduza para o efeito concreto que qualquer pessoa
-visualiza ("os produtos ficaram mais caros", "o robô ficou proibido").
+VOCABULÁRIO: palavras do dia a dia, que qualquer adulto leigo entende sem parar
+para pensar. PROIBIDO jargão, sigla sem explicação e termo técnico. Se o fato
+depende de um conceito (tarifa, sanção, benchmark, protocolo), traduza para o
+efeito concreto que qualquer pessoa visualiza ("os produtos ficaram mais
+caros", "o robô ficou proibido").
 
-ESTRUTURA OBRIGATÓRIA (vídeo de ~{duracao}s):
+ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
 1. HOOK (0-2s): a imagem mais CHOCANTE da notícia, direta, sem preâmbulo.
-   NUNCA começar com contexto, data ou nome de instituição.
-2. FATO (2-15s): o que aconteceu, em ordem "coisa concreta primeiro, detalhe
-   depois". Cada frase mostra uma cena que dá para VER de olhos fechados.
-3. IMPLICAÇÃO (15-30s): UMA única consequência simples ("isso significa
+   NUNCA começar com contexto, data ou nome de instituição. O hook decide o
+   "viewed vs swiped": metade do público desliza no primeiro segundo — esta
+   frase e a primeira imagem valem mais que todo o resto do vídeo.
+2. FATO (até a metade do vídeo): o que aconteceu, em ordem "coisa concreta
+   primeiro, detalhe depois". Cada frase mostra uma cena que dá para VER de
+   olhos fechados.
+3. IMPLICAÇÃO (segunda metade): UMA única consequência simples ("isso significa
    que..."). Só uma — duas implicações confundem e a pessoa desliza.
-4. CORTE (30-35s): terminar em tensão ou de forma vaga. Sem conclusão, sem
-   moral da história, sem CTA falado, sem frase de encerramento.
+4. CORTE (últimos 2-3s): terminar em tensão. Sem conclusão, sem moral da
+   história, sem CTA falado, sem frase de encerramento. O Shorts REINICIA
+   sozinho: a última frase deve emendar na primeira (o hook) como se a história
+   continuasse — o loop bem feito faz a pessoa assistir de novo sem perceber,
+   e replay multiplica a distribuição.
 
 PROIBIDO NO TEXTO:
 - Frases de analista: "no cenário geopolítico", "especialistas afirmam",
@@ -274,6 +297,10 @@ O roteiro deve ser narrável em cerca de {duracao} segundos (aproximadamente
 
 IMAGENS — defina de 8 a 10 imagens-chave, distribuídas do começo ao fim do
 roteiro (NUNCA pode haver um trecho da narração sem imagem na tela). REGRAS:
+- A PRIMEIRA imagem é a mais importante do vídeo: ela é o primeiro frame que a
+  pessoa vê no feed e decide o "viewed vs swiped" junto com o hook. Reserve
+  para ela a cena real mais forte e chocante da notícia — nunca logo, nunca
+  retrato posado, nunca imagem "de contexto".
 - As imagens serão buscadas na web (fotos REAIS, nada gerado por IA). Em
   "consulta", escreva a busca em inglês que encontra a CENA mais COERENTE com a
   notícia daquele momento. Priorize, nesta ordem: (1) a foto do próprio
