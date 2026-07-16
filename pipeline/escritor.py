@@ -4,8 +4,14 @@ Duas etapas:
 1. `selecionar_trend` — entre as trends já APROVADAS no score de acessibilidade
    pré-conceitual (pontuacao.py), escolhe a melhor priorizando posts com VÍDEO,
    depois com foto e por último só texto (evitando repetir vídeos recentes; o
-   tema do ÚLTIMO vídeo publicado é vetado em qualquer hipótese), e devolve uma
-   consulta de notícias para enriquecer o material.
+   tema do ÚLTIMO vídeo publicado é vetado em qualquer hipótese — e o veto é
+   VERIFICADO por uma auditoria após a escolha, com nova seleção quando a
+   escolhida repete o tema), e devolve uma consulta de notícias para enriquecer
+   o material. Além do acontecimento, o MACROTEMA do último vídeo (guerra, IA,
+   dev...) também é bloqueado programaticamente antes da seleção, para o canal
+   rotacionar entre todas as áreas de interesse em vez de emendar uma sequência
+   de vídeos do mesmo assunto (só cai o bloqueio se TODAS as candidatas do dia
+   forem do mesmo macrotema).
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
    roteiro pré-conceitual em tom adulto (frases curtas, vocabulário leigo,
    estrutura HOOK → FATO → IMPLICAÇÃO → CORTE em loop) e define de 8 a 10
@@ -18,6 +24,7 @@ import re
 from openai import OpenAI
 
 from .config import Config
+from .pontuacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 
 # Ritmo real médio da narração do ElevenLabs (medido nas narrações do canal:
 # ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
@@ -194,6 +201,67 @@ ESQUEMA_ROTEIRO = {
     },
 }
 
+ESQUEMA_VETO = {
+    "name": "auditoria_veto_ultimo_tema",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "mesmo_tema": {
+                "type": "boolean",
+                "description": (
+                    "true se a trend escolhida e o último vídeo publicado têm o "
+                    "MESMO tema: a mesma empresa/pessoa/produto no centro do "
+                    "MESMO acontecimento."
+                ),
+            },
+            "motivo": {
+                "type": "string",
+                "description": "Uma frase justificando o veredito.",
+            },
+        },
+        "required": ["mesmo_tema", "motivo"],
+    },
+}
+
+INSTRUCOES_VETO = """\
+Você audita a escolha de pauta de um canal de vídeos curtos de tecnologia.
+Compare a TREND escolhida para o próximo vídeo com o ÚLTIMO vídeo publicado no
+canal e responda se têm o MESMO tema. Mesmo tema = a mesma empresa, pessoa ou
+produto no centro do MESMO acontecimento — ângulo novo ou desenvolvimento novo
+do mesmo acontecimento continua sendo o mesmo tema. Acontecimento DIFERENTE
+(mesmo que envolva a mesma empresa) NÃO é o mesmo tema.
+Responda somente com o JSON pedido.\
+"""
+
+ESQUEMA_MACROTEMAS_RECENTES = {
+    "name": "macrotemas_videos_recentes",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "macrotemas": {
+                "type": "array",
+                "items": {"type": "string", "enum": MACROTEMAS},
+                "description": (
+                    "O macrotema de cada vídeo, na MESMA ordem da lista "
+                    "recebida (um item por vídeo)."
+                ),
+            }
+        },
+        "required": ["macrotemas"],
+    },
+}
+
+INSTRUCOES_MACROTEMAS = """\
+Classifique cada vídeo publicado (título + descrição) em UM macrotema:
+{macrotemas}
+Responda somente com o JSON pedido, com um macrotema por vídeo, na mesma ordem
+da lista recebida.\
+""".format(macrotemas=MACROTEMAS_DESCRICAO)
+
 FOCO_BRASIL = """\
 Escreva tudo (título, descrição e narração) em PORTUGUÊS DO BRASIL, com foco em
 temas e referências relevantes para o público brasileiro de tecnologia.\
@@ -238,6 +306,12 @@ Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta 
 6. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
    com ângulo ou desenvolvimento NOVO é ótimo; o que não pode é escolher uma
    trend que renderia praticamente o MESMO vídeo de novo, sem nada novo a dizer.
+7. VARIEDADE DE MACROTEMAS: o canal existe para cobrir TODAS as áreas (IA, dev,
+   hardware, big techs, mercado de TI, geopolítica...) — o espectador volta para
+   ficar sabendo de tudo, não de um assunto só. Cada candidata e cada vídeo
+   recente vêm com seu macrotema: se um macrotema domina os vídeos recentes,
+   prefira uma candidata de macrotema DIFERENTE e sub-representado, mesmo que
+   ela tenha score um pouco menor ou mídia mais fraca que a favorita.
 
 REGRA ABSOLUTA — VETO AO ÚLTIMO VÍDEO: é PROIBIDO escolher uma trend com o
 MESMO tema do ÚLTIMO vídeo publicado (o marcado como "ÚLTIMO PUBLICADO" na
@@ -372,6 +446,7 @@ def _resumo_trends(trends: list[dict]) -> str:
         linhas.append(
             f"{i}. {t['trend']}\n"
             f"   Resumo: {t['resumo']}\n"
+            f"   Macrotema: {t.get('macrotema', '?')}\n"
             f"   Mídia dos posts: {t.get('midia_posts', '?')}\n"
             f"   Score pré-conceitual: {t.get('score', '?')}/5\n"
             f"   Imagem mental: {t.get('imagem_mental', '?')}\n"
@@ -382,18 +457,28 @@ def _resumo_trends(trends: list[dict]) -> str:
     return "\n".join(linhas)
 
 
-def _resumo_recentes(videos_recentes: list[dict] | None) -> str:
+def _resumo_recentes(
+    videos_recentes: list[dict] | None, macrotemas: list[str] | None = None
+) -> str:
     if not videos_recentes:
         return ""
     linhas = []
     for i, v in enumerate(videos_recentes):
+        macro = (
+            f" [macrotema: {macrotemas[i]}]"
+            if macrotemas and i < len(macrotemas)
+            else ""
+        )
         marca = " [ÚLTIMO PUBLICADO — tema VETADO no próximo vídeo]" if i == 0 else ""
-        linhas.append(f"- ({v.get('data') or '?'}) {v.get('titulo', '')}{marca}")
+        linhas.append(f"- ({v.get('data') or '?'}) {v.get('titulo', '')}{macro}{marca}")
     return (
         "\n\nÚltimos vídeos publicados neste canal, do mais recente para o mais "
         "antigo (contexto anti-clone: voltar a um tema com ângulo novo é ótimo; "
         "refazer a mesma notícia sem nada novo, não — e o tema do ÚLTIMO "
-        "PUBLICADO é proibido em qualquer hipótese):\n" + "\n".join(linhas)
+        "PUBLICADO é proibido em qualquer hipótese). Observe também a "
+        "DISTRIBUIÇÃO de macrotemas: se um macrotema domina esta lista, "
+        "prefira candidatas dos macrotemas sub-representados:\n"
+        + "\n".join(linhas)
     )
 
 
@@ -415,6 +500,89 @@ def _resumo_campeoes(campeoes: list[dict] | None) -> str:
     )
 
 
+def _localizar_trend(trends: list[dict], nome: str) -> dict | None:
+    """Acha a trend pelo nome devolvido pela seleção (com folga p/ paráfrase)."""
+    alvo = nome.strip().lower()
+    for t in trends:
+        if t["trend"].strip().lower() == alvo:
+            return t
+    for t in trends:
+        candidato = t["trend"].strip().lower()
+        if candidato and (candidato in alvo or alvo in candidato):
+            return t
+    return None
+
+
+def _macrotemas_recentes(
+    cliente: OpenAI, cfg: Config, videos_recentes: list[dict]
+) -> list[str]:
+    """Classifica o macrotema de cada vídeo recente do canal (1 chamada).
+
+    O índice 0 (último publicado) alimenta o bloqueio de macrotema consecutivo;
+    a lista inteira entra no prompt de seleção para o modelo rebalancear a
+    pauta. Falha ABORTA (fail-fast): sem os macrotemas não existe a rotação, e
+    rodar sem ela é o que deixa um macrotema monopolizar o canal.
+    """
+    linhas = [
+        f"{i}. {v.get('titulo', '')} — {(v.get('descricao') or '')[:200]}"
+        for i, v in enumerate(videos_recentes, 1)
+    ]
+    try:
+        resposta = cliente.chat.completions.create(
+            model=cfg.text_model,
+            messages=[
+                {"role": "system", "content": INSTRUCOES_MACROTEMAS},
+                {"role": "user", "content": "Vídeos publicados:\n" + "\n".join(linhas)},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": ESQUEMA_MACROTEMAS_RECENTES,
+            },
+        )
+        macros = json.loads(resposta.choices[0].message.content)["macrotemas"]
+    except Exception as erro:  # noqa: BLE001 — sem macrotemas não há rotação
+        raise SystemExit(
+            "Classificação de macrotema dos vídeos recentes falhou (OpenAI) — "
+            f"sem ela não existe a rotação de macrotemas; abortando: {erro}"
+        ) from erro
+
+    macros = [m if m in MACROTEMAS else "outro" for m in macros]
+    macros = macros[: len(videos_recentes)]
+    macros += ["outro"] * (len(videos_recentes) - len(macros))
+    return macros
+
+
+def _cai_no_veto(cliente: OpenAI, cfg: Config, trend: dict, ultimo: dict) -> bool:
+    """Audita se a trend escolhida repete o tema do último vídeo publicado.
+
+    O veto do prompt de seleção depende de o modelo obedecer; esta segunda
+    chamada é a garantia dura — o clone é barrado aqui mesmo quando a seleção
+    ignora a proibição.
+    """
+    conteudo = (
+        f"TREND ESCOLHIDA: {trend.get('trend', '')}\n"
+        f"Resumo da trend: {trend.get('resumo', '')}\n\n"
+        f"ÚLTIMO VÍDEO PUBLICADO ({ultimo.get('data') or '?'}): "
+        f"{ultimo.get('titulo', '')}\n"
+        f"Descrição: {ultimo.get('descricao', '')}"
+    )
+    resposta = cliente.chat.completions.create(
+        model=cfg.text_model,
+        messages=[
+            {"role": "system", "content": INSTRUCOES_VETO},
+            {"role": "user", "content": conteudo},
+        ],
+        response_format={"type": "json_schema", "json_schema": ESQUEMA_VETO},
+    )
+    veredito = json.loads(resposta.choices[0].message.content)
+    if veredito["mesmo_tema"]:
+        print(
+            f"[veto] Trend '{trend.get('trend', '')}' repete o tema do último "
+            f"vídeo publicado — descartada. Motivo: {veredito['motivo']}"
+        )
+    return veredito["mesmo_tema"]
+
+
 def selecionar_trend(
     cfg: Config,
     trends: list[dict],
@@ -425,28 +593,83 @@ def selecionar_trend(
 
     `campeoes`: top vídeos do canal em retenção (de ``youtube.top_retencao``),
     usados como sinal positivo do que o público assiste até o fim.
+
+    Dois bloqueios são APLICADOS aqui, não só pedidos no prompt:
+    1. MACROTEMA: o macrotema do último vídeo publicado sai das candidatas
+       ANTES da seleção (rotação dura — impede o canal de emendar 10 vídeos de
+       guerra), a menos que TODAS as candidatas sejam dele (aí só o veto de
+       acontecimento segue valendo, para não ficar sem vídeo à toa).
+    2. ACONTECIMENTO: cada escolha passa por uma auditoria; se repetir o tema
+       do último vídeo, a trend sai das candidatas e a seleção roda de novo.
+       Se todas caírem no veto, aborta — melhor um dia sem vídeo do que dois
+       seguidos do mesmo tema.
     """
     cliente = OpenAI(api_key=cfg.openai_api_key)
-
-    conteudo = (
-        "Trends mais faladas do X hoje:\n"
-        + _resumo_trends(trends)
-        + _resumo_campeoes(campeoes)
-        + _resumo_recentes(videos_recentes)
+    ultimo = videos_recentes[0] if videos_recentes else None
+    macros_recentes = (
+        _macrotemas_recentes(cliente, cfg, videos_recentes) if videos_recentes else []
     )
 
-    resposta = cliente.chat.completions.create(
-        model=cfg.text_model,
-        messages=[
-            {"role": "system", "content": INSTRUCOES_SELECAO},
-            {"role": "user", "content": conteudo},
-        ],
-        response_format={"type": "json_schema", "json_schema": ESQUEMA_SELECAO},
+    candidatas = list(trends)
+    if macros_recentes:
+        macro_ultimo = macros_recentes[0]
+        fora_do_macro = [
+            t for t in candidatas if t.get("macrotema", "outro") != macro_ultimo
+        ]
+        if fora_do_macro:
+            bloqueadas = len(candidatas) - len(fora_do_macro)
+            if bloqueadas:
+                print(
+                    f"[veto] Macrotema '{macro_ultimo}' (o do último vídeo) "
+                    f"bloqueado no próximo — {bloqueadas} candidata(s) fora, "
+                    f"{len(fora_do_macro)} seguem na disputa."
+                )
+            candidatas = fora_do_macro
+        else:
+            print(
+                f"[veto] TODAS as candidatas aprovadas são '{macro_ultimo}', o "
+                "mesmo macrotema do último vídeo — rotação impossível hoje; "
+                "segue valendo só o veto de acontecimento."
+            )
+
+    total = len(candidatas)
+    for _ in range(total):
+        conteudo = (
+            "Trends mais faladas do X hoje:\n"
+            + _resumo_trends(candidatas)
+            + _resumo_campeoes(campeoes)
+            + _resumo_recentes(videos_recentes, macros_recentes)
+        )
+        resposta = cliente.chat.completions.create(
+            model=cfg.text_model,
+            messages=[
+                {"role": "system", "content": INSTRUCOES_SELECAO},
+                {"role": "user", "content": conteudo},
+            ],
+            response_format={"type": "json_schema", "json_schema": ESQUEMA_SELECAO},
+        )
+        selecao = json.loads(resposta.choices[0].message.content)
+
+        escolhida = _localizar_trend(candidatas, selecao["trend"]) or {
+            "trend": selecao["trend"],
+            "resumo": selecao.get("motivo", ""),
+        }
+        if ultimo and _cai_no_veto(cliente, cfg, escolhida, ultimo):
+            if escolhida not in candidatas:
+                break  # sem como remover a escolhida — evita repetir em loop
+            candidatas.remove(escolhida)
+            if not candidatas:
+                break
+            continue
+
+        print(f"[roteiro] Trend escolhida: {selecao['trend']}")
+        print(f"[roteiro] Motivo: {selecao['motivo']}")
+        return selecao
+
+    raise SystemExit(
+        "Todas as trends aprovadas caem no veto ao tema do último vídeo "
+        "publicado — sem vídeo hoje. Os descartes estão logados acima."
     )
-    selecao = json.loads(resposta.choices[0].message.content)
-    print(f"[roteiro] Trend escolhida: {selecao['trend']}")
-    print(f"[roteiro] Motivo: {selecao['motivo']}")
-    return selecao
 
 
 def _resumo_noticias(noticias: list[dict]) -> str:

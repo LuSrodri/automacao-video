@@ -19,6 +19,31 @@ from .config import Config
 
 SCORE_MINIMO = 4  # só vira vídeo trend com score >= 4
 
+# Macrotemas do canal: a rotação em escritor.py bloqueia repetir o macrotema do
+# último vídeo publicado, para o canal cobrir TODAS as áreas de interesse em vez
+# de deixar um macrotema (ex.: guerra) monopolizar a pauta.
+MACROTEMAS = [
+    "ia",
+    "dev-software",
+    "hardware-chips",
+    "bigtech-negocios",
+    "mercado-trabalho-ti",
+    "guerra-geopolitica",
+    "ciencia-espaco",
+    "outro",
+]
+
+MACROTEMAS_DESCRICAO = """\
+- ia: modelos, produtos, pesquisas e empresas de IA
+- dev-software: desenvolvimento de software, linguagens, frameworks, ferramentas
+- hardware-chips: chips, GPUs, dispositivos, robôs, data centers
+- bigtech-negocios: negócios, aquisições, disputas e resultados das big techs
+- mercado-trabalho-ti: empregos, demissões, salários e carreira em tecnologia
+- guerra-geopolitica: guerra, conflito militar, geopolítica
+- ciencia-espaco: ciência, espaço, energia
+- outro: o que não couber acima\
+"""
+
 INSTRUCOES_PONTUACAO = """\
 Você avalia notícias candidatas a vídeo curto (YouTube Shorts) de um canal de
 tecnologia, IA, desenvolvimento de software e mercado de trabalho de TI.
@@ -28,12 +53,22 @@ compreensível sem nenhum conhecimento prévio e com imagem mental instantânea.
 
 Pontue CADA notícia de 1 a 5 em "acessibilidade pré-conceitual":
 - 5: evento físico/visual com carga emocional imediata, zero contexto necessário
-  (explosão, ataque, desastre, confronto, queda, flagrante)
+  (explosão, desastre, confronto, queda, flagrante — de QUALQUER domínio: robô
+  caindo no palco, data center em chamas, demonstração ao vivo que falha valem
+  tanto quanto um ataque militar)
 - 4: ação humana dramática compreensível por qualquer pessoa (ameaça de líder,
-  ultimato, prisão, escândalo)
+  ultimato, prisão, escândalo, corte de milhares de empregos com número, CEO
+  demitido da noite para o dia)
 - 3: consequência concreta de algo abstrato (preços dispararam, voos cancelados)
 - 2: exige conhecer 1 conceito prévio (sanção, tarifa, indiciamento)
 - 1: exige conhecimento de domínio (benchmark, protocolo, regulação técnica)
+
+O score mede FORMA (acessibilidade), NUNCA o tema: uma notícia de tecnologia com
+evento físico/visual ou drama humano vale 4-5 exatamente como uma de guerra.
+Não desconte pontos por a notícia ser de tech, e não some pontos por ser bélica.
+
+Classifique também o "macrotema" de cada notícia:
+{macrotemas}
 
 Regras:
 - "imagem_mental": descrição em 5 palavras do que a pessoa VISUALIZA ao ouvir a
@@ -43,7 +78,7 @@ Regras:
 - Avalie TODAS as notícias listadas, na mesma ordem, usando o campo "indice".
 
 Responda somente com o JSON pedido.\
-"""
+""".format(macrotemas=MACROTEMAS_DESCRICAO)
 
 ESQUEMA_PONTUACAO = {
     "name": "pontuacao_trends",
@@ -79,8 +114,22 @@ ESQUEMA_PONTUACAO = {
                             "type": "string",
                             "description": "1 frase justificando o score.",
                         },
+                        "macrotema": {
+                            "type": "string",
+                            "enum": MACROTEMAS,
+                            "description": (
+                                "Macrotema da notícia, conforme a lista das "
+                                "instruções."
+                            ),
+                        },
                     },
-                    "required": ["indice", "score", "imagem_mental", "justificativa"],
+                    "required": [
+                        "indice",
+                        "score",
+                        "imagem_mental",
+                        "justificativa",
+                        "macrotema",
+                    ],
                 },
             }
         },
@@ -138,14 +187,17 @@ def pontuar_trends(cfg: Config, trends: list[dict]) -> list[dict]:
         if not imagem:  # sem imagem mental, o teto é 2
             score = min(score, 2)
         justificativa = (av.get("justificativa") or "").strip()
+        macrotema = (av.get("macrotema") or "").strip().lower()
+        if macrotema not in MACROTEMAS:
+            macrotema = "outro"
         status = "APROVADA" if score >= SCORE_MINIMO else "rejeitada"
         print(
-            f"[score] {score}/5 ({status}) — {trend['trend']}\n"
+            f"[score] {score}/5 ({status}) [{macrotema}] — {trend['trend']}\n"
             f"        imagem mental: {imagem or '(nenhuma)'}\n"
             f"        {justificativa}"
         )
         anotadas.append(
             dict(trend, score=score, imagem_mental=imagem,
-                 justificativa=justificativa)
+                 justificativa=justificativa, macrotema=macrotema)
         )
     return anotadas
