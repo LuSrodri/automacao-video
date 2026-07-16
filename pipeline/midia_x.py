@@ -93,17 +93,27 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
     Compatível com o formato de `buscar_imagens` — o `main.py` mescla as duas
     listas. Vídeos saem como .mp4 e a montagem (edicao.py) os detecta pela
     extensão.
+
+    Falhas de credencial/API ABORTAM a execução: a trend costuma ser escolhida
+    justamente por ter vídeo/foto nos posts, e pular a etapa entregaria um
+    vídeo sem o material que motivou a escolha. Posts sem mídia anexada não
+    são erro — aí a lista sai vazia e o vídeo usa só as imagens da web.
     """
-    if not (cfg.x_consumer_key and cfg.x_consumer_secret):
-        return []
     ids = _ids_dos_posts(urls_posts)
     if not ids:
         return []
 
+    if not (cfg.x_consumer_key and cfg.x_consumer_secret):
+        raise SystemExit(
+            "X_CONSUMER_KEY/X_CONSUMER_SECRET ausentes — sem eles não dá para "
+            "baixar as mídias dos posts da trend; abortando."
+        )
     token = obter_bearer(cfg)
     if token is None:
-        print("[aviso] X API sem token; etapa de mídias pulada")
-        return []
+        raise SystemExit(
+            "X API sem token — sem ele não dá para baixar as mídias dos posts "
+            "da trend; abortando. Confira as credenciais no .env."
+        )
 
     print(f"[midia-x] Consultando {len(ids)} posts da trend na X API...")
     try:
@@ -123,8 +133,10 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
         resp.raise_for_status()
         dados = resp.json()
     except (requests.RequestException, ValueError) as erro:
-        print(f"[aviso] X API: lookup dos posts falhou ({erro}); etapa pulada")
-        return []
+        raise SystemExit(
+            f"X API: lookup dos posts da trend falhou — o vídeo sairia sem o "
+            f"material que motivou a escolha da trend; abortando: {erro}"
+        ) from erro
 
     midias = (dados.get("includes") or {}).get("media") or []
     if not midias:

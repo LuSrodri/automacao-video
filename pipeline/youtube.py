@@ -110,14 +110,21 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
 
     Lê direto da YouTube Data API o canal correspondente ao refresh token de
     ``cfg.publico``, devolvendo os vídeos do mais recente para o mais antigo.
-    Cada item traz ``titulo``, ``descricao`` e ``data`` (YYYY-MM-DD). Serve
-    para o roteirista evitar repetir temas recém-publicados. Em qualquer falha
-    (credenciais ausentes, API indisponível), devolve lista vazia sem derrubar
-    o fluxo — o render não depende de nenhum estado local.
+    Cada item traz ``titulo``, ``descricao`` e ``data`` (YYYY-MM-DD). A lista
+    alimenta o anti-clone e o VETO ao tema do último publicado, então qualquer
+    falha (credenciais ausentes, API indisponível) ABORTA a execução: melhor
+    falhar cedo e alto do que rodar sem a proibição e publicar um clone sem
+    ninguém perceber. Canal novo sem uploads devolve lista vazia (não é erro).
     """
     refresh = _refresh_token_do_publico(cfg)
     if not (cfg.youtube_client_id and cfg.youtube_client_secret and refresh):
-        return []
+        canal = "inglês (-usa)" if cfg.publico == "usa" else "português"
+        flag = "--auth-youtube-usa" if cfg.publico == "usa" else "--auth-youtube"
+        raise SystemExit(
+            f"Credenciais do YouTube do canal {canal} ausentes — sem elas não "
+            "dá para ler os últimos publicados, e o veto ao tema do último "
+            f"vídeo depende disso. Configure o .env e rode 'python main.py {flag}'."
+        )
 
     try:
         token = _renovar_access_token(cfg, refresh)
@@ -157,9 +164,11 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
             )
         print(f"[youtube] {len(videos)} vídeos recentes do canal carregados.")
         return videos
-    except Exception as erro:  # noqa: BLE001 — leitura opcional não derruba o fluxo
-        print(f"[youtube] Não foi possível ler os últimos vídeos (ignorado): {erro}")
-        return []
+    except Exception as erro:  # noqa: BLE001 — sem os recentes não há anti-clone
+        raise SystemExit(
+            "Falha ao ler os últimos vídeos publicados do canal — a seleção "
+            f"depende deles para o veto anti-clone; abortando: {erro}"
+        ) from erro
 
 
 def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
@@ -172,12 +181,20 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
     ficam fora do ranking (retenção sem base estatística).
 
     Requer o escopo ``yt-analytics.readonly`` no refresh token; tokens antigos
-    precisam de reautorização (``--auth-youtube``/``--auth-youtube-usa``). Em
-    qualquer falha devolve lista vazia sem derrubar o fluxo.
+    precisam de reautorização (``--auth-youtube``/``--auth-youtube-usa``).
+    Qualquer falha ABORTA a execução (fail-fast): os campeões guiam a seleção
+    da trend, e rodar sem eles degrada o vídeo silenciosamente. Canal novo sem
+    métricas devolve lista vazia (não é erro).
     """
     refresh = _refresh_token_do_publico(cfg)
     if not (cfg.youtube_client_id and cfg.youtube_client_secret and refresh):
-        return []
+        canal = "inglês (-usa)" if cfg.publico == "usa" else "português"
+        flag = "--auth-youtube-usa" if cfg.publico == "usa" else "--auth-youtube"
+        raise SystemExit(
+            f"Credenciais do YouTube do canal {canal} ausentes — sem elas não "
+            "dá para ler os campeões de retenção que guiam a seleção. "
+            f"Configure o .env e rode 'python main.py {flag}'."
+        )
 
     try:
         token = _renovar_access_token(cfg, refresh)
@@ -201,20 +218,19 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
             )
         if resp.status_code == 403:
             if "has not been used in project" in resp.text or "disabled" in resp.text:
-                print(
-                    "[youtube] A YouTube Analytics API está desligada no projeto "
-                    "do Google Cloud das credenciais. Ative em "
+                raise SystemExit(
+                    "A YouTube Analytics API está desligada no projeto do "
+                    "Google Cloud das credenciais — sem ela não há campeões de "
+                    "retenção para guiar a seleção. Ative em "
                     "https://console.developers.google.com/apis/api/"
-                    "youtubeanalytics.googleapis.com/overview e tente de novo; "
-                    "seguindo sem os campeões de retenção."
+                    "youtubeanalytics.googleapis.com/overview e rode de novo."
                 )
-            else:
-                print(
-                    "[youtube] Sem permissão para o Analytics (escopo novo). "
-                    "Reautorize com 'python main.py --auth-youtube' (e "
-                    "--auth-youtube-usa); seguindo sem os campeões de retenção."
-                )
-            return []
+            raise SystemExit(
+                "Sem permissão para a YouTube Analytics (o refresh token não "
+                "tem o escopo yt-analytics.readonly) — sem ela não há campeões "
+                "de retenção para guiar a seleção. Reautorize com "
+                "'python main.py --auth-youtube' (e --auth-youtube-usa)."
+            )
         if resp.status_code != 200:
             raise RuntimeError(f"{resp.status_code}: {resp.text[:300]}")
 
@@ -275,9 +291,11 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
             )
         print(f"[youtube] {len(campeoes)} campeões de retenção carregados.")
         return campeoes
-    except Exception as erro:  # noqa: BLE001 — leitura opcional não derruba o fluxo
-        print(f"[youtube] Não foi possível ler os campeões de retenção (ignorado): {erro}")
-        return []
+    except Exception as erro:  # noqa: BLE001 — sem os campeões a seleção degrada
+        raise SystemExit(
+            "Falha ao ler os campeões de retenção do canal — eles guiam a "
+            f"seleção da trend; abortando: {erro}"
+        ) from erro
 
 
 def publicar(
@@ -286,21 +304,23 @@ def publicar(
     titulo: str,
     descricao: str,
     tags: list[str] | None = None,
-) -> str | None:
-    """Publica o vídeo no YouTube e devolve a URL, ou ``None`` se pulou.
+) -> str:
+    """Publica o vídeo no YouTube e devolve a URL.
 
-    Erros de upload são apenas avisados (não derrubam a execução): o vídeo
-    já está salvo em ``output/`` e registrado em ``videos.txt``.
+    Qualquer falha ABORTA a execução com erro: terminar com sucesso sem
+    publicar é a pior falha silenciosa possível (todo o custo gasto, nada no
+    ar). O vídeo já está salvo em ``output/`` e registrado em ``videos.txt``,
+    então dá para subir manualmente enquanto se investiga.
     """
     refresh = _refresh_token_do_publico(cfg)
     if not (cfg.youtube_client_id and cfg.youtube_client_secret and refresh):
         canal = "inglês (-usa)" if cfg.publico == "usa" else "português"
         flag = "--auth-youtube-usa" if cfg.publico == "usa" else "--auth-youtube"
-        print(
-            f"[youtube] Credenciais do canal {canal} ausentes; pulando publicação. "
-            f"Rode 'python main.py {flag}' para autorizar."
+        raise SystemExit(
+            f"Credenciais do YouTube do canal {canal} ausentes — impossível "
+            f"publicar. Rode 'python main.py {flag}' para autorizar. O vídeo "
+            f"está salvo em {video}."
         )
-        return None
 
     try:
         token = _renovar_access_token(cfg, refresh)
@@ -358,9 +378,11 @@ def publicar(
         url = f"https://youtu.be/{video_id}"
         print(f"[youtube] Publicado: {url}")
         return url
-    except Exception as erro:  # noqa: BLE001 — falha de upload não derruba o fluxo
-        print(f"[youtube] Falha na publicação (ignorada): {erro}")
-        return None
+    except Exception as erro:  # noqa: BLE001 — sucesso sem publicar é falha oculta
+        raise SystemExit(
+            f"Falha na publicação no YouTube: {erro}. O vídeo está salvo em "
+            f"{video} — dá para subir manualmente enquanto investiga."
+        ) from erro
 
 
 def autenticar(cfg: Config, usa: bool = False) -> None:

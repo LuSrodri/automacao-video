@@ -99,9 +99,9 @@ def _listar_candidatas(trends: list[dict]) -> str:
 def pontuar_trends(cfg: Config, trends: list[dict]) -> list[dict]:
     """Anota cada trend com score, imagem_mental e justificativa (1 chamada).
 
-    Loga a avaliação de todas as candidatas, inclusive as rejeitadas. Se a
-    chamada falhar, devolve as trends sem anotação (score 0) — quem decide o
-    que fazer é o chamador.
+    Loga a avaliação de todas as candidatas, inclusive as rejeitadas. Falha na
+    chamada ABORTA a execução: devolver tudo com score 0 se disfarçaria de
+    "dia sem pauta aprovada" e a falha real nunca seria investigada.
     """
     cliente = OpenAI(api_key=cfg.openai_api_key)
 
@@ -124,8 +124,10 @@ def pontuar_trends(cfg: Config, trends: list[dict]) -> list[dict]:
         )
         avaliacoes = json.loads(resposta.choices[0].message.content)["avaliacoes"]
     except Exception as erro:  # noqa: BLE001 — sem score não há como filtrar
-        print(f"[aviso] Pontuação das candidatas falhou: {erro}")
-        return [dict(t, score=0, imagem_mental="", justificativa="") for t in trends]
+        raise SystemExit(
+            "Pontuação das candidatas falhou (OpenAI) — sem score não existe "
+            f"filtro pré-conceitual; abortando: {erro}"
+        ) from erro
 
     por_indice = {a["indice"]: a for a in avaliacoes}
     anotadas = []

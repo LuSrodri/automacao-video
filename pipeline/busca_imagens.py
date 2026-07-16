@@ -315,5 +315,8 @@ def buscar_imagens(cfg: Config, itens: list[dict], pasta: Path) -> list[dict]:
             print(f"[aviso] Todos os candidatos falharam para: {item['consulta']}")
 
     if not baixadas:
-        print("[aviso] Nenhuma imagem-chave baixada; o vídeo sairá sem overlays.")
+        raise SystemExit(
+            "Nenhuma imagem-chave foi baixada — o vídeo sairia sem overlays; "
+            "abortando. Os avisos acima mostram o que falhou em cada consulta."
+        )
     return baixadas

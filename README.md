@@ -109,9 +109,9 @@ Para autorizar o canal inglês (na tela do Google, escolha o canal em inglês):
 python main.py --auth-youtube-usa
 ```
 
-Os dois usam o mesmo `YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` — muda só qual canal você seleciona no consentimento. Se você só configurar um dos tokens, o outro modo apenas avisa e pula a publicação (sem derrubar a execução).
+Os dois usam o mesmo `YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` — muda só qual canal você seleciona no consentimento.
 
-Se as credenciais estiverem ausentes ou o upload falhar (rede, quota, token), o erro é apenas avisado — o vídeo continua salvo em `output/` e registrado em `videos.txt`.
+O pipeline é **fail-fast**: credenciais ausentes/quebradas, falha ao ler os últimos vídeos ou os campeões de retenção, pontuação ou notícias indisponíveis, zero imagens baixadas e falha no upload — tudo isso derruba a execução com erro explícito (para o agendador poder alertar), em vez de seguir e degradar o vídeo em silêncio. As leituras do canal acontecem logo no início, antes de qualquer chamada paga (X/OpenAI). Se o upload falhar, o vídeo continua salvo em `output/` e registrado em `videos.txt` para publicação manual.
 
 ## Como funciona o corte de silêncios
 
@@ -147,5 +147,5 @@ A lista de quem você segue é lida no máximo 1x por semana (cache em `seguindo
 - **Imagem-chave ruim/errada** — apague a pasta da execução e rode de novo; os resultados do Firecrawl variam. Dá para editar `roteiro.json` e ajustar as consultas manualmente também.
 - **Refresh token do YouTube expira em ~7 dias** — a tela de consentimento OAuth está em modo **Testing**. Publique-a (**OAuth consent screen > Publish app**) para o refresh token virar de longa duração, e rode `--auth-youtube` de novo.
 - **`refresh_token` não retornado no `--auth-youtube`** — o Google só o devolve no primeiro consentimento. Remova o acesso em [myaccount.google.com/permissions](https://myaccount.google.com/permissions) e rode de novo.
-- **Não lê os últimos vídeos do canal (passo 3)** — tokens autorizados antes da ampliação de escopos só tinham `youtube.upload`. Rode `--auth-youtube` (e `--auth-youtube-usa`) de novo para reautorizar com o escopo de leitura. Sem isso, o vídeo ainda é gerado, só sem o filtro anti-repetição.
+- **Não lê os últimos vídeos do canal (passo 3)** — tokens autorizados antes da ampliação de escopos só tinham `youtube.upload`. Rode `--auth-youtube` (e `--auth-youtube-usa`) de novo para reautorizar com os escopos de leitura. Sem isso a execução aborta logo no início (a leitura alimenta o veto anti-repetição).
 - **Upload do YouTube falha com 403 (quota)** — cada upload consome 1.600 unidades; a cota padrão é 10.000/dia (~6 vídeos). Peça aumento no Google Cloud se precisar de mais.

@@ -3,8 +3,9 @@
 Duas etapas:
 1. `selecionar_trend` — entre as trends já APROVADAS no score de acessibilidade
    pré-conceitual (pontuacao.py), escolhe a melhor priorizando posts com VÍDEO,
-   depois com foto e por último só texto (evitando repetir vídeos recentes), e
-   devolve uma consulta de notícias para enriquecer o material.
+   depois com foto e por último só texto (evitando repetir vídeos recentes; o
+   tema do ÚLTIMO vídeo publicado é vetado em qualquer hipótese), e devolve uma
+   consulta de notícias para enriquecer o material.
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
    roteiro pré-conceitual em tom adulto (frases curtas, vocabulário leigo,
    estrutura HOOK → FATO → IMPLICAÇÃO → CORTE em loop) e define de 8 a 10
@@ -37,7 +38,8 @@ ESQUEMA_SELECAO = {
                 "description": (
                     "A trend escolhida entre as listadas — priorizando posts "
                     "com VÍDEO, depois foto, por último só texto — que NÃO "
-                    "repita os vídeos recentes do canal."
+                    "repita os vídeos recentes do canal e que NUNCA tenha o "
+                    "mesmo tema do ÚLTIMO vídeo publicado (proibição absoluta)."
                 ),
             },
             "motivo": {
@@ -237,6 +239,14 @@ Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta 
    com ângulo ou desenvolvimento NOVO é ótimo; o que não pode é escolher uma
    trend que renderia praticamente o MESMO vídeo de novo, sem nada novo a dizer.
 
+REGRA ABSOLUTA — VETO AO ÚLTIMO VÍDEO: é PROIBIDO escolher uma trend com o
+MESMO tema do ÚLTIMO vídeo publicado (o marcado como "ÚLTIMO PUBLICADO" na
+lista). Essa proibição vence TODOS os critérios acima, inclusive o critério 3:
+nem ângulo novo, nem desenvolvimento novo, nem score mais alto justificam dois
+vídeos SEGUIDOS sobre o mesmo tema. Mesma empresa/pessoa/produto no centro do
+mesmo acontecimento = mesmo tema. Se a trend mais forte cair nesse veto,
+escolha a segunda mais forte.
+
 Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
 nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
 longa e cheia de detalhes zera os resultados — seja enxuto.
@@ -375,13 +385,15 @@ def _resumo_trends(trends: list[dict]) -> str:
 def _resumo_recentes(videos_recentes: list[dict] | None) -> str:
     if not videos_recentes:
         return ""
-    recentes = "\n".join(
-        f"- ({v.get('data') or '?'}) {v.get('titulo', '')}" for v in videos_recentes
-    )
+    linhas = []
+    for i, v in enumerate(videos_recentes):
+        marca = " [ÚLTIMO PUBLICADO — tema VETADO no próximo vídeo]" if i == 0 else ""
+        linhas.append(f"- ({v.get('data') or '?'}) {v.get('titulo', '')}{marca}")
     return (
-        "\n\nÚltimos vídeos publicados neste canal (contexto anti-clone: voltar "
-        "a um tema com ângulo novo é ótimo; refazer a mesma notícia sem nada "
-        "novo, não):\n" + recentes
+        "\n\nÚltimos vídeos publicados neste canal, do mais recente para o mais "
+        "antigo (contexto anti-clone: voltar a um tema com ângulo novo é ótimo; "
+        "refazer a mesma notícia sem nada novo, não — e o tema do ÚLTIMO "
+        "PUBLICADO é proibido em qualquer hipótese):\n" + "\n".join(linhas)
     )
 
 

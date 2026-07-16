@@ -11,7 +11,8 @@ Fluxo:
 3. GPT escolhe a trend entre as aprovadas priorizando posts com VÍDEO, depois
    foto, por último só texto (aí as imagens vêm todas do Firecrawl), guiado
    pelos campeões de retenção do canal (YouTube Analytics) e evitando clonar
-   vídeos recentes sem novidade; e define uma consulta de notícias.
+   vídeos recentes sem novidade — repetir o tema do ÚLTIMO vídeo publicado é
+   proibido em qualquer hipótese; e define uma consulta de notícias.
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 5. GPT escreve o roteiro pré-conceitual em tom adulto (frases curtas,
    vocabulário leigo, HOOK -> FATO -> IMPLICAÇÃO -> CORTE emendando no hook
@@ -131,6 +132,12 @@ def main() -> None:
         cfg.publico = "usa"
         print("[config] Modo USA: conteúdo em inglês para o público americano")
 
+    # Leituras do canal PRIMEIRO (fail-fast): se as credenciais do YouTube
+    # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
+    # e sem os recentes não existiria o veto ao tema do último vídeo.
+    recentes = ultimos_publicados(cfg, n=9)
+    campeoes = top_retencao(cfg, n=6)
+
     trends = pontuar_trends(cfg, coletar_trends(cfg))
     aprovadas = [t for t in trends if t["score"] >= SCORE_MINIMO]
     if not aprovadas:
@@ -140,8 +147,6 @@ def main() -> None:
         )
     print(f"[score] {len(aprovadas)} de {len(trends)} candidatas aprovadas")
 
-    recentes = ultimos_publicados(cfg, n=9)
-    campeoes = top_retencao(cfg, n=6)
     selecao = selecionar_trend(
         cfg, aprovadas, videos_recentes=recentes, campeoes=campeoes
     )
@@ -256,8 +261,7 @@ def main() -> None:
     print(f"  Vídeo final: {video_final}")
     print(f"  Título: {roteiro['titulo']}")
     print(f"  Descrição: {roteiro['descricao']}")
-    if url_youtube:
-        print(f"  YouTube: {url_youtube}")
+    print(f"  YouTube: {url_youtube}")
 
 
 if __name__ == "__main__":
