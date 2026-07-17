@@ -9,8 +9,8 @@ configurada via /2/tweets/search/recent. Como a leitura é cobrada por post
 
 Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes —
 notícias, lançamentos, novidades, curiosidades e tretas — no mesmo formato que
-o resto do pipeline já consome (trend, resumo, engajamento, sentimento,
-apelo_visual, posts, data).
+o resto do pipeline já consome (trend, resumo, num_posts, engajamento,
+sentimento, apelo_visual, posts, data).
 """
 
 import json
@@ -234,6 +234,8 @@ Regras dos campos:
   houver (ex.: "Oracle corta 21.000 vagas citando IA", nunca "demissões em tech").
 - "resumo": 2 a 4 frases com os fatos, nomes, empresas e números concretos que
   apareceram nos posts. Reproduza com fidelidade, sem inventar nada.
+- "num_posts": quantos dos posts listados acima falam deste assunto (conte
+  TODOS os que pertencem à trend, mesmo os que não entrarem em "posts").
 - "engajamento": uma frase sobre o quão quente está (some as métricas dos posts
   do assunto e cite quem está falando).
 - "sentimento": a EMOÇÃO dominante nos posts (indignação, medo, deboche,
@@ -261,6 +263,7 @@ ESQUEMA_TRENDS = {
                     "properties": {
                         "trend": {"type": "string"},
                         "resumo": {"type": "string"},
+                        "num_posts": {"type": "integer"},
                         "engajamento": {"type": "string"},
                         "sentimento": {"type": "string"},
                         "apelo_visual": {"type": "string"},
@@ -270,6 +273,7 @@ ESQUEMA_TRENDS = {
                     "required": [
                         "trend",
                         "resumo",
+                        "num_posts",
                         "engajamento",
                         "sentimento",
                         "apelo_visual",
@@ -365,6 +369,7 @@ def coletar_trends(cfg: Config) -> list[dict]:
             {
                 "trend": t.get("trend", "").strip(),
                 "resumo": t.get("resumo", "").strip(),
+                "num_posts": max(int(t.get("num_posts") or 0), len(urls)),
                 "engajamento": t.get("engajamento", "").strip(),
                 "sentimento": t.get("sentimento", "").strip(),
                 "apelo_visual": t.get("apelo_visual", "").strip(),

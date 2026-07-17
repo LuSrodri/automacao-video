@@ -53,19 +53,21 @@ compreensível sem nenhum conhecimento prévio e com imagem mental instantânea.
 
 Pontue CADA notícia de 1 a 5 em "acessibilidade pré-conceitual":
 - 5: evento físico/visual com carga emocional imediata, zero contexto necessário
-  (explosão, desastre, confronto, queda, flagrante — de QUALQUER domínio: robô
-  caindo no palco, data center em chamas, demonstração ao vivo que falha valem
-  tanto quanto um ataque militar)
-- 4: ação humana dramática compreensível por qualquer pessoa (ameaça de líder,
-  ultimato, prisão, escândalo, corte de milhares de empregos com número, CEO
-  demitido da noite para o dia)
+  (robô caindo no palco, data center em chamas, demonstração ao vivo que falha,
+  queda global de um serviço que todo mundo usa, flagrante, desastre — de
+  QUALQUER domínio)
+- 4: ação humana dramática compreensível por qualquer pessoa (corte de milhares
+  de empregos com número, CEO demitido da noite para o dia, aquisição bilionária
+  relâmpago, prisão, escândalo, ultimato de um líder)
 - 3: consequência concreta de algo abstrato (preços dispararam, voos cancelados)
 - 2: exige conhecer 1 conceito prévio (sanção, tarifa, indiciamento)
 - 1: exige conhecimento de domínio (benchmark, protocolo, regulação técnica)
 
-O score mede FORMA (acessibilidade), NUNCA o tema: uma notícia de tecnologia com
-evento físico/visual ou drama humano vale 4-5 exatamente como uma de guerra.
-Não desconte pontos por a notícia ser de tech, e não some pontos por ser bélica.
+O score mede FORMA (acessibilidade), NUNCA o tema: violência e guerra NÃO valem
+bônus. Uma notícia de tecnologia com evento físico/visual ou drama humano vale
+4-5 exatamente como uma bélica — e um confronto militar sem imagem mental
+concreta vale pouco como qualquer outra notícia sem imagem mental. Não desconte
+pontos por a notícia ser de tech, e não some pontos por ser de guerra.
 
 Classifique também o "macrotema" de cada notícia:
 {macrotemas}

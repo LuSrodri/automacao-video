@@ -13,9 +13,11 @@ Duas etapas:
    de vídeos do mesmo assunto (só cai o bloqueio se TODAS as candidatas do dia
    forem do mesmo macrotema).
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
-   roteiro pré-conceitual em tom adulto (frases curtas, vocabulário leigo,
-   estrutura HOOK → FATO → IMPLICAÇÃO → CORTE em loop) e define de 8 a 10
-   imagens-chave.
+   roteiro pré-conceitual em tom adulto e inteligente (ritmo de fala natural,
+   vocabulário preciso de telejornal, estrutura HOOK → FATO → IMPLICAÇÃO →
+   CORTE em loop), dentro de uma FAIXA dura de palavras (piso e teto derivados
+   de VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
+   duração-alvo) e define de 8 a 10 imagens-chave.
 """
 
 import json
@@ -30,6 +32,9 @@ from .pontuacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 # ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
 # duração-alvo do .env (VIDEO_DURACAO) no teto de palavras do roteiro.
 PALAVRAS_POR_SEGUNDO = 2.3
+# Piso de palavras como fração do teto: o teto sozinho deixava o modelo
+# entregar metade das palavras e o vídeo sair com metade da duração-alvo.
+FRACAO_MINIMA = 0.85
 # Tolerância sobre o teto de palavras antes de pedir ao modelo para encurtar.
 FOLGA_PALAVRAS = 1.15
 
@@ -121,9 +126,10 @@ ESQUEMA_ROTEIRO = {
                 "type": "string",
                 "description": (
                     "Texto/roteiro narrado do vídeo, no idioma definido nas "
-                    "instruções. Frases curtas (mire em 8 palavras, máximo "
-                    "12), uma ideia por frase, vocabulário do dia a dia de um "
-                    "adulto leigo — tom adulto e urgente, nunca infantil. "
+                    "instruções. Ritmo de fala natural (frases de 8 a 16 "
+                    "palavras, teto 20, alternando curtas de impacto com mais "
+                    "cheias), vocabulário preciso de telejornal — tom adulto "
+                    "e inteligente, nunca infantil nem robótico. "
                     "Estrutura obrigatória: HOOK (a primeira frase = campo "
                     "hook) → FATO (o que aconteceu, coisa concreta primeiro) → "
                     "IMPLICAÇÃO (uma única consequência simples) → CORTE "
@@ -290,32 +296,44 @@ Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta 
 2. MAIS PRÉ-CONCEITUAL: entre as aprovadas, prefira o score mais alto e a
    imagem mental mais visceral — o evento físico/visual que qualquer pessoa
    entende em 1 segundo.
-3. PARECIDA COM O QUE SEGURA A AUDIÊNCIA: os campeões de retenção mostram o
+3. VOLUME DA CONVERSA: cada candidata informa em quantos posts coletados ela
+   aparece. O assunto que domina a conversa das contas que o canal segue é o
+   que o público espera encontrar; entre candidatas próximas nos demais
+   critérios, vença a com MAIS posts. Um post isolado, por mais dramático,
+   raramente bate o assunto que a comunidade inteira está comentando.
+4. PARECIDA COM O QUE SEGURA A AUDIÊNCIA: os campeões de retenção mostram o
    tipo de tema, tensão e promessa que o público DESTE canal assiste até o fim.
    Priorize trends com o mesmo DNA dos campeões. Repetir um tema que performa é
    BEM-VINDO e encorajado.
-4. COMPARTILHÁVEL: em empate, vença a notícia que um profissional de tech
+5. COMPARTILHÁVEL: em empate, vença a notícia que um profissional de tech
    mandaria para um colega com "viu isso?" — corte de empregos com número,
    dinheiro grande mudando de mão, decisão que afeta quem trabalha com
    tecnologia. Share é o que multiplica a distribuição no feed, e é esse tipo
    de notícia que gera share neste canal.
-5. ESPECIFICIDADE: escolha o ACONTECIMENTO concreto (quem, número exato, data),
+6. ESPECIFICIDADE: escolha o ACONTECIMENTO concreto (quem, número exato, data),
    nunca o panorama. Se a trend for guarda-chuva ("IA no mercado de trabalho"),
    ou você acha dentro dela o fato específico mais forte (a empresa, o corte, o
    valor) ou escolhe outra trend.
-6. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
+7. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
    com ângulo ou desenvolvimento NOVO é ótimo; o que não pode é escolher uma
    trend que renderia praticamente o MESMO vídeo de novo, sem nada novo a dizer.
-7. VARIEDADE DE MACROTEMAS: o canal existe para cobrir TODAS as áreas (IA, dev,
+8. VARIEDADE DE MACROTEMAS: o canal existe para cobrir TODAS as áreas (IA, dev,
    hardware, big techs, mercado de TI, geopolítica...) — o espectador volta para
    ficar sabendo de tudo, não de um assunto só. Cada candidata e cada vídeo
    recente vêm com seu macrotema: se um macrotema domina os vídeos recentes,
    prefira uma candidata de macrotema DIFERENTE e sub-representado, mesmo que
    ela tenha score um pouco menor ou mídia mais fraca que a favorita.
 
+GUERRA/GEOPOLÍTICA É CONVIDADA, NÃO O PRATO PRINCIPAL: este é um canal de
+TECNOLOGIA. Uma candidata de guerra-geopolitica só vence quando cruza
+tecnologia (chips, drones, IA militar, sanção a big tech...) ou quando domina o
+volume de posts com FOLGA sobre todas as outras. Em empate ou quase empate com
+uma candidata de tecnologia, a de tecnologia SEMPRE vence — drama bélico não é
+critério de desempate a favor.
+
 REGRA ABSOLUTA — VETO AO ÚLTIMO VÍDEO: é PROIBIDO escolher uma trend com o
 MESMO tema do ÚLTIMO vídeo publicado (o marcado como "ÚLTIMO PUBLICADO" na
-lista). Essa proibição vence TODOS os critérios acima, inclusive o critério 3:
+lista). Essa proibição vence TODOS os critérios acima, inclusive o critério 4:
 nem ângulo novo, nem desenvolvimento novo, nem score mais alto justificam dois
 vídeos SEGUIDOS sobre o mesmo tema. Mesma empresa/pessoa/produto no centro do
 mesmo acontecimento = mesmo tema. Se a trend mais forte cair nesse veto,
@@ -342,22 +360,28 @@ sem formação técnica) assistindo com METADE da atenção. O espectador de Sho
 é passivo: se UMA frase exigir esforço ou conhecimento prévio para entender,
 ele desliza para o próximo vídeo.
 
-TOM: adulto e urgente — como quem conta um furo de notícia a um amigo, com
-autoridade seca. Simples NÃO é infantil: PROIBIDO tom didático de professor,
-entusiasmo fofo, moral da história e qualquer frase que soaria natural num
-desenho animado. Se a frase parece escrita para criança, reescreva como um
-âncora de telejornal falaria num corte de 30 segundos.
+TOM: adulto e inteligente — como um jornalista afiado contando um furo a um
+amigo esperto, com autoridade seca. O espectador é leigo, NÃO é burro:
+escrever simples é remover barreiras (jargão, sigla, contexto obscuro), nunca
+rebaixar o texto. PROIBIDO tom didático de professor, entusiasmo fofo, moral
+da história e qualquer frase que soaria natural num desenho animado. Se a
+frase parece escrita para criança, reescreva como um âncora de telejornal
+falaria num corte de 30 segundos.
 
-FRASES: curtas e diretas — mire em 8 palavras, nunca passe de 12. Uma ideia por
-frase. Varie o ritmo: só frases mínimas em sequência soa robótico e infantil;
-alterne frases de 3-4 palavras com frases mais cheias. (Audio tags entre
-colchetes não contam como palavras.)
+FRASES: ritmo de fala natural, de âncora bom de texto — mire em 8 a 16
+palavras por frase, teto de 20. Alterne frases curtas de impacto (3 a 6
+palavras) com frases mais cheias que carregam o fato: a frase curta só tem
+força depois de uma longa. PROIBIDO metralhadora de frases mínimas em
+sequência — soa robótico e infantil. Uma ideia central por frase. (Audio tags
+entre colchetes não contam como palavras.)
 
-VOCABULÁRIO: palavras do dia a dia, que qualquer adulto leigo entende sem parar
-para pensar. PROIBIDO jargão, sigla sem explicação e termo técnico. Se o fato
-depende de um conceito (tarifa, sanção, benchmark, protocolo), traduza para o
-efeito concreto que qualquer pessoa visualiza ("os produtos ficaram mais
-caros", "o robô ficou proibido").
+VOCABULÁRIO: preciso e adulto — a palavra certa, nunca a palavra mais boba.
+Tudo que um adulto ouve num telejornal ou usa numa conversa de bar está
+liberado (bilhões, falência, processo, espionagem, monopólio, resgate...).
+PROIBIDO continua sendo: jargão técnico de nicho, sigla sem explicação e
+conceito que exige formação para entender. Se o fato depende de um conceito
+(tarifa, benchmark, protocolo), não o infantilize: entregue o efeito concreto
+em meia frase ("tarifa — o imposto que encarece o produto importado") e siga.
 
 ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
 1. HOOK (0-2s): a imagem mais CHOCANTE da notícia, direta, sem preâmbulo.
@@ -390,11 +414,14 @@ PROIBIDO NO TEXTO:
 PAYLOAD OBRIGATÓRIO: o roteiro entrega 1 fato real e 1 implicação. Clickbait
 sem payload é PROIBIDO — o título promete exatamente o que o vídeo entrega.
 
-DURAÇÃO — a narração deve caber em {duracao} segundos: escreva NO MÁXIMO
-{palavras} palavras faladas no texto_video (audio tags entre colchetes não
-contam). O limite é DURO, não uma sugestão: estourar alonga o vídeo e derruba a
-retenção. Se faltar espaço, corte detalhes do FATO — nunca o hook, a implicação
-única nem o corte final.
+DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
+{palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
+colchetes não contam). Os DOIS limites são DUROS: estourar alonga o vídeo e
+derruba a retenção; ficar abaixo do mínimo entrega um vídeo raso e curto
+demais, que o algoritmo distribui menos. Se faltar espaço, corte detalhes do
+FATO — nunca o hook, a implicação única nem o corte final. Se sobrar espaço,
+acrescente um detalhe concreto ao FATO (número, nome, cena) — nunca encha
+linguiça.
 
 IMAGENS — defina de 8 a 10 imagens-chave, distribuídas do começo ao fim do
 roteiro (NUNCA pode haver um trecho da narração sem imagem na tela). REGRAS:
@@ -447,6 +474,7 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"{i}. {t['trend']}\n"
             f"   Resumo: {t['resumo']}\n"
             f"   Macrotema: {t.get('macrotema', '?')}\n"
+            f"   Posts coletados sobre o assunto: {t.get('num_posts', '?')}\n"
             f"   Mídia dos posts: {t.get('midia_posts', '?')}\n"
             f"   Score pré-conceitual: {t.get('score', '?')}/5\n"
             f"   Imagem mental: {t.get('imagem_mental', '?')}\n"
@@ -737,10 +765,12 @@ def gerar_roteiro(
     )
 
     limite = int(cfg.video_duracao * PALAVRAS_POR_SEGUNDO)
+    minimo = int(limite * FRACAO_MINIMA)
     instrucoes = INSTRUCOES_ROTEIRO.format(
         foco=FOCO_USA if cfg.publico == "usa" else FOCO_BRASIL,
         duracao=cfg.video_duracao,
         palavras=limite,
+        palavras_min=minimo,
     )
 
     resposta = cliente.chat.completions.create(
@@ -755,13 +785,38 @@ def gerar_roteiro(
     roteiro = json.loads(resposta.choices[0].message.content)
     _aparar_hook_final(roteiro)
 
-    # Teto de palavras: o TTS cobra por caractere e vídeo longo mata a
-    # retenção, então um estouro grande merece UMA nova tentativa pedindo corte.
+    # Faixa de palavras: o TTS cobra por caractere e vídeo longo mata a
+    # retenção; vídeo curto demais sai com metade da duração-alvo e o YouTube
+    # distribui menos. Fora da faixa, UMA nova tentativa pedindo ajuste.
     palavras = _contar_palavras(roteiro["texto_video"])
-    if palavras > limite * FOLGA_PALAVRAS:
+    if palavras > limite * FOLGA_PALAVRAS or palavras < minimo:
+        estourou = palavras > limite * FOLGA_PALAVRAS
         print(
             f"[roteiro] texto_video com {palavras} palavras faladas "
-            f"(máximo {limite}); pedindo versão mais curta..."
+            f"(faixa {minimo}-{limite}); pedindo versão "
+            f"{'mais curta' if estourou else 'mais completa'}..."
+        )
+        pedido = (
+            (
+                f"O texto_video ficou com {palavras} palavras faladas; "
+                f"o máximo é {limite}. Reescreva o JSON completo "
+                "cortando detalhes do FATO (mantenha o hook, a "
+                "implicação única e o corte final em tensão) até caber "
+                "no limite"
+            )
+            if estourou
+            else (
+                f"O texto_video ficou com {palavras} palavras faladas; "
+                f"o mínimo é {minimo} (a narração precisa preencher "
+                f"{cfg.video_duracao} segundos). Reescreva o JSON completo "
+                "acrescentando detalhes CONCRETOS ao FATO (número, nome, "
+                "cena — sem encher linguiça; mantenha o hook, a implicação "
+                "única e o corte final em tensão) até entrar na faixa de "
+                f"{minimo} a {limite} palavras"
+            )
+        ) + (
+            ", e ajuste os trechos das imagens para continuarem "
+            "substrings exatas do novo texto_video."
         )
         resposta = cliente.chat.completions.create(
             model=cfg.text_model,
@@ -769,26 +824,17 @@ def gerar_roteiro(
                 {"role": "system", "content": instrucoes},
                 {"role": "user", "content": conteudo},
                 {"role": "assistant", "content": resposta.choices[0].message.content},
-                {
-                    "role": "user",
-                    "content": (
-                        f"O texto_video ficou com {palavras} palavras faladas; "
-                        f"o máximo é {limite}. Reescreva o JSON completo "
-                        "cortando detalhes do FATO (mantenha o hook, a "
-                        "implicação única e o corte final em tensão) até caber "
-                        "no limite, e ajuste os trechos das imagens para "
-                        "continuarem substrings exatas do novo texto_video."
-                    ),
-                },
+                {"role": "user", "content": pedido},
             ],
             response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},
         )
-        encurtado = json.loads(resposta.choices[0].message.content)
-        _aparar_hook_final(encurtado)
-        if _contar_palavras(encurtado["texto_video"]) < palavras:
-            roteiro = encurtado
+        ajustado = json.loads(resposta.choices[0].message.content)
+        _aparar_hook_final(ajustado)
+        ajustadas = _contar_palavras(ajustado["texto_video"])
+        if (ajustadas < palavras) if estourou else (ajustadas > palavras):
+            roteiro = ajustado
         palavras = _contar_palavras(roteiro["texto_video"])
-    print(f"[roteiro] {palavras} palavras faladas (alvo <= {limite})")
+    print(f"[roteiro] {palavras} palavras faladas (faixa {minimo}-{limite})")
     print(f"[roteiro] Tema do dia: {roteiro['tema']}")
     print(f"[roteiro] Título: {roteiro['titulo']}")
     if roteiro.get("hook"):
