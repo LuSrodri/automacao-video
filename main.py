@@ -134,7 +134,7 @@ def main() -> None:
     # Leituras do canal PRIMEIRO (fail-fast): se as credenciais do YouTube
     # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
     # e sem os recentes (com as métricas) a seleção pela audiência é cega.
-    recentes = ultimos_publicados(cfg, n=9)
+    recentes = ultimos_publicados(cfg, n=100)
     campeoes = top_retencao(cfg, n=6)
 
     trends = classificar_trends(cfg, coletar_trends(cfg))

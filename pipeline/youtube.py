@@ -105,19 +105,20 @@ def _renovar_access_token(cfg: Config, refresh_token: str | None = None) -> str:
     return resp.json()["access_token"]
 
 
-def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
+def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
     """Últimos `n` vídeos publicados no canal selecionado (BR ou USA).
 
     Lê direto da YouTube Data API o canal correspondente ao refresh token de
-    ``cfg.publico``, devolvendo os vídeos do mais recente para o mais antigo.
-    Cada item traz ``titulo``, ``descricao``, ``data`` (YYYY-MM-DD), ``views``
-    e ``likes`` — as contagens vêm da Data API (tempo real) e não da Analytics
-    (que atrasa 2-3 dias e zeraria os vídeos mais novos, justamente os mais
-    informativos). A lista é a régua da seleção guiada pela audiência e do
-    teto de macrotemas seguidos, então qualquer falha (credenciais ausentes,
-    API indisponível) ABORTA a execução: melhor falhar cedo e alto do que
-    escolher pauta às cegas. Canal novo sem uploads devolve lista vazia (não
-    é erro).
+    ``cfg.publico``, devolvendo os vídeos do mais recente para o mais antigo
+    (a playlist e a busca de estatísticas são paginadas em blocos de 50, o
+    teto por chamada da API). Cada item traz ``titulo``, ``descricao``,
+    ``data`` (YYYY-MM-DD), ``views`` e ``likes`` — as contagens vêm da Data
+    API (tempo real) e não da Analytics (que atrasa 2-3 dias e zeraria os
+    vídeos mais novos, justamente os mais informativos). A lista é a régua da
+    seleção guiada pela audiência e do teto de macrotemas seguidos, então
+    qualquer falha (credenciais ausentes, API indisponível) ABORTA a
+    execução: melhor falhar cedo e alto do que escolher pauta às cegas.
+    Canal novo sem uploads devolve lista vazia (não é erro).
     """
     refresh = _refresh_token_do_publico(cfg)
     if not (cfg.youtube_client_id and cfg.youtube_client_secret and refresh):
@@ -146,28 +147,38 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
             return []
         uploads = itens[0]["contentDetails"]["relatedPlaylists"]["uploads"]
 
-        lista = requests.get(
-            PLAYLIST_ITEMS_URL,
-            params={
+        itens_lista: list[dict] = []
+        pagina = None
+        while len(itens_lista) < n:
+            params = {
                 "part": "snippet,contentDetails",
                 "playlistId": uploads,
-                "maxResults": n,
-            },
-            headers=headers,
-            timeout=60,
-        )
-        if lista.status_code != 200:
-            raise RuntimeError(f"{lista.status_code}: {lista.text[:300]}")
-        itens_lista = lista.json().get("items", [])
+                "maxResults": min(n - len(itens_lista), 50),
+            }
+            if pagina:
+                params["pageToken"] = pagina
+            lista = requests.get(
+                PLAYLIST_ITEMS_URL, params=params, headers=headers, timeout=60
+            )
+            if lista.status_code != 200:
+                raise RuntimeError(f"{lista.status_code}: {lista.text[:300]}")
+            corpo = lista.json()
+            itens_lista += corpo.get("items", [])
+            pagina = corpo.get("nextPageToken")
+            if not pagina:
+                break
 
-        ids = ",".join(
+        todos_ids = [
             i.get("contentDetails", {}).get("videoId", "") for i in itens_lista
-        )
+        ]
         estatisticas: dict[str, dict] = {}
-        if ids:
+        for inicio in range(0, len(todos_ids), 50):
+            lote = ",".join(filter(None, todos_ids[inicio:inicio + 50]))
+            if not lote:
+                continue
             detalhes = requests.get(
                 VIDEOS_URL,
-                params={"part": "statistics", "id": ids},
+                params={"part": "statistics", "id": lote},
                 headers=headers,
                 timeout=60,
             )
@@ -175,10 +186,12 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
                 raise RuntimeError(
                     f"{detalhes.status_code}: {detalhes.text[:300]}"
                 )
-            estatisticas = {
-                item["id"]: item.get("statistics", {})
-                for item in detalhes.json().get("items", [])
-            }
+            estatisticas.update(
+                {
+                    item["id"]: item.get("statistics", {})
+                    for item in detalhes.json().get("items", [])
+                }
+            )
 
         videos = []
         for item in itens_lista:
