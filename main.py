@@ -4,17 +4,14 @@ a partir das trends do X.
 Fluxo:
 1. X API coleta os posts das últimas 24h das contas que você segue no X e o
    GPT os sumariza nas 10 trends mais quentes (notícias, novidades, tretas).
-2. GPT pontua cada candidata em "acessibilidade pré-conceitual" (1 a 5): o
-   público de Shorts é passivo, então só vira vídeo notícia com score >= 4
-   (evento físico/visual ou ação humana dramática, com imagem mental
-   instantânea). Todas as avaliações são logadas, inclusive as rejeitadas.
-3. GPT escolhe a trend entre as aprovadas priorizando posts com VÍDEO, depois
-   foto, por último só texto (aí as imagens vêm todas do Firecrawl), guiado
-   pelos campeões de retenção do canal (YouTube Analytics) e evitando clonar
-   vídeos recentes sem novidade — repetir o tema do ÚLTIMO vídeo publicado é
-   proibido em qualquer hipótese, e o MACROTEMA do último vídeo (guerra, IA,
-   dev...) também é bloqueado para o canal rotacionar entre todas as áreas;
-   e define uma consulta de notícias.
+2. GPT classifica cada candidata (macrotema + imagem mental) — sem filtro
+   nem score: todas as candidatas seguem vivas para a seleção.
+3. GPT escolhe a trend guiado SOMENTE pela audiência: recebe os últimos
+   vídeos publicados do canal com as métricas reais (views/likes, YouTube
+   Data API) e os campeões de retenção (YouTube Analytics) e escolhe a
+   candidata com a maior chance de performar com esse público. Única regra
+   dura: o mesmo macrotema não emenda mais de 4 vídeos seguidos. Define
+   também uma consulta de notícias.
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 5. GPT escreve o roteiro pré-conceitual em tom adulto (frases curtas,
    vocabulário leigo, HOOK -> FATO -> IMPLICAÇÃO -> CORTE emendando no hook
@@ -40,6 +37,7 @@ from datetime import datetime
 
 from pipeline.audio import gerar_narracao
 from pipeline.busca_imagens import buscar_imagens
+from pipeline.classificacao import classificar_trends
 from pipeline.config import carregar_config
 from pipeline.cortes import planejar_cortes
 from pipeline.edicao import duracao_audio, intervalos_imagens, montar_video
@@ -47,7 +45,6 @@ from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.legendas import gerar_legendas
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.noticias import buscar_noticias
-from pipeline.pontuacao import SCORE_MINIMO, pontuar_trends
 from pipeline.registro import registrar
 from pipeline.silencio import aparar_silencios
 from pipeline.x_client import coletar_trends
@@ -136,24 +133,17 @@ def main() -> None:
 
     # Leituras do canal PRIMEIRO (fail-fast): se as credenciais do YouTube
     # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
-    # e sem os recentes não existiria o veto ao tema do último vídeo.
+    # e sem os recentes (com as métricas) a seleção pela audiência é cega.
     recentes = ultimos_publicados(cfg, n=9)
     campeoes = top_retencao(cfg, n=6)
 
-    trends = pontuar_trends(cfg, coletar_trends(cfg))
-    aprovadas = [t for t in trends if t["score"] >= SCORE_MINIMO]
-    if not aprovadas:
-        raise SystemExit(
-            f"Nenhuma candidata com score >= {SCORE_MINIMO} em acessibilidade "
-            "pré-conceitual hoje — sem vídeo. Os scores estão logados acima."
-        )
-    print(f"[score] {len(aprovadas)} de {len(trends)} candidatas aprovadas")
+    trends = classificar_trends(cfg, coletar_trends(cfg))
 
     selecao = selecionar_trend(
-        cfg, aprovadas, videos_recentes=recentes, campeoes=campeoes
+        cfg, trends, videos_recentes=recentes, campeoes=campeoes
     )
     noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
-    roteiro = gerar_roteiro(cfg, selecao, aprovadas, noticias)
+    roteiro = gerar_roteiro(cfg, selecao, trends, noticias)
 
     pasta = cfg.output_dir / f"{datetime.now():%Y-%m-%d}_{_slug(roteiro['titulo'])}"
     pasta.mkdir(parents=True, exist_ok=True)
@@ -161,7 +151,7 @@ def main() -> None:
         json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    trend_video = _trend_escolhida(aprovadas, selecao["trend"])
+    trend_video = _trend_escolhida(trends, selecao["trend"])
     midias_x = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
     imagens = buscar_imagens(cfg, roteiro["imagens"], pasta)
     narracao, alinhamento = gerar_narracao(

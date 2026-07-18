@@ -110,11 +110,14 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
 
     Lê direto da YouTube Data API o canal correspondente ao refresh token de
     ``cfg.publico``, devolvendo os vídeos do mais recente para o mais antigo.
-    Cada item traz ``titulo``, ``descricao`` e ``data`` (YYYY-MM-DD). A lista
-    alimenta o anti-clone e o VETO ao tema do último publicado, então qualquer
-    falha (credenciais ausentes, API indisponível) ABORTA a execução: melhor
-    falhar cedo e alto do que rodar sem a proibição e publicar um clone sem
-    ninguém perceber. Canal novo sem uploads devolve lista vazia (não é erro).
+    Cada item traz ``titulo``, ``descricao``, ``data`` (YYYY-MM-DD), ``views``
+    e ``likes`` — as contagens vêm da Data API (tempo real) e não da Analytics
+    (que atrasa 2-3 dias e zeraria os vídeos mais novos, justamente os mais
+    informativos). A lista é a régua da seleção guiada pela audiência e do
+    teto de macrotemas seguidos, então qualquer falha (credenciais ausentes,
+    API indisponível) ABORTA a execução: melhor falhar cedo e alto do que
+    escolher pauta às cegas. Canal novo sem uploads devolve lista vazia (não
+    é erro).
     """
     refresh = _refresh_token_do_publico(cfg)
     if not (cfg.youtube_client_id and cfg.youtube_client_secret and refresh):
@@ -122,8 +125,8 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
         flag = "--auth-youtube-usa" if cfg.publico == "usa" else "--auth-youtube"
         raise SystemExit(
             f"Credenciais do YouTube do canal {canal} ausentes — sem elas não "
-            "dá para ler os últimos publicados, e o veto ao tema do último "
-            f"vídeo depende disso. Configure o .env e rode 'python main.py {flag}'."
+            "dá para ler os últimos publicados, e a seleção guiada pela "
+            f"audiência depende disso. Configure o .env e rode 'python main.py {flag}'."
         )
 
     try:
@@ -145,29 +148,59 @@ def ultimos_publicados(cfg: Config, n: int = 9) -> list[dict]:
 
         lista = requests.get(
             PLAYLIST_ITEMS_URL,
-            params={"part": "snippet", "playlistId": uploads, "maxResults": n},
+            params={
+                "part": "snippet,contentDetails",
+                "playlistId": uploads,
+                "maxResults": n,
+            },
             headers=headers,
             timeout=60,
         )
         if lista.status_code != 200:
             raise RuntimeError(f"{lista.status_code}: {lista.text[:300]}")
+        itens_lista = lista.json().get("items", [])
+
+        ids = ",".join(
+            i.get("contentDetails", {}).get("videoId", "") for i in itens_lista
+        )
+        estatisticas: dict[str, dict] = {}
+        if ids:
+            detalhes = requests.get(
+                VIDEOS_URL,
+                params={"part": "statistics", "id": ids},
+                headers=headers,
+                timeout=60,
+            )
+            if detalhes.status_code != 200:
+                raise RuntimeError(
+                    f"{detalhes.status_code}: {detalhes.text[:300]}"
+                )
+            estatisticas = {
+                item["id"]: item.get("statistics", {})
+                for item in detalhes.json().get("items", [])
+            }
 
         videos = []
-        for item in lista.json().get("items", []):
+        for item in itens_lista:
             snippet = item.get("snippet", {})
+            st = estatisticas.get(
+                item.get("contentDetails", {}).get("videoId", ""), {}
+            )
             videos.append(
                 {
                     "titulo": snippet.get("title", ""),
                     "descricao": snippet.get("description", ""),
                     "data": snippet.get("publishedAt", "")[:10],
+                    "views": int(st.get("viewCount") or 0),
+                    "likes": int(st.get("likeCount") or 0),
                 }
             )
         print(f"[youtube] {len(videos)} vídeos recentes do canal carregados.")
         return videos
-    except Exception as erro:  # noqa: BLE001 — sem os recentes não há anti-clone
+    except Exception as erro:  # noqa: BLE001 — sem os recentes a seleção é cega
         raise SystemExit(
-            "Falha ao ler os últimos vídeos publicados do canal — a seleção "
-            f"depende deles para o veto anti-clone; abortando: {erro}"
+            "Falha ao ler os últimos vídeos publicados do canal — eles são a "
+            f"régua da seleção guiada pela audiência; abortando: {erro}"
         ) from erro
 
 

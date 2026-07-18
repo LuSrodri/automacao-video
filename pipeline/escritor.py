@@ -1,17 +1,14 @@
 """Seleção da trend do dia e geração de título, descrição e roteiro do vídeo.
 
 Duas etapas:
-1. `selecionar_trend` — entre as trends já APROVADAS no score de acessibilidade
-   pré-conceitual (pontuacao.py), escolhe a melhor priorizando posts com VÍDEO,
-   depois com foto e por último só texto (evitando repetir vídeos recentes; o
-   tema do ÚLTIMO vídeo publicado é vetado em qualquer hipótese — e o veto é
-   VERIFICADO por uma auditoria após a escolha, com nova seleção quando a
-   escolhida repete o tema), e devolve uma consulta de notícias para enriquecer
-   o material. Além do acontecimento, o MACROTEMA do último vídeo (guerra, IA,
-   dev...) também é bloqueado programaticamente antes da seleção, para o canal
-   rotacionar entre todas as áreas de interesse em vez de emendar uma sequência
-   de vídeos do mesmo assunto (só cai o bloqueio se TODAS as candidatas do dia
-   forem do mesmo macrotema).
+1. `selecionar_trend` — escolha guiada SOMENTE pela audiência (diretriz de
+   2026-07-18: sem pesos nem filtros editoriais): o modelo recebe as
+   candidatas do dia, os últimos vídeos publicados COM as métricas reais
+   (views/likes da Data API) e os campeões de retenção, e escolhe a trend com
+   a maior chance de performar com o público DESTE canal. A única regra dura,
+   aplicada em código antes da seleção, é o teto de MAX_MACROTEMA_SEGUIDOS
+   vídeos seguidos do mesmo macrotema — variabilidade mínima do canal.
+   Devolve também uma consulta de notícias para enriquecer o material.
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
    roteiro pré-conceitual em tom adulto e inteligente (ritmo de fala natural,
    vocabulário preciso de telejornal, estrutura HOOK → FATO → IMPLICAÇÃO →
@@ -25,8 +22,8 @@ import re
 
 from openai import OpenAI
 
+from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import Config
-from .pontuacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 
 # Ritmo real médio da narração do ElevenLabs (medido nas narrações do canal:
 # ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
@@ -37,6 +34,10 @@ PALAVRAS_POR_SEGUNDO = 2.3
 FRACAO_MINIMA = 0.85
 # Tolerância sobre o teto de palavras antes de pedir ao modelo para encurtar.
 FOLGA_PALAVRAS = 1.15
+# Teto de vídeos SEGUIDOS do mesmo macrotema (diretriz 2026-07-18): a seleção
+# segue somente a audiência, mas o mesmo macrotema não pode emendar mais que
+# isso — é a única regra de variabilidade do canal.
+MAX_MACROTEMA_SEGUIDOS = 4
 
 ESQUEMA_SELECAO = {
     "name": "selecao_trend",
@@ -48,17 +49,17 @@ ESQUEMA_SELECAO = {
             "trend": {
                 "type": "string",
                 "description": (
-                    "A trend escolhida entre as listadas — priorizando posts "
-                    "com VÍDEO, depois foto, por último só texto — que NÃO "
-                    "repita os vídeos recentes do canal e que NUNCA tenha o "
-                    "mesmo tema do ÚLTIMO vídeo publicado (proibição absoluta)."
+                    "A trend escolhida entre as listadas: a com a maior chance "
+                    "de performar com a audiência DESTE canal, a julgar pelas "
+                    "métricas reais dos vídeos recentes e dos campeões de "
+                    "retenção."
                 ),
             },
             "motivo": {
                 "type": "string",
                 "description": (
-                    "Uma frase justificando por que essa trend tem o maior "
-                    "potencial visual e de viralização."
+                    "Uma frase justificando a escolha COM BASE nas métricas "
+                    "reais do canal (que vídeos parecidos performaram e como)."
                 ),
             },
             "consulta_noticias": {
@@ -207,40 +208,6 @@ ESQUEMA_ROTEIRO = {
     },
 }
 
-ESQUEMA_VETO = {
-    "name": "auditoria_veto_ultimo_tema",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "mesmo_tema": {
-                "type": "boolean",
-                "description": (
-                    "true se a trend escolhida e o último vídeo publicado têm o "
-                    "MESMO tema: a mesma empresa/pessoa/produto no centro do "
-                    "MESMO acontecimento."
-                ),
-            },
-            "motivo": {
-                "type": "string",
-                "description": "Uma frase justificando o veredito.",
-            },
-        },
-        "required": ["mesmo_tema", "motivo"],
-    },
-}
-
-INSTRUCOES_VETO = """\
-Você audita a escolha de pauta de um canal de vídeos curtos de tecnologia.
-Compare a TREND escolhida para o próximo vídeo com o ÚLTIMO vídeo publicado no
-canal e responda se têm o MESMO tema. Mesmo tema = a mesma empresa, pessoa ou
-produto no centro do MESMO acontecimento — ângulo novo ou desenvolvimento novo
-do mesmo acontecimento continua sendo o mesmo tema. Acontecimento DIFERENTE
-(mesmo que envolva a mesma empresa) NÃO é o mesmo tema.
-Responda somente com o JSON pedido.\
-"""
-
 ESQUEMA_MACROTEMAS_RECENTES = {
     "name": "macrotemas_videos_recentes",
     "strict": True,
@@ -280,64 +247,30 @@ português.\
 """
 
 INSTRUCOES_SELECAO = """\
-Você é editor de um canal de vídeos curtos sobre trends de tecnologia, IA,
-desenvolvimento de software e mercado de trabalho de TI.
+Você é editor de um canal de vídeos curtos (YouTube Shorts) de notícias
+quentes.
 
-Você recebe as trends mais faladas do X hoje que já foram APROVADAS no filtro de
-acessibilidade pré-conceitual (todas são compreensíveis sem conhecimento prévio;
-cada uma vem com score, a imagem mental que evoca e a mídia dos posts), os
-vídeos CAMPEÕES DE RETENÇÃO do canal (quando houver) e os últimos vídeos
-publicados.
+Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema,
+imagem mental e a mídia dos posts), os vídeos CAMPEÕES DE RETENÇÃO do canal
+(quando houver) e os últimos vídeos publicados COM as métricas reais de
+audiência (views e likes).
 
-Escolha UMA trend para virar o próximo vídeo, segundo estes critérios, nesta ordem:
-1. MÍDIA DOS POSTS: priorize trends cujos posts têm VÍDEO; depois as que têm
-   foto; por último as só com texto (nesse caso o vídeo usa apenas imagens
-   buscadas na web). Vídeo real do acontecimento é o material mais forte.
-2. MAIS PRÉ-CONCEITUAL: entre as aprovadas, prefira o score mais alto e a
-   imagem mental mais visceral — o evento físico/visual que qualquer pessoa
-   entende em 1 segundo.
-3. VOLUME DA CONVERSA: cada candidata informa em quantos posts coletados ela
-   aparece. O assunto que domina a conversa das contas que o canal segue é o
-   que o público espera encontrar; entre candidatas próximas nos demais
-   critérios, vença a com MAIS posts. Um post isolado, por mais dramático,
-   raramente bate o assunto que a comunidade inteira está comentando.
-4. PARECIDA COM O QUE SEGURA A AUDIÊNCIA: os campeões de retenção mostram o
-   tipo de tema, tensão e promessa que o público DESTE canal assiste até o fim.
-   Priorize trends com o mesmo DNA dos campeões. Repetir um tema que performa é
-   BEM-VINDO e encorajado.
-5. COMPARTILHÁVEL: em empate, vença a notícia que um profissional de tech
-   mandaria para um colega com "viu isso?" — corte de empregos com número,
-   dinheiro grande mudando de mão, decisão que afeta quem trabalha com
-   tecnologia. Share é o que multiplica a distribuição no feed, e é esse tipo
-   de notícia que gera share neste canal.
-6. ESPECIFICIDADE: escolha o ACONTECIMENTO concreto (quem, número exato, data),
-   nunca o panorama. Se a trend for guarda-chuva ("IA no mercado de trabalho"),
-   ou você acha dentro dela o fato específico mais forte (a empresa, o corte, o
-   valor) ou escolhe outra trend.
-7. ANTI-CLONE: os vídeos recentes listados são contexto. Voltar a um tema deles
-   com ângulo ou desenvolvimento NOVO é ótimo; o que não pode é escolher uma
-   trend que renderia praticamente o MESMO vídeo de novo, sem nada novo a dizer.
-8. VARIEDADE DE MACROTEMAS: o canal existe para cobrir TODAS as áreas (IA, dev,
-   hardware, big techs, mercado de TI, geopolítica...) — o espectador volta para
-   ficar sabendo de tudo, não de um assunto só. Cada candidata e cada vídeo
-   recente vêm com seu macrotema: se um macrotema domina os vídeos recentes,
-   prefira uma candidata de macrotema DIFERENTE e sub-representado, mesmo que
-   ela tenha score um pouco menor ou mídia mais fraca que a favorita.
+CRITÉRIO ÚNICO — O QUE A AUDIÊNCIA ESTÁ ASSISTINDO: escolha a trend com a
+maior chance de performar com a audiência DESTE canal, e a régua são os
+NÚMEROS listados, não opinião editorial. Os vídeos recentes com MAIS views e
+os campeões de retenção mostram o tipo de tema, tensão e promessa que este
+público clica e assiste até o fim; os vídeos recentes com POUCAS views mostram
+o que ele ignora. Compare cada candidata com esses dois grupos e escolha a que
+mais se parece com o que está performando. Repetir o tipo de conteúdo que está
+dando certo é BEM-VINDO e encorajado — não aplique preferência própria por
+tema "nobre", equilíbrio de pauta ou variedade (a variabilidade do canal já é
+garantida por uma regra automática fora desta escolha: no máximo 4 vídeos
+seguidos do mesmo macrotema).
 
-GUERRA/GEOPOLÍTICA É CONVIDADA, NÃO O PRATO PRINCIPAL: este é um canal de
-TECNOLOGIA. Uma candidata de guerra-geopolitica só vence quando cruza
-tecnologia (chips, drones, IA militar, sanção a big tech...) ou quando domina o
-volume de posts com FOLGA sobre todas as outras. Em empate ou quase empate com
-uma candidata de tecnologia, a de tecnologia SEMPRE vence — drama bélico não é
-critério de desempate a favor.
-
-REGRA ABSOLUTA — VETO AO ÚLTIMO VÍDEO: é PROIBIDO escolher uma trend com o
-MESMO tema do ÚLTIMO vídeo publicado (o marcado como "ÚLTIMO PUBLICADO" na
-lista). Essa proibição vence TODOS os critérios acima, inclusive o critério 4:
-nem ângulo novo, nem desenvolvimento novo, nem score mais alto justificam dois
-vídeos SEGUIDOS sobre o mesmo tema. Mesma empresa/pessoa/produto no centro do
-mesmo acontecimento = mesmo tema. Se a trend mais forte cair nesse veto,
-escolha a segunda mais forte.
+Única ressalva: não escolha uma candidata que renderia um vídeo IDÊNTICO a um
+já publicado, sem nenhum fato novo. Cobertura contínua do mesmo assunto com
+desenvolvimento novo (novo ataque, nova declaração, novo número) é bem-vinda —
+é exatamente o que a audiência está acompanhando.
 
 Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
 nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
@@ -476,7 +409,6 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"   Macrotema: {t.get('macrotema', '?')}\n"
             f"   Posts coletados sobre o assunto: {t.get('num_posts', '?')}\n"
             f"   Mídia dos posts: {t.get('midia_posts', '?')}\n"
-            f"   Score pré-conceitual: {t.get('score', '?')}/5\n"
             f"   Imagem mental: {t.get('imagem_mental', '?')}\n"
             f"   Engajamento: {t.get('engajamento', '?')}\n"
             f"   Sentimento: {t.get('sentimento', '?')}\n"
@@ -497,15 +429,15 @@ def _resumo_recentes(
             if macrotemas and i < len(macrotemas)
             else ""
         )
-        marca = " [ÚLTIMO PUBLICADO — tema VETADO no próximo vídeo]" if i == 0 else ""
-        linhas.append(f"- ({v.get('data') or '?'}) {v.get('titulo', '')}{macro}{marca}")
+        metricas = f" — {v.get('views', '?')} views, {v.get('likes', '?')} likes"
+        linhas.append(
+            f"- ({v.get('data') or '?'}) {v.get('titulo', '')}{macro}{metricas}"
+        )
     return (
         "\n\nÚltimos vídeos publicados neste canal, do mais recente para o mais "
-        "antigo (contexto anti-clone: voltar a um tema com ângulo novo é ótimo; "
-        "refazer a mesma notícia sem nada novo, não — e o tema do ÚLTIMO "
-        "PUBLICADO é proibido em qualquer hipótese). Observe também a "
-        "DISTRIBUIÇÃO de macrotemas: se um macrotema domina esta lista, "
-        "prefira candidatas dos macrotemas sub-representados:\n"
+        "antigo, com as métricas REAIS de audiência (os mais novos ainda estão "
+        "acumulando views — compare vídeos de idade parecida). Esta lista é a "
+        "régua do que o público deste canal assiste e do que ele ignora:\n"
         + "\n".join(linhas)
     )
 
@@ -528,28 +460,16 @@ def _resumo_campeoes(campeoes: list[dict] | None) -> str:
     )
 
 
-def _localizar_trend(trends: list[dict], nome: str) -> dict | None:
-    """Acha a trend pelo nome devolvido pela seleção (com folga p/ paráfrase)."""
-    alvo = nome.strip().lower()
-    for t in trends:
-        if t["trend"].strip().lower() == alvo:
-            return t
-    for t in trends:
-        candidato = t["trend"].strip().lower()
-        if candidato and (candidato in alvo or alvo in candidato):
-            return t
-    return None
-
-
 def _macrotemas_recentes(
     cliente: OpenAI, cfg: Config, videos_recentes: list[dict]
 ) -> list[str]:
     """Classifica o macrotema de cada vídeo recente do canal (1 chamada).
 
-    O índice 0 (último publicado) alimenta o bloqueio de macrotema consecutivo;
-    a lista inteira entra no prompt de seleção para o modelo rebalancear a
-    pauta. Falha ABORTA (fail-fast): sem os macrotemas não existe a rotação, e
-    rodar sem ela é o que deixa um macrotema monopolizar o canal.
+    A sequência inicial da lista (do mais recente para trás) alimenta o teto
+    de MAX_MACROTEMA_SEGUIDOS vídeos seguidos do mesmo macrotema; a lista
+    inteira entra no prompt de seleção como contexto. Falha ABORTA
+    (fail-fast): sem os macrotemas não existe o teto, e rodar sem ele é o que
+    deixa o canal virar monotemático sem ninguém perceber.
     """
     linhas = [
         f"{i}. {v.get('titulo', '')} — {(v.get('descricao') or '')[:200]}"
@@ -580,35 +500,21 @@ def _macrotemas_recentes(
     return macros
 
 
-def _cai_no_veto(cliente: OpenAI, cfg: Config, trend: dict, ultimo: dict) -> bool:
-    """Audita se a trend escolhida repete o tema do último vídeo publicado.
+def _macrotema_no_teto(macros_recentes: list[str]) -> str | None:
+    """Macrotema que atingiu o teto de vídeos seguidos, se houver.
 
-    O veto do prompt de seleção depende de o modelo obedecer; esta segunda
-    chamada é a garantia dura — o clone é barrado aqui mesmo quando a seleção
-    ignora a proibição.
+    Conta a sequência inicial (do vídeo mais recente para trás) de vídeos com
+    o mesmo macrotema; se ela chegou a MAX_MACROTEMA_SEGUIDOS, esse macrotema
+    está bloqueado no próximo vídeo.
     """
-    conteudo = (
-        f"TREND ESCOLHIDA: {trend.get('trend', '')}\n"
-        f"Resumo da trend: {trend.get('resumo', '')}\n\n"
-        f"ÚLTIMO VÍDEO PUBLICADO ({ultimo.get('data') or '?'}): "
-        f"{ultimo.get('titulo', '')}\n"
-        f"Descrição: {ultimo.get('descricao', '')}"
-    )
-    resposta = cliente.chat.completions.create(
-        model=cfg.text_model,
-        messages=[
-            {"role": "system", "content": INSTRUCOES_VETO},
-            {"role": "user", "content": conteudo},
-        ],
-        response_format={"type": "json_schema", "json_schema": ESQUEMA_VETO},
-    )
-    veredito = json.loads(resposta.choices[0].message.content)
-    if veredito["mesmo_tema"]:
-        print(
-            f"[veto] Trend '{trend.get('trend', '')}' repete o tema do último "
-            f"vídeo publicado — descartada. Motivo: {veredito['motivo']}"
-        )
-    return veredito["mesmo_tema"]
+    if not macros_recentes:
+        return None
+    seguidos = 0
+    for m in macros_recentes:
+        if m != macros_recentes[0]:
+            break
+        seguidos += 1
+    return macros_recentes[0] if seguidos >= MAX_MACROTEMA_SEGUIDOS else None
 
 
 def selecionar_trend(
@@ -617,87 +523,65 @@ def selecionar_trend(
     videos_recentes: list[dict] | None = None,
     campeoes: list[dict] | None = None,
 ) -> dict:
-    """Escolhe a trend guiada pelos campeões de retenção do canal.
+    """Escolhe a trend guiada SOMENTE pelo que a audiência está assistindo.
 
-    `campeoes`: top vídeos do canal em retenção (de ``youtube.top_retencao``),
-    usados como sinal positivo do que o público assiste até o fim.
+    Diretriz de 2026-07-18: sem pesos nem filtros editoriais. O prompt entrega
+    ao modelo os últimos vídeos publicados COM as métricas reais (views/likes)
+    e os campeões de retenção (``youtube.top_retencao``), e o critério é um só
+    — a maior chance de performar com a audiência DESTE canal.
 
-    Dois bloqueios são APLICADOS aqui, não só pedidos no prompt:
-    1. MACROTEMA: o macrotema do último vídeo publicado sai das candidatas
-       ANTES da seleção (rotação dura — impede o canal de emendar 10 vídeos de
-       guerra), a menos que TODAS as candidatas sejam dele (aí só o veto de
-       acontecimento segue valendo, para não ficar sem vídeo à toa).
-    2. ACONTECIMENTO: cada escolha passa por uma auditoria; se repetir o tema
-       do último vídeo, a trend sai das candidatas e a seleção roda de novo.
-       Se todas caírem no veto, aborta — melhor um dia sem vídeo do que dois
-       seguidos do mesmo tema.
+    A única regra dura, APLICADA aqui e não só pedida no prompt: o mesmo
+    macrotema não emenda mais de MAX_MACROTEMA_SEGUIDOS vídeos seguidos.
+    Quando os últimos MAX_MACROTEMA_SEGUIDOS publicados são todos do mesmo
+    macrotema, as candidatas dele saem da disputa ANTES da seleção; se isso
+    zerar as candidatas do dia, aborta — melhor um dia sem vídeo do que furar
+    a única regra de variabilidade do canal.
     """
     cliente = OpenAI(api_key=cfg.openai_api_key)
-    ultimo = videos_recentes[0] if videos_recentes else None
     macros_recentes = (
         _macrotemas_recentes(cliente, cfg, videos_recentes) if videos_recentes else []
     )
 
     candidatas = list(trends)
-    if macros_recentes:
-        macro_ultimo = macros_recentes[0]
-        fora_do_macro = [
-            t for t in candidatas if t.get("macrotema", "outro") != macro_ultimo
+    macro_bloqueado = _macrotema_no_teto(macros_recentes)
+    if macro_bloqueado:
+        candidatas = [
+            t for t in candidatas
+            if t.get("macrotema", "outro") != macro_bloqueado
         ]
-        if fora_do_macro:
-            bloqueadas = len(candidatas) - len(fora_do_macro)
-            if bloqueadas:
-                print(
-                    f"[veto] Macrotema '{macro_ultimo}' (o do último vídeo) "
-                    f"bloqueado no próximo — {bloqueadas} candidata(s) fora, "
-                    f"{len(fora_do_macro)} seguem na disputa."
-                )
-            candidatas = fora_do_macro
-        else:
-            print(
-                f"[veto] TODAS as candidatas aprovadas são '{macro_ultimo}', o "
-                "mesmo macrotema do último vídeo — rotação impossível hoje; "
-                "segue valendo só o veto de acontecimento."
+        print(
+            f"[veto] Os últimos {MAX_MACROTEMA_SEGUIDOS} vídeos publicados são "
+            f"todos '{macro_bloqueado}' — teto de macrotemas seguidos "
+            f"atingido; candidatas desse macrotema fora da disputa "
+            f"({len(candidatas)} de {len(trends)} seguem)."
+        )
+        if not candidatas:
+            raise SystemExit(
+                f"Todas as candidatas de hoje são '{macro_bloqueado}' e o teto "
+                f"de {MAX_MACROTEMA_SEGUIDOS} vídeos seguidos desse macrotema "
+                "foi atingido — sem vídeo hoje, para o canal não virar "
+                "monotemático."
             )
 
-    total = len(candidatas)
-    for _ in range(total):
-        conteudo = (
-            "Trends mais faladas do X hoje:\n"
-            + _resumo_trends(candidatas)
-            + _resumo_campeoes(campeoes)
-            + _resumo_recentes(videos_recentes, macros_recentes)
-        )
-        resposta = cliente.chat.completions.create(
-            model=cfg.text_model,
-            messages=[
-                {"role": "system", "content": INSTRUCOES_SELECAO},
-                {"role": "user", "content": conteudo},
-            ],
-            response_format={"type": "json_schema", "json_schema": ESQUEMA_SELECAO},
-        )
-        selecao = json.loads(resposta.choices[0].message.content)
-
-        escolhida = _localizar_trend(candidatas, selecao["trend"]) or {
-            "trend": selecao["trend"],
-            "resumo": selecao.get("motivo", ""),
-        }
-        if ultimo and _cai_no_veto(cliente, cfg, escolhida, ultimo):
-            if escolhida not in candidatas:
-                break  # sem como remover a escolhida — evita repetir em loop
-            candidatas.remove(escolhida)
-            if not candidatas:
-                break
-            continue
-
-        print(f"[roteiro] Trend escolhida: {selecao['trend']}")
-        print(f"[roteiro] Motivo: {selecao['motivo']}")
-        return selecao
-
-    raise SystemExit(
-        "Todas as trends aprovadas caem no veto ao tema do último vídeo "
-        "publicado — sem vídeo hoje. Os descartes estão logados acima."
+    conteudo = (
+        "Trends mais faladas do X hoje:\n"
+        + _resumo_trends(candidatas)
+        + _resumo_campeoes(campeoes)
+        + _resumo_recentes(videos_recentes, macros_recentes)
     )
+    resposta = cliente.chat.completions.create(
+        model=cfg.text_model,
+        messages=[
+            {"role": "system", "content": INSTRUCOES_SELECAO},
+            {"role": "user", "content": conteudo},
+        ],
+        response_format={"type": "json_schema", "json_schema": ESQUEMA_SELECAO},
+    )
+    selecao = json.loads(resposta.choices[0].message.content)
+
+    print(f"[roteiro] Trend escolhida: {selecao['trend']}")
+    print(f"[roteiro] Motivo: {selecao['motivo']}")
+    return selecao
 
 
 def _resumo_noticias(noticias: list[dict]) -> str:
