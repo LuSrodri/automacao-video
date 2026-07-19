@@ -142,7 +142,10 @@ ESQUEMA_ROTEIRO = {
                     "cheias), vocabulário preciso de telejornal — tom adulto "
                     "e inteligente, nunca infantil nem robótico. "
                     "Estrutura obrigatória: HOOK (a primeira frase = campo "
-                    "hook) → FATO (o que aconteceu, coisa concreta primeiro) → "
+                    "hook) → FATO (o que aconteceu, coisa concreta primeiro; "
+                    "se o assunto central for de nicho, a primeira frase do "
+                    "FATO ancora o assunto em algo que o leigo conhece — 'a "
+                    "empresa por trás do ChatGPT') → "
                     "IMPLICAÇÃO (uma única consequência simples) → CORTE "
                     "(termina em tensão emendando de volta no hook — o vídeo "
                     "roda em loop — sem conclusão e sem CTA falado). A última "
@@ -334,6 +337,15 @@ ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
 2. FATO (até a metade do vídeo): o que aconteceu, em ordem "coisa concreta
    primeiro, detalhe depois". Cada frase mostra uma cena que dá para VER de
    olhos fechados.
+   ÂNCORA PARA LEIGO: se o assunto CENTRAL do vídeo não é universalmente
+   conhecido (empresa, modelo de IA, app, pessoa de nicho), a PRIMEIRA frase
+   do FATO — logo depois do hook, nunca antes dele — amarra o assunto em algo
+   que o espectador já conhece: "a empresa por trás do ChatGPT", "o maior
+   rival do ChatGPT", "a dona do Instagram". Meia frase embutida na
+   narrativa (no máximo duas frases se o assunto for muito distante do dia a
+   dia), NUNCA tom de aula ou de glossário. Assunto que todo mundo conhece
+   (Trump, guerra, Google, iPhone) NÃO leva âncora — vá direto ao fato:
+   âncora desnecessária é preâmbulo, e preâmbulo derruba retenção.
 3. IMPLICAÇÃO (segunda metade): UMA única consequência simples ("isso significa
    que..."). Só uma — duas implicações confundem e a pessoa desliza.
 4. CORTE (últimos 2-3s): terminar em tensão. Sem conclusão, sem moral da
