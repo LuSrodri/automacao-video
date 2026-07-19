@@ -110,9 +110,19 @@ ESQUEMA_ROTEIRO = {
                 "type": "string",
                 "description": (
                     "Título do vídeo, no idioma definido nas instruções, até 90 "
-                    "caracteres. O título promete EXATAMENTE o que o vídeo "
-                    "entrega — clickbait sem payload é proibido. Palavras "
-                    "simples, imagem concreta, sem jargão."
+                    "caracteres. Direto e factual: ator + ação concreta, com "
+                    "pelo menos uma coisa palpável (número, pessoa, dinheiro, "
+                    "lugar, ação física). TESTE DO LEIGO: o título tem que ser "
+                    "entendido por quem NUNCA ouviu falar da empresa ou do "
+                    "modelo — no máximo 1 nome próprio, e só se universalmente "
+                    "conhecido (Trump, Google, Irã); nome de nicho (modelo de "
+                    "IA, lab, startup, sigla) fica FORA do título: traduza "
+                    "para o efeito concreto em gente, dinheiro ou ação. "
+                    "PROIBIDO cauda de suspense ('— e o detalhe muda tudo', "
+                    "'here's why it matters', 'e agora?'): esconder o fato de "
+                    "quem não conhece o assunto não gera clique, gera deslize. "
+                    "O título promete EXATAMENTE o que o vídeo entrega — "
+                    "clickbait sem payload é proibido."
                 ),
             },
             "descricao": {
@@ -346,6 +356,16 @@ PROIBIDO NO TEXTO:
 
 PAYLOAD OBRIGATÓRIO: o roteiro entrega 1 fato real e 1 implicação. Clickbait
 sem payload é PROIBIDO — o título promete exatamente o que o vídeo entrega.
+
+TÍTULO — medido nos números do canal: título autossuficiente rende o DOBRO de
+views do título com nome de nicho, e os 10 maiores vídeos do canal têm título
+direto e factual, sem cauda de suspense. Regras: (1) ator + ação concreta,
+com uma coisa palpável (número, pessoa, dinheiro, lugar); (2) TESTE DO LEIGO:
+entendível por quem nunca ouviu falar da empresa/modelo — no máximo 1 nome
+próprio, só se universalmente conhecido; nome de modelo/lab/startup vira o
+efeito concreto ("Rodar IA ficou 10x mais barato", nunca "Anthropic baixou o
+preço dos agents"); (3) PROIBIDO cauda de suspense ("— e o detalhe muda
+tudo", "here's why it matters", "e agora?").
 
 DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 {palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
