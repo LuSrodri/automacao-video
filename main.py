@@ -33,7 +33,7 @@ Fluxo:
     instante vazio) + imagem nítida com zoom suave + crossfade + legendas +
     infográficos + branding com borda branca (+ trilha de fundo opcional).
 11. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
-    YouTube (na hora, ou agendado para YOUTUBE_PUBLISH_HOURS).
+    YouTube (o horário de publicação é o do cronjob que dispara a execução).
 """
 
 import argparse

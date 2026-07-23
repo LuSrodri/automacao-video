@@ -19,7 +19,7 @@ import secrets
 import threading
 import urllib.parse
 import webbrowser
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -346,36 +346,6 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
         ) from erro
 
 
-def _proximo_horario_publicacao(
-    horas: list[int],
-) -> tuple[str, datetime] | None:
-    """Próximo horário de publicação (UTC RFC3339, local) da lista configurada.
-
-    ``YOUTUBE_PUBLISH_HOURS`` lista as horas LOCAIS em que os vídeos devem
-    entrar no ar (a primeira hora de distribuição de um Short decide o
-    alcance — vale mirar o pico da audiência). Escolhe o primeiro horário de
-    hoje/amanhã com pelo menos 15 minutos de folga (o processamento do
-    YouTube precisa terminar antes do publishAt).
-    """
-    if not horas:
-        return None
-    agora = datetime.now().astimezone()
-    minimo = agora + timedelta(minutes=15)
-    candidatos = [
-        (agora + timedelta(days=dias)).replace(
-            hour=h, minute=0, second=0, microsecond=0
-        )
-        for dias in (0, 1)
-        for h in sorted(set(horas))
-    ]
-    futuros = [c for c in candidatos if c >= minimo]
-    if not futuros:
-        return None
-    alvo = min(futuros)
-    rfc3339 = alvo.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.0Z")
-    return rfc3339, alvo
-
-
 def publicar(
     cfg: Config,
     video: Path,
@@ -404,26 +374,6 @@ def publicar(
         token = _renovar_access_token(cfg, refresh)
 
         tamanho = video.stat().st_size
-        status = {
-            "privacyStatus": cfg.youtube_privacy,
-            "selfDeclaredMadeForKids": False,
-        }
-        # Agendamento: com YOUTUBE_PUBLISH_HOURS configurado (e privacidade
-        # public), o vídeo sobe como private com publishAt no próximo horário
-        # da lista — o YouTube o torna público sozinho na hora marcada.
-        agendado = (
-            _proximo_horario_publicacao(cfg.youtube_publish_hours)
-            if cfg.youtube_privacy == "public"
-            else None
-        )
-        if agendado:
-            rfc3339, alvo_local = agendado
-            status["privacyStatus"] = "private"
-            status["publishAt"] = rfc3339
-            print(
-                f"[youtube] Publicação agendada para "
-                f"{alvo_local:%Y-%m-%d %H:%M} (horário local)."
-            )
         metadados = {
             "snippet": {
                 "title": titulo[:100],
@@ -431,10 +381,13 @@ def publicar(
                 "tags": tags or [],
                 "categoryId": cfg.youtube_category_id,
             },
-            "status": status,
+            "status": {
+                "privacyStatus": cfg.youtube_privacy,
+                "selfDeclaredMadeForKids": False,
+            },
         }
 
-        print(f"[youtube] Publicando '{titulo}' ({status['privacyStatus']})...")
+        print(f"[youtube] Publicando '{titulo}' ({cfg.youtube_privacy})...")
         inicio = requests.post(
             UPLOAD_URL,
             params={"uploadType": "resumable", "part": "snippet,status"},

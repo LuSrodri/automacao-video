@@ -32,11 +32,13 @@ ZOOM_RATE = 0.0008  # incremento de zoom por quadro
 WOOSH = RAIZ / "assets" / "woosh.mp3"
 WOOSH_VOL = 0.5  # volume do efeito relativo à narração
 
-# Trilha musical de fundo (opcional): se assets/trilha.mp3 existir, ela entra
-# em loop sob a narração em volume baixo — alavanca de retenção clássica de
-# Shorts. Sem o arquivo, o vídeo sai como sempre (só narração + wooshes).
+# Trilha musical de fundo: assets/trilha.mp3 entra em loop sob a narração em
+# volume baixo — alavanca de retenção clássica de Shorts. A faixa padrão é
+# "Tension Documentary" (AtlasAudio, Pixabay — licença Pixabay: uso comercial
+# livre, sem atribuição), normalizada para -16 LUFS; qualquer .mp3 no mesmo
+# caminho a substitui. Sem o arquivo, o vídeo sai só com narração + wooshes.
 TRILHA = RAIZ / "assets" / "trilha.mp3"
-TRILHA_VOL = 0.09  # volume da trilha relativo à narração
+TRILHA_VOL = 0.12  # ~-18 dB sob a narração (a trilha já vem normalizada)
 
 # Branding discreto no topo: logo do YouTube Shorts + @usuário do canal.
 LOGO_PADRAO = RAIZ / "assets" / "YouTube-Shorts-Logo.png"
