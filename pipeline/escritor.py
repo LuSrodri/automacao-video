@@ -21,7 +21,12 @@ Duas etapas:
    citando as fontes (contas do X e veículos das notícias do Firecrawl),
    dentro de uma FAIXA dura de palavras (piso e teto derivados de
    VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
-   duração-alvo) e define de 8 a 10 imagens-chave.
+   duração-alvo) e define de 8 a 10 imagens-chave. Ao final, a AUDITORIA
+   PRÓ-LEIGO (`_auditar_leigo`, chamada própria ao GPT) confere título,
+   descrição e narração contra as regras de leigo (nome de nicho, jargão,
+   teaser/frase vazia na descrição, âncora ausente) e reprova com UMA
+   reescrita — as regras só no prompt vazavam ("Kimi K3", "GPUs" em título;
+   "veja o que mudou" em descrição).
 """
 
 import json
@@ -144,7 +149,14 @@ ESQUEMA_ROTEIRO = {
                 "description": (
                     "Descrição do vídeo no idioma definido nas instruções, "
                     "1 a 3 frases em um único parágrafo, com hashtags "
-                    "relevantes no final."
+                    "relevantes no final. É o RESUMO DO PAYLOAD, não teaser: "
+                    "entrega o fato central concreto (número, nome, ação) com "
+                    "a fonte nominal, e a implicação. Mesmo TESTE DO LEIGO do "
+                    "título: nome de nicho (modelo de IA, lab, startup, "
+                    "sigla) vira o efeito concreto. PROIBIDO: cauda de "
+                    "suspense e CTA ('veja o que mudou', 'saiba mais', 'e "
+                    "agora?') e frase de analista vazia ('virou um teste "
+                    "sobre confiança', 'a saída segue em aberto')."
                 ),
             },
             "texto_video": {
@@ -283,6 +295,77 @@ ataque, nova declaração, novo número, nova decisão, novo envolvido.
   (cobertura contínua é bem-vinda: a 13ª noite de ataques depois de um vídeo
   sobre a 12ª é vídeo novo).
 Responda somente com o JSON pedido.\
+"""
+
+ESQUEMA_AUDITORIA_LEIGO = {
+    "name": "auditoria_pro_leigo",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "aprovado": {
+                "type": "boolean",
+                "description": (
+                    "true somente quando título, descrição e narração passam "
+                    "em TODAS as regras (zero problemas)."
+                ),
+            },
+            "problemas": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Cada violação encontrada, citando o termo/frase exato e "
+                    "a regra que ele fura (lista vazia quando aprovado)."
+                ),
+            },
+        },
+        "required": ["aprovado", "problemas"],
+    },
+}
+
+INSTRUCOES_AUDITORIA_LEIGO = """\
+Você é o auditor pró-leigo de um canal de vídeos curtos de notícias. Você
+recebe o título, a descrição e a narração de um vídeo e verifica as regras
+abaixo. O espectador é um adulto leigo que NUNCA ouviu falar de modelos de
+IA, labs, startups e siglas de nicho — Trump, Google, Irã, iPhone, Elon Musk
+ele conhece; Grok, Kimi K3, Anthropic, CENTCOM, GPU ele NÃO conhece.
+
+CALIBRAGEM (vale para as três partes):
+- Nome próprio UNIVERSALMENTE conhecido (países, Trump, Google, Elon Musk,
+  ChatGPT, iPhone...) é permitido em qualquer quantidade — nunca é problema.
+  O que reprova é nome de NICHO (modelo de IA, lab, startup, app pouco
+  conhecido, sigla militar/técnica) sem tradução para o efeito concreto.
+- Termos do dia a dia NÃO são jargão: inteligência artificial, IA/AI, app,
+  site, robô, chip, e tudo que um adulto ouve num telejornal (bilhões,
+  míssil, sanção, falência, petróleo).
+- As hashtags no final da descrição não entram na auditoria.
+
+TÍTULO:
+1. Teste do leigo: entendível por quem nunca ouviu falar da empresa/modelo.
+   Nome de nicho ou jargão técnico REPROVA — deve virar o efeito concreto em
+   gente, dinheiro ou ação.
+2. Sem cauda de suspense ("— e o detalhe muda tudo", "here's why it
+   matters", "e agora?").
+DESCRIÇÃO:
+3. Entrega o fato central concreto com a fonte nominal — não é teaser.
+   REPROVA: CTA/suspense ("veja o que mudou", "saiba mais") e frase de
+   analista vazia ("virou um teste sobre confiança", "a saída segue em
+   aberto", "entrou numa fase mais perigosa" sem fato).
+4. Mesmo teste do leigo do título (nome de nicho vira efeito concreto).
+NARRAÇÃO:
+5. Jargão técnico ou sigla de nicho sem explicação de meia frase REPROVA
+   (audio tags entre colchetes não são jargão).
+6. Se o assunto CENTRAL é de nicho, a primeira frase depois do hook precisa
+   ancorar em algo que o leigo conhece ("a empresa por trás do ChatGPT", "o
+   maior rival do ChatGPT"); sem âncora REPROVA. Assunto universalmente
+   conhecido não precisa de âncora.
+7. No máximo 1 nome próprio de nicho no vídeo inteiro (veículo ou conta do X
+   citado como FONTE não conta; nome universalmente conhecido não conta).
+
+Liste em "problemas" cada violação com o termo/frase exato citado. NÃO
+invente problema: o que segue as regras passa, e "aprovado" = true com zero
+problemas.\
 """
 
 ESQUEMA_MACROTEMAS_RECENTES = {
@@ -462,6 +545,14 @@ próprio, só se universalmente conhecido; nome de modelo/lab/startup vira o
 efeito concreto ("Rodar IA ficou 10x mais barato", nunca "Anthropic baixou o
 preço dos agents"); (3) PROIBIDO cauda de suspense ("— e o detalhe muda
 tudo", "here's why it matters", "e agora?").
+
+DESCRIÇÃO — resumo do payload, não teaser: 1 a 3 frases que ENTREGAM o fato
+central (com número/nome concreto e a fonte nominal) e a implicação, seguidas
+das hashtags. Mesmo teste do leigo do título: nome de nicho vira o efeito
+concreto. PROIBIDO na descrição: cauda de suspense e CTA ("veja o que mudou
+nas últimas horas", "saiba mais", "e agora?"), frase de analista vazia
+("virou um teste sobre confiança e transparência", "a saída segue em
+aberto") e rumor apresentado como fato.
 
 DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 {palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
@@ -862,6 +953,35 @@ def _aparar_hook_final(roteiro: dict) -> None:
         )
 
 
+def _auditar_leigo(cliente: OpenAI, cfg: Config, roteiro: dict) -> list[str]:
+    """Violações pró-leigo no título, na descrição e na narração (vazia = ok).
+
+    Auditoria em chamada própria porque as regras só no prompt do roteirista
+    vazavam ("Kimi K3", "GPUs" no título; "veja o que mudou" na descrição) —
+    regra de comportamento nunca fica só em prompt.
+    """
+    conteudo = (
+        f"TÍTULO: {roteiro.get('titulo', '')}\n\n"
+        f"DESCRIÇÃO: {roteiro.get('descricao', '')}\n\n"
+        f"NARRAÇÃO:\n{roteiro.get('texto_video', '')}"
+    )
+    resposta = cliente.chat.completions.create(
+        model=cfg.text_model,
+        messages=[
+            {"role": "system", "content": INSTRUCOES_AUDITORIA_LEIGO},
+            {"role": "user", "content": conteudo},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": ESQUEMA_AUDITORIA_LEIGO,
+        },
+    )
+    veredito = json.loads(resposta.choices[0].message.content)
+    if veredito["aprovado"]:
+        return []
+    return [p for p in veredito.get("problemas", []) if p.strip()]
+
+
 def gerar_roteiro(
     cfg: Config,
     selecao: dict,
@@ -957,6 +1077,54 @@ def gerar_roteiro(
         if (ajustadas < palavras) if estourou else (ajustadas > palavras):
             roteiro = ajustado
         palavras = _contar_palavras(roteiro["texto_video"])
+
+    # Auditoria pró-leigo (título + descrição + narração) com UMA reescrita:
+    # aprova, ou lista as violações e pede o JSON corrigido; a nova versão só
+    # substitui a original se reduzir os problemas.
+    problemas = _auditar_leigo(cliente, cfg, roteiro)
+    if problemas:
+        print(f"[roteiro] Auditoria pró-leigo reprovou ({len(problemas)}):")
+        for p in problemas:
+            print(f"  - {p}")
+        pedido = (
+            "A auditoria pró-leigo reprovou o roteiro pelos problemas "
+            "listados abaixo. Reescreva o JSON completo corrigindo TODOS "
+            "eles: nome de nicho vira o efeito concreto; a descrição entrega "
+            "o fato com a fonte, sem teaser nem frase vazia; jargão ganha "
+            "explicação de meia frase ou sai; assunto de nicho ganha âncora "
+            "logo após o hook. Mantenha o texto_video na faixa de "
+            f"{minimo} a {limite} palavras faladas e os trechos das imagens "
+            "como substrings exatas do novo texto_video.\nProblemas:\n- "
+            + "\n- ".join(problemas)
+        )
+        resposta = cliente.chat.completions.create(
+            model=cfg.text_model,
+            messages=[
+                {"role": "system", "content": instrucoes},
+                {"role": "user", "content": conteudo},
+                {
+                    "role": "assistant",
+                    "content": json.dumps(roteiro, ensure_ascii=False),
+                },
+                {"role": "user", "content": pedido},
+            ],
+            response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},
+        )
+        corrigido = json.loads(resposta.choices[0].message.content)
+        _aparar_hook_final(corrigido)
+        restantes = _auditar_leigo(cliente, cfg, corrigido)
+        if len(restantes) < len(problemas):
+            roteiro = corrigido
+            problemas = restantes
+        if problemas:
+            print(
+                f"[aviso] Auditoria pró-leigo ainda aponta {len(problemas)} "
+                "problema(s) após a reescrita; seguindo com a melhor versão."
+            )
+        else:
+            print("[roteiro] Reescrita aprovada pela auditoria pró-leigo.")
+        palavras = _contar_palavras(roteiro["texto_video"])
+
     print(f"[roteiro] {palavras} palavras faladas (faixa {minimo}-{limite})")
     print(f"[roteiro] Tema do dia: {roteiro['tema']}")
     print(f"[roteiro] Título: {roteiro['titulo']}")
