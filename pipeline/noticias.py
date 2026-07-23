@@ -37,16 +37,18 @@ def _itens(dados: dict) -> list[dict]:
 def buscar_noticias(cfg: Config, consulta: str) -> list[dict]:
     """Busca notícias recentes para `consulta`.
 
-    Qualquer falha — inclusive zero resultados — ABORTA a execução: sem
-    notícias o roteiro seria escrito só com o resumo do X, sem checagem de
-    fatos, e o risco de publicar erro factual não compensa.
+    Falha do Firecrawl (erro, limite de taxa ou zero resultados) NÃO aborta
+    (diretriz 2026-07-23): fica só o aviso no log e a execução segue com lista
+    vazia — o roteirista escreve a partir do resumo e dos posts do X
+    (``_resumo_noticias`` já cobre o caso sem notícia).
     """
     consulta = (consulta or "").strip()
     if not consulta:
-        raise SystemExit(
-            "A seleção não devolveu consulta de notícias — sem ela o roteiro "
-            "sairia sem checagem de fatos; abortando."
+        print(
+            "[aviso] A seleção não devolveu consulta de notícias; o roteiro "
+            "segue só com o resumo e os posts do X."
         )
+        return []
 
     print(f"[noticias] Buscando notícias sobre: {consulta}")
     headers = {
@@ -70,18 +72,21 @@ def buscar_noticias(cfg: Config, consulta: str) -> list[dict]:
             itens = _itens(resp.json())
             print(f"[noticias] {len(itens)} notícias encontradas")
             if not itens:
-                raise SystemExit(
-                    f"Nenhuma notícia encontrada para '{consulta}' — o roteiro "
-                    "sairia sem checagem de fatos; abortando. Se a consulta "
-                    "estiver específica demais, o problema é na seleção."
+                print(
+                    f"[aviso] Nenhuma notícia encontrada para '{consulta}'; o "
+                    "roteiro segue só com o resumo e os posts do X."
                 )
             return itens
         except (requests.RequestException, ValueError) as erro:
-            raise SystemExit(
-                f"Busca de notícias (Firecrawl) falhou para '{consulta}' — o "
-                f"roteiro sairia sem checagem de fatos; abortando: {erro}"
-            ) from erro
-    raise SystemExit(
-        f"Firecrawl limitou a busca de notícias (429) para '{consulta}' mesmo "
-        "após 3 tentativas — o roteiro sairia sem checagem de fatos; abortando."
+            print(
+                f"[aviso] Busca de notícias (Firecrawl) falhou para "
+                f"'{consulta}': {erro}; o roteiro segue só com o resumo e os "
+                "posts do X."
+            )
+            return []
+    print(
+        f"[aviso] Firecrawl limitou a busca de notícias (429) para "
+        f"'{consulta}' mesmo após 3 tentativas; o roteiro segue só com o "
+        "resumo e os posts do X."
     )
+    return []

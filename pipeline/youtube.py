@@ -112,7 +112,9 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
     ``cfg.publico``, devolvendo os vídeos do mais recente para o mais antigo
     (a playlist e a busca de estatísticas são paginadas em blocos de 50, o
     teto por chamada da API). Cada item traz ``titulo``, ``descricao``,
-    ``data`` (YYYY-MM-DD), ``views`` e ``likes`` — as contagens vêm da Data
+    ``data`` (YYYY-MM-DDTHH:MM, UTC — a hora alimenta a verificação de vídeo
+    repetido: com 3-4 execuções/dia, saber que o último vídeo saiu há poucas
+    horas é o que importa), ``views`` e ``likes`` — as contagens vêm da Data
     API (tempo real) e não da Analytics (que atrasa 2-3 dias e zeraria os
     vídeos mais novos, justamente os mais informativos). A lista é a régua da
     seleção guiada pela audiência e do teto de macrotemas seguidos, então
@@ -203,7 +205,7 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
                 {
                     "titulo": snippet.get("title", ""),
                     "descricao": snippet.get("description", ""),
-                    "data": snippet.get("publishedAt", "")[:10],
+                    "data": snippet.get("publishedAt", "")[:16],
                     "views": int(st.get("viewCount") or 0),
                     "likes": int(st.get("likeCount") or 0),
                 }

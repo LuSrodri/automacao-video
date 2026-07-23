@@ -55,6 +55,13 @@ def _e_stock(url: str) -> bool:
 # desperdiçadas).
 DOMINIOS_BLOQUEADOS = ("cdninstagram.com", "fbcdn.net")
 
+# Logos são proibidos nos vídeos (diretriz 2026-07-23): consulta que pede logo
+# é descartada aqui mesmo quando o roteirista ignora a proibição do prompt —
+# regra de comportamento nunca fica só em prompt.
+PADRAO_CONSULTA_LOGO = re.compile(
+    r"\blogos?\b|\blogotipos?\b|\blogomarcas?\b|\blogotypes?\b", re.IGNORECASE
+)
+
 
 def _bloqueado(url: str) -> bool:
     return any(d in url.lower() for d in DOMINIOS_BLOQUEADOS)
@@ -293,6 +300,12 @@ def buscar_imagens(cfg: Config, itens: list[dict], pasta: Path) -> list[dict]:
     # Sequencial e com um pequeno intervalo entre as chamadas.
     baixadas: list[dict] = []
     for i, item in enumerate(itens, 1):
+        if PADRAO_CONSULTA_LOGO.search(item.get("consulta", "")):
+            print(
+                f"[aviso] Logo é proibido no vídeo; consulta descartada: "
+                f"{item['consulta']}"
+            )
+            continue
         if i > 1:
             time.sleep(INTERVALO_REQ)
         urls = _buscar_um(cfg, item["consulta"])
@@ -315,8 +328,12 @@ def buscar_imagens(cfg: Config, itens: list[dict], pasta: Path) -> list[dict]:
             print(f"[aviso] Todos os candidatos falharam para: {item['consulta']}")
 
     if not baixadas:
-        raise SystemExit(
-            "Nenhuma imagem-chave foi baixada — o vídeo sairia sem overlays; "
-            "abortando. Os avisos acima mostram o que falhou em cada consulta."
+        # Não aborta aqui (diretriz 2026-07-23: falha do Firecrawl segue com
+        # log): as mídias baixadas dos posts do X ainda podem cobrir o vídeo.
+        # O main.py aborta somente se não houver NENHUM material visual.
+        print(
+            "[aviso] Nenhuma imagem-chave foi baixada — o vídeo seguirá só "
+            "com as mídias dos posts do X, se houver. Os avisos acima "
+            "mostram o que falhou em cada consulta."
         )
     return baixadas

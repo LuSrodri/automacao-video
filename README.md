@@ -64,7 +64,7 @@ output/
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
 | `X_ACCOUNTS` | vazio | Opcional: usa somente estas contas no lugar da lista fixa `CONTAS_PADRAO` (`pipeline/config.py`) |
-| `X_MAX_POSTS` | `60` | Teto de posts lidos por execução (a X API cobra por post lido) |
+| `X_MAX_POSTS` | `200` | Teto de posts lidos por execução (a X API cobra por post lido) |
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
 | `NUM_NOTICIAS` | `6` | Quantas notícias (Firecrawl news) buscar para enriquecer a trend |
@@ -110,7 +110,7 @@ python main.py --auth-youtube-usa
 
 Os dois usam o mesmo `YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` — muda só qual canal você seleciona no consentimento.
 
-O pipeline é **fail-fast**: credenciais ausentes/quebradas, falha ao ler os últimos vídeos ou os campeões de retenção, classificação ou notícias indisponíveis, zero imagens baixadas e falha no upload — tudo isso derruba a execução com erro explícito (para o agendador poder alertar), em vez de seguir e degradar o vídeo em silêncio. As leituras do canal acontecem logo no início, antes de qualquer chamada paga (X/OpenAI). Se o upload falhar, o vídeo continua salvo em `output/` e registrado em `videos.txt` para publicação manual.
+O pipeline é **fail-fast**: credenciais ausentes/quebradas, falha ao ler os últimos vídeos ou os campeões de retenção, classificação indisponível, verificação de vídeo repetido indisponível e falha no upload — tudo isso derruba a execução com erro explícito (para o agendador poder alertar), em vez de seguir e degradar o vídeo em silêncio. As leituras do canal acontecem logo no início, antes de qualquer chamada paga (X/OpenAI). **Exceção (Firecrawl)**: falha na busca de notícias ou de imagens só gera aviso no log e a execução segue (o roteiro sai do resumo/posts do X; o vídeo, das mídias do X) — aborta somente se não sobrar **nenhum** material visual. Se o upload falhar, o vídeo continua salvo em `output/` e registrado em `videos.txt` para publicação manual.
 
 ## Como funciona o corte de silêncios
 
@@ -128,7 +128,7 @@ O GPT define, para cada imagem, uma **consulta de busca** coerente com o fato da
 
 | Etapa | Custo |
 | --- | --- |
-| Coleta de posts (X API pay-per-use, ~US$ 0,005/post, teto `X_MAX_POSTS`) | ~US$ 0,30 com o padrão de 60 posts |
+| Coleta de posts (X API pay-per-use, ~US$ 0,005/post, teto `X_MAX_POSTS`) | ~US$ 1,00 com o padrão de 200 posts |
 | Mídias dos posts da trend (X API, até 5 posts) | ~US$ 0,03 |
 | Busca de imagens + notícias (Firecrawl Search) | ~2 créditos por consulta |
 | GPT 5.6 Luna (sumarização das trends + seleção + roteiro + visão das mídias) | < US$ 0,04 |

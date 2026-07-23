@@ -5,10 +5,15 @@ Duas etapas:
    2026-07-18: sem pesos nem filtros editoriais): o modelo recebe as
    candidatas do dia, os últimos vídeos publicados COM as métricas reais
    (views/likes da Data API) e os campeões de retenção, e escolhe a trend com
-   a maior chance de performar com o público DESTE canal. A única regra dura,
-   aplicada em código antes da seleção, é o teto de MAX_MACROTEMA_SEGUIDOS
-   vídeos seguidos do mesmo macrotema — variabilidade mínima do canal.
-   Devolve também uma consulta de notícias para enriquecer o material.
+   a maior chance de performar com o público DESTE canal. Duas regras duras,
+   aplicadas em código: o teto de MAX_MACROTEMA_SEGUIDOS vídeos seguidos do
+   mesmo macrotema (antes da seleção) e a verificação de vídeo repetido
+   (depois dela): uma chamada ao GPT confere se a escolhida cobriria o mesmo
+   fato de um vídeo publicado nas últimas JANELA_REPETICAO_HORAS — se sim, a
+   candidata sai da disputa e a seleção refaz (com 3-4 execuções/dia sobre a
+   mesma janela de posts do X, a ressalva só no prompt deixava passar o mesmo
+   fato reformulado). Devolve também uma consulta de notícias para enriquecer
+   o material.
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
    roteiro em enquadramento de ANÁLISE/EDUCACIONAL (formato explicativo), em
    tom adulto e inteligente (ritmo de fala natural, vocabulário preciso de
@@ -21,6 +26,7 @@ Duas etapas:
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from openai import OpenAI
@@ -41,6 +47,11 @@ FOLGA_PALAVRAS = 1.15
 # segue somente a audiência, mas o mesmo macrotema não pode emendar mais que
 # isso — é a única regra de variabilidade do canal.
 MAX_MACROTEMA_SEGUIDOS = 4
+# Janela da verificação de vídeo repetido: vídeo publicado há menos que isto
+# cobre a mesma janela de posts do X das execuções seguintes (JANELA_HORAS=24
+# + folga), então a candidata só passa se o resumo dela tiver fato novo. Mais
+# antigo que isso, qualquer desenvolvimento já é naturalmente novo.
+JANELA_REPETICAO_HORAS = 36
 
 ESQUEMA_SELECAO = {
     "name": "selecao_trend",
@@ -179,8 +190,9 @@ ESQUEMA_ROTEIRO = {
                                 "palco, falando, no contexto da notícia — não "
                                 "retrato posado), o evento com público, o "
                                 "produto em uso real, o lugar com movimento. "
-                                "Logo só como último recurso (máximo um no "
-                                "vídeo todo); planilha/documento/slide/gráfico "
+                                "Logo, logomarca ou logotipo é PROIBIDO em "
+                                "qualquer consulta (a marca sozinha não é "
+                                "cena); planilha/documento/slide/gráfico "
                                 "é PROIBIDO salvo quando o artefato É a "
                                 "notícia (memo vazado, carta oficial). "
                                 "REGRAS DURAS: "
@@ -227,6 +239,51 @@ ESQUEMA_ROTEIRO = {
         ],
     },
 }
+
+ESQUEMA_REPETICAO = {
+    "name": "verificacao_video_repetido",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "mesmo_fato": {
+                "type": "boolean",
+                "description": (
+                    "true SOMENTE se a pauta candidata cobre o mesmo fato "
+                    "central de um dos vídeos já publicados, sem nenhum "
+                    "desenvolvimento novo nomeável no resumo dela."
+                ),
+            },
+            "video_repetido": {
+                "type": "string",
+                "description": (
+                    "Título do vídeo publicado que já cobre este fato "
+                    "(string vazia quando mesmo_fato é false)."
+                ),
+            },
+        },
+        "required": ["mesmo_fato", "video_repetido"],
+    },
+}
+
+INSTRUCOES_REPETICAO = """\
+Você é o verificador anti-repetição de um canal de vídeos curtos de notícias.
+Você recebe UMA pauta candidata (com resumo) e os vídeos JÁ PUBLICADOS pelo
+canal nas últimas horas (título, descrição e data/hora), e responde se a
+candidata renderia um vídeo repetido.
+
+"mesmo_fato" = true SOMENTE quando a candidata cobre o MESMO fato central de
+um vídeo listado, sem nenhum desenvolvimento novo NOMEÁVEL no resumo dela.
+Desenvolvimento novo é coisa concreta que o vídeo publicado não tinha: novo
+ataque, nova declaração, novo número, nova decisão, novo envolvido.
+- O mesmo fato reescrito com outras palavras É repetição ("EUA fazem 12ª
+  noite seguida de ataques" vs "EUA fazem 12 noites seguidas de ataques").
+- O mesmo assunto/conflito com desenvolvimento novo NÃO é repetição
+  (cobertura contínua é bem-vinda: a 13ª noite de ataques depois de um vídeo
+  sobre a 12ª é vídeo novo).
+Responda somente com o JSON pedido.\
+"""
 
 ESQUEMA_MACROTEMAS_RECENTES = {
     "name": "macrotemas_videos_recentes",
@@ -430,8 +487,11 @@ roteiro (NUNCA pode haver um trecho da narração sem imagem na tela). REGRAS:
   Exemplo (OpenAI lançando o GPT-6): "Sam Altman GPT-6 launch keynote stage",
   "OpenAI GPT-6 announcement event audience",
   "OpenAI DevDay San Francisco crowd".
-- LOGO: no máximo UMA consulta de logo no vídeo inteiro, e só se aquele momento
-  não tiver cena melhor. Logo em fundo branco é a imagem mais fraca que existe.
+- LOGO: PROIBIDO. Nenhuma consulta pode pedir logo, logomarca ou logotipo —
+  a marca sozinha não é cena e consultas com essas palavras são descartadas em
+  código (o momento fica sem imagem própria). Quando o momento não tiver cena
+  óbvia, busque a pessoa envolvida em ação, o produto em uso, a sede/prédio
+  com movimento ou o evento — nunca a marca.
 - PROIBIDO consulta que devolve planilha, documento, slide, print de parágrafo
   de texto ou gráfico — EXCETO quando esse artefato É a própria notícia (a carta
   oficial, o memo vazado, o e-mail da demissão: aí ele é a prova e vale ouro).
@@ -558,6 +618,85 @@ def _macrotemas_recentes(
     return macros
 
 
+def _recentes_na_janela(
+    videos_recentes: list[dict] | None, horas: int
+) -> list[dict]:
+    """Vídeos publicados há menos de `horas` (data/hora UTC da Data API)."""
+    corte = datetime.now(timezone.utc) - timedelta(hours=horas)
+    dentro = []
+    for v in videos_recentes or []:
+        try:
+            publicado = datetime.fromisoformat(v.get("data") or "").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            dentro.append(v)  # data ilegível: melhor verificar do que deixar passar
+            continue
+        if publicado >= corte:
+            dentro.append(v)
+    return dentro
+
+
+def _candidata_por_nome(candidatas: list[dict], nome: str) -> dict:
+    """A trend escolhida pela seleção (por nome, com folga p/ paráfrase)."""
+    alvo = nome.strip().lower()
+    for t in candidatas:
+        if t["trend"].strip().lower() == alvo:
+            return t
+    for t in candidatas:
+        candidato = t["trend"].strip().lower()
+        if candidato and (candidato in alvo or alvo in candidato):
+            return t
+    return candidatas[0]
+
+
+def _video_repetido(
+    cliente: OpenAI, cfg: Config, trend: dict, recentes: list[dict]
+) -> str | None:
+    """Título do vídeo já publicado que a trend repetiria, ou None.
+
+    Verificação em chamada própria ao GPT porque a ressalva embutida no
+    prompt de seleção não segurou na prática: com 3-4 execuções/dia sobre a
+    mesma janela de posts do X, o modelo tratava o mesmo fato reformulado
+    como desenvolvimento novo. Falha ABORTA (fail-fast): sem a verificação o
+    canal volta a publicar o mesmo vídeo duas vezes.
+    """
+    if not recentes:
+        return None
+    linhas = [
+        f"- ({v.get('data', '?')} UTC) {v.get('titulo', '')}\n"
+        f"  Descrição: {(v.get('descricao') or '').strip()[:300]}"
+        for v in recentes
+    ]
+    conteudo = (
+        f"PAUTA CANDIDATA: {trend.get('trend', '')}\n"
+        f"Resumo: {trend.get('resumo', '')}\n\n"
+        f"VÍDEOS PUBLICADOS NAS ÚLTIMAS {JANELA_REPETICAO_HORAS} HORAS:\n"
+        + "\n".join(linhas)
+    )
+    try:
+        resposta = cliente.chat.completions.create(
+            model=cfg.text_model,
+            messages=[
+                {"role": "system", "content": INSTRUCOES_REPETICAO},
+                {"role": "user", "content": conteudo},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": ESQUEMA_REPETICAO,
+            },
+        )
+        veredito = json.loads(resposta.choices[0].message.content)
+    except Exception as erro:  # noqa: BLE001 — sem a verificação voltam os clones
+        raise SystemExit(
+            "Verificação de vídeo repetido falhou (OpenAI) — sem ela o canal "
+            f"volta a publicar o mesmo fato duas vezes; abortando: {erro}"
+        ) from erro
+    if not veredito["mesmo_fato"]:
+        return None
+    return veredito.get("video_repetido") or recentes[0].get("titulo", "")
+
+
 def _macrotema_no_teto(macros_recentes: list[str]) -> str | None:
     """Macrotema que atingiu o teto de vídeos seguidos, se houver.
 
@@ -588,12 +727,18 @@ def selecionar_trend(
     e os campeões de retenção (``youtube.top_retencao``), e o critério é um só
     — a maior chance de performar com a audiência DESTE canal.
 
-    A única regra dura, APLICADA aqui e não só pedida no prompt: o mesmo
-    macrotema não emenda mais de MAX_MACROTEMA_SEGUIDOS vídeos seguidos.
-    Quando os últimos MAX_MACROTEMA_SEGUIDOS publicados são todos do mesmo
-    macrotema, as candidatas dele saem da disputa ANTES da seleção; se isso
-    zerar as candidatas do dia, aborta — melhor um dia sem vídeo do que furar
-    a única regra de variabilidade do canal.
+    Duas regras duras, APLICADAS aqui e não só pedidas no prompt:
+    1. O mesmo macrotema não emenda mais de MAX_MACROTEMA_SEGUIDOS vídeos
+       seguidos. Quando os últimos MAX_MACROTEMA_SEGUIDOS publicados são
+       todos do mesmo macrotema, as candidatas dele saem da disputa ANTES da
+       seleção.
+    2. Vídeo repetido é vetado: a escolhida passa por uma verificação
+       (``_video_repetido``) contra os vídeos publicados nas últimas
+       JANELA_REPETICAO_HORAS; se ela cobriria o mesmo fato sem
+       desenvolvimento novo, sai da disputa e a seleção refaz com as
+       restantes.
+    Se qualquer uma das regras zerar as candidatas do dia, aborta — melhor
+    uma execução sem vídeo do que canal monotemático ou vídeo clonado.
     """
     cliente = OpenAI(api_key=cfg.openai_api_key)
     macros_recentes = (
@@ -621,21 +766,40 @@ def selecionar_trend(
                 "monotemático."
             )
 
-    conteudo = (
-        "Trends mais faladas do X hoje:\n"
-        + _resumo_trends(candidatas)
-        + _resumo_campeoes(campeoes)
-        + _resumo_recentes(videos_recentes, macros_recentes)
-    )
-    resposta = cliente.chat.completions.create(
-        model=cfg.text_model,
-        messages=[
-            {"role": "system", "content": INSTRUCOES_SELECAO},
-            {"role": "user", "content": conteudo},
-        ],
-        response_format={"type": "json_schema", "json_schema": ESQUEMA_SELECAO},
-    )
-    selecao = json.loads(resposta.choices[0].message.content)
+    recentes_janela = _recentes_na_janela(videos_recentes, JANELA_REPETICAO_HORAS)
+    while True:
+        conteudo = (
+            "Trends mais faladas do X hoje:\n"
+            + _resumo_trends(candidatas)
+            + _resumo_campeoes(campeoes)
+            + _resumo_recentes(videos_recentes, macros_recentes)
+        )
+        resposta = cliente.chat.completions.create(
+            model=cfg.text_model,
+            messages=[
+                {"role": "system", "content": INSTRUCOES_SELECAO},
+                {"role": "user", "content": conteudo},
+            ],
+            response_format={"type": "json_schema", "json_schema": ESQUEMA_SELECAO},
+        )
+        selecao = json.loads(resposta.choices[0].message.content)
+
+        escolhida = _candidata_por_nome(candidatas, selecao["trend"])
+        repetido = _video_repetido(cliente, cfg, escolhida, recentes_janela)
+        if not repetido:
+            break
+        candidatas = [t for t in candidatas if t is not escolhida]
+        print(
+            f"[veto] '{escolhida['trend']}' cobriria o mesmo fato do vídeo já "
+            f"publicado '{repetido}' — candidata fora da disputa; refazendo a "
+            f"seleção ({len(candidatas)} seguem)."
+        )
+        if not candidatas:
+            raise SystemExit(
+                "Todas as candidatas de hoje repetiriam vídeos publicados nas "
+                f"últimas {JANELA_REPETICAO_HORAS}h — execução sem vídeo "
+                "(melhor do que publicar clone)."
+            )
 
     print(f"[roteiro] Trend escolhida: {selecao['trend']}")
     print(f"[roteiro] Motivo: {selecao['motivo']}")

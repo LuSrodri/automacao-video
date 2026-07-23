@@ -32,7 +32,7 @@ class Config:
     contas: list[str]
     x_consumer_key: str  # X API oficial: coleta dos posts + mídias
     x_consumer_secret: str
-    x_max_posts: int = 60  # teto de posts lidos por execução (leitura é paga)
+    x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
     video_largura: int = 1080
     video_altura: int = 1920
     text_model: str = "gpt-5.6-luna"
@@ -104,7 +104,7 @@ def carregar_config() -> Config:
         contas=contas,
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
-        x_max_posts=int(os.getenv("X_MAX_POSTS", "60")),
+        x_max_posts=int(os.getenv("X_MAX_POSTS", "200")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
         text_model=os.getenv("TEXT_MODEL", "gpt-5.6-luna"),

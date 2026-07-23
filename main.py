@@ -10,9 +10,11 @@ Fluxo:
 3. GPT escolhe a trend guiado SOMENTE pela audiência: recebe os últimos
    vídeos publicados do canal com as métricas reais (views/likes, YouTube
    Data API) e os campeões de retenção (YouTube Analytics) e escolhe a
-   candidata com a maior chance de performar com esse público. Única regra
-   dura: o mesmo macrotema não emenda mais de 4 vídeos seguidos. Define
-   também uma consulta de notícias.
+   candidata com a maior chance de performar com esse público. Regras duras:
+   o mesmo macrotema não emenda mais de 4 vídeos seguidos, e a escolhida
+   passa por uma verificação anti-repetição (GPT confere se ela cobriria o
+   mesmo fato de um vídeo publicado nas últimas 36h; se sim, sai da disputa
+   e a seleção refaz). Define também uma consulta de notícias.
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
    citando as fontes (contas do X e veículos das notícias), com HOOK -> FATO
@@ -156,6 +158,12 @@ def main() -> None:
     trend_video = _trend_escolhida(trends, selecao["trend"])
     midias_x = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
     imagens = buscar_imagens(cfg, roteiro["imagens"], pasta)
+    if not imagens and not midias_x:
+        raise SystemExit(
+            "Nenhum material visual disponível (zero imagens da web e zero "
+            "mídias dos posts do X) — o vídeo sairia sem nenhuma imagem na "
+            "tela; abortando."
+        )
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
     )

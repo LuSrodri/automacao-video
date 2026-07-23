@@ -94,8 +94,9 @@ da narração cada uma ENTRA. Cada mídia fica na tela até a próxima entrar (a
    média — num vídeo de 30–40s, isso significa usar de 8 a 15 mídias. Só fique
    muito abaixo disso se as mídias disponíveis forem realmente fracas.
 6. HIERARQUIA DE FORÇA: clipe de vídeo > foto contextualizada (pessoas em ação,
-   evento com público, produto em uso) > foto de lugar/retrato > logo, planilha
-   ou documento. Mídia fraca (logo em fundo branco, documento, gráfico solto),
+   evento com público, produto em uso) > foto de lugar/retrato > planilha ou
+   documento. LOGO/logomarca/logotipo é PROIBIDO: mídia que mostra só a marca
+   NUNCA entra num corte (omita-a). Mídia fraca (documento, gráfico solto),
    redundante ou fora do assunto: NÃO use (basta omitir) — EXCETO quando o
    documento É a prova da notícia (memo vazado, e-mail da demissão): aí ele
    merece um corte de destaque. Não repita mídia.
