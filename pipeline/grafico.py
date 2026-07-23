@@ -190,11 +190,24 @@ ESQUEMA_GRAFICOS = {
     },
 }
 
+IDIOMA_BRASIL = """\
+Todo texto que aparece na tela (rotulo, prefixo, sufixo e rótulos das barras)
+deve estar em PORTUGUÊS DO BRASIL (ex.: sufixos " mil", " bi"; prefixo "R$ ").\
+"""
+
+IDIOMA_USA = """\
+Todo texto que aparece na tela (rotulo, prefixo, sufixo e rótulos das barras)
+deve estar em INGLÊS AMERICANO, sem nenhuma palavra em português (ex.: sufixos
+"K", "M", "B"; prefixo "$"; rotulo como 'jobs cut by Oracle').\
+"""
+
 INSTRUCOES_GRAFICOS = """\
 Você é o editor de infográficos de um canal de vídeos curtos (YouTube Shorts)
 de notícias. Você recebe a NARRAÇÃO de um vídeo e as NOTÍCIAS que a embasaram,
 e decide até {maximo} infográficos animados minimalistas para reforçar os
 NÚMEROS centrais da história na tela.
+
+{idioma}
 
 REGRAS:
 1. SÓ use números REAIS que aparecem na narração ou nas notícias recebidas —
@@ -207,8 +220,8 @@ REGRAS:
    mesma unidade (antes/depois, empresa A vs B).
 4. Queda/corte/perda: valor NEGATIVO e cor "vermelho" (o número desce até o
    negativo). Alta/ganho: valor positivo e cor "verde".
-5. Máximo 2 dígitos significativos no valor; a escala vai no sufixo
-   (valor 21, sufixo " mil" — nunca valor 21000).
+5. Máximo 2 dígitos significativos no valor; a escala vai no sufixo, no idioma
+   do vídeo (valor 21, sufixo " mil" ou "K" — nunca valor 21000).
 6. "trecho" é citação LITERAL da narração (será localizada por busca exata;
    paráfrase descarta o infográfico). Escolha o momento em que a narração fala
    do número.
@@ -232,7 +245,10 @@ def _planejar(
         messages=[
             {
                 "role": "system",
-                "content": INSTRUCOES_GRAFICOS.format(maximo=MAX_GRAFICOS),
+                "content": INSTRUCOES_GRAFICOS.format(
+                    maximo=MAX_GRAFICOS,
+                    idioma=IDIOMA_USA if cfg.publico == "usa" else IDIOMA_BRASIL,
+                ),
             },
             {"role": "user", "content": conteudo},
         ],
