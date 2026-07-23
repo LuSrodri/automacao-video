@@ -19,7 +19,7 @@ import json
 
 from openai import OpenAI
 
-from .config import Config
+from .config import AVISO_DADOS_EXTERNOS, Config
 
 # Macrotemas do canal: a seleção em escritor.py impede que o mesmo macrotema
 # emende mais vídeos seguidos que o teto configurado lá, garantindo um mínimo
@@ -129,7 +129,9 @@ def classificar_trends(cfg: Config, trends: list[dict]) -> list[dict]:
                 {"role": "system", "content": INSTRUCOES_CLASSIFICACAO},
                 {
                     "role": "user",
-                    "content": "Notícias candidatas:\n" + _listar_candidatas(trends),
+                    "content": AVISO_DADOS_EXTERNOS
+                    + "\n\nNotícias candidatas:\n"
+                    + _listar_candidatas(trends),
                 },
             ],
             response_format={

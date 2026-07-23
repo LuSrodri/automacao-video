@@ -86,9 +86,13 @@ def _agrupar(palavras: list[dict]) -> list[dict]:
         }
         for p in palavras
     ]
-    # Evita sobreposição entre legendas consecutivas
+    # Evita sobreposição entre legendas consecutivas (sem deixar o fim recuar
+    # para antes do início, o que geraria um evento de duração negativa).
     for k in range(len(eventos) - 1):
-        eventos[k]["fim"] = min(eventos[k]["fim"], eventos[k + 1]["inicio"])
+        eventos[k]["fim"] = max(
+            eventos[k]["inicio"],
+            min(eventos[k]["fim"], eventos[k + 1]["inicio"]),
+        )
     return eventos
 
 

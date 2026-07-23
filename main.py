@@ -23,14 +23,17 @@ Fluxo:
 6. X API baixa as fotos e vídeos dos posts originais da trend, e o Firecrawl
    Search busca as demais imagens reais na web.
 7. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
-8. A IA planeja os cortes: o GPT (visão) descreve as mídias baixadas dos posts
-   e um "editor de cortes" casa cada mídia com o momento exato da narração
-   (citações do texto -> timestamps do alinhamento).
-9. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem instante
-   vazio) + imagem nítida com zoom suave + crossfade + legendas + branding com
-   borda branca.
-10. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
-    YouTube.
+8. A IA planeja os cortes: o GPT (visão) descreve TODAS as mídias baixadas
+   (dos posts do X e da web) e um "editor de cortes" casa cada mídia com o
+   momento exato da narração (citações do texto -> timestamps do alinhamento).
+9. Infográficos animados: o GPT escolhe até 2 números reais da história e o
+   pipeline renderiza contadores/barras minimalistas (Pillow) que sobem da
+   base do vídeo para o terço superior, no lugar do branding.
+10. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem
+    instante vazio) + imagem nítida com zoom suave + crossfade + legendas +
+    infográficos + branding com borda branca (+ trilha de fundo opcional).
+11. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
+    YouTube (na hora, ou agendado para YOUTUBE_PUBLISH_HOURS).
 """
 
 import argparse
@@ -44,8 +47,14 @@ from pipeline.busca_imagens import buscar_imagens
 from pipeline.classificacao import classificar_trends
 from pipeline.config import carregar_config
 from pipeline.cortes import planejar_cortes
-from pipeline.edicao import duracao_audio, intervalos_imagens, montar_video
+from pipeline.edicao import (
+    RESPIRO_FINAL,
+    duracao_audio,
+    intervalos_imagens,
+    montar_video,
+)
 from pipeline.escritor import gerar_roteiro, selecionar_trend
+from pipeline.grafico import gerar_graficos
 from pipeline.legendas import gerar_legendas
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.noticias import buscar_noticias
@@ -61,19 +70,6 @@ def _slug(texto: str, limite: int = 40) -> str:
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
     texto = re.sub(r"[^a-zA-Z0-9]+", "-", texto).strip("-").lower()
     return texto[:limite].rstrip("-") or "video"
-
-
-def _trend_escolhida(trends: list[dict], nome: str) -> dict:
-    """Localiza a trend escolhida pela seleção (por nome, com folga p/ paráfrase)."""
-    alvo = nome.strip().lower()
-    for t in trends:
-        if t["trend"].strip().lower() == alvo:
-            return t
-    for t in trends:
-        candidato = t["trend"].strip().lower()
-        if candidato and (candidato in alvo or alvo in candidato):
-            return t
-    return trends[0]
 
 
 def _sobreposicoes(texto_video: str, imagens: list[dict]) -> list[dict]:
@@ -147,7 +143,10 @@ def main() -> None:
         cfg, trends, videos_recentes=recentes, campeoes=campeoes
     )
     noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
-    roteiro = gerar_roteiro(cfg, selecao, trends, noticias)
+    roteiro = gerar_roteiro(
+        cfg, selecao, trends, noticias,
+        videos_recentes=recentes, campeoes=campeoes,
+    )
 
     pasta = cfg.output_dir / f"{datetime.now():%Y-%m-%d}_{_slug(roteiro['titulo'])}"
     pasta.mkdir(parents=True, exist_ok=True)
@@ -155,7 +154,9 @@ def main() -> None:
         json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    trend_video = _trend_escolhida(trends, selecao["trend"])
+    # O OBJETO da trend vem da própria seleção (selecionar_trend) — é o mesmo
+    # que o roteiro usou, então as mídias baixadas são sempre da trend certa.
+    trend_video = selecao["trend_obj"]
     midias_x = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
     imagens = buscar_imagens(cfg, roteiro["imagens"], pasta)
     if not imagens and not midias_x:
@@ -170,7 +171,7 @@ def main() -> None:
     narracao, alinhamento, _ = aparar_silencios(narracao, alinhamento)
 
     largura, altura = cfg.video_largura, cfg.video_altura
-    duracao = duracao_audio(narracao) + 0.6
+    duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
     # Posicionamento automático (reserva): imagens perto dos seus trechos e
     # mídias do X espalhadas, com a primeira abrindo o gancho.
@@ -185,9 +186,15 @@ def main() -> None:
     ]
 
     # Planejador de cortes: a IA casa cada mídia com o momento da narração.
-    # As mídias do X são descritas pelo GPT com visão (fotos e frames dos
-    # vídeos baixados); as da web, pela consulta/trecho do roteirista.
-    descricoes = descrever_midias(cfg, midias_x) if midias_x else {}
+    # O GPT com visão descreve TODAS as mídias baixadas — as dos posts do X e
+    # as da web (o que a busca devolve muitas vezes não é o que a consulta
+    # pediu; descrever o arquivo real evita casar a narração com uma imagem
+    # errada e melhora a escolha da primeira imagem, a que decide o swipe).
+    para_visao = midias_x + [
+        {"caminho": img["caminho"], "consulta": img.get("consulta", "")}
+        for img in imagens
+    ]
+    descricoes = descrever_midias(cfg, para_visao) if para_visao else {}
     midias_plano = [
         {
             "caminho": m["caminho"],
@@ -205,9 +212,10 @@ def main() -> None:
             "tipo": "photo",
             "dur_s": None,
             "origem": "web",
-            "descricao": (
+            "descricao": descricoes.get(
+                str(img["caminho"]),
                 f"imagem buscada por \"{img.get('consulta', '')}\"; ilustra o "
-                f"trecho: \"{img.get('trecho', '')}\""
+                f"trecho: \"{img.get('trecho', '')}\"",
             ),
         }
         for img in imagens
@@ -239,6 +247,12 @@ def main() -> None:
         intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
     )
 
+    # Infográficos animados: contadores/barras com os números reais da
+    # história, no terço superior (no lugar do branding), subindo da base.
+    graficos = gerar_graficos(
+        cfg, roteiro["texto_video"], noticias, alinhamento, duracao, pasta
+    )
+
     video_final = montar_video(
         narracao,
         sobreposicoes,
@@ -247,6 +261,7 @@ def main() -> None:
         altura,
         legendas=legendas,
         handle=cfg.handle_do_publico,
+        graficos=graficos,
     )
 
     registrar(cfg, video_final, roteiro["titulo"], roteiro["descricao"])

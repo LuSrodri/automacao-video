@@ -19,6 +19,10 @@ MIN_EXIBICAO = 2.0  # segundos mínimos de exibição de cada imagem
 MAX_EXIBICAO = 10.0  # segundos máximos de exibição de cada imagem
 CROSSFADE = 0.4  # duração do crossfade entre imagens consecutivas
 FADE = 0.35  # duração do fade de entrada do branding
+# Respiro entre o fim da narração e o fim do vídeo. Curto de propósito: o
+# CORTE do roteiro emenda no hook do reinício (loop), e uma cauda longa de
+# tela parada quebra exatamente essa emenda (era 0,6s).
+RESPIRO_FINAL = 0.15
 BLUR_SIGMA = 18  # intensidade do desfoque do fundo
 ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça a imagem nítida)
 ZOOM_MAX = 1.15  # zoom máximo da animação
@@ -27,6 +31,12 @@ ZOOM_RATE = 0.0008  # incremento de zoom por quadro
 # Efeito sonoro de "woosh" tocado em cada transição entre imagens.
 WOOSH = RAIZ / "assets" / "woosh.mp3"
 WOOSH_VOL = 0.5  # volume do efeito relativo à narração
+
+# Trilha musical de fundo (opcional): se assets/trilha.mp3 existir, ela entra
+# em loop sob a narração em volume baixo — alavanca de retenção clássica de
+# Shorts. Sem o arquivo, o vídeo sai como sempre (só narração + wooshes).
+TRILHA = RAIZ / "assets" / "trilha.mp3"
+TRILHA_VOL = 0.09  # volume da trilha relativo à narração
 
 # Branding discreto no topo: logo do YouTube Shorts + @usuário do canal.
 LOGO_PADRAO = RAIZ / "assets" / "YouTube-Shorts-Logo.png"
@@ -202,6 +212,7 @@ def montar_video(
     legendas: Path | None = None,
     handle: str | None = None,
     logo: Path | None = LOGO_PADRAO,
+    graficos: list[dict] | None = None,
 ) -> Path:
     """Monta o vídeo final com fundo borrado da própria imagem e zoom suave.
 
@@ -212,10 +223,25 @@ def montar_video(
 
     `logo`/`handle`: branding no topo (logo do YouTube Shorts e @usuário), ambos
     com borda branca para destacar sobre o fundo da imagem.
+
+    `graficos`: infográficos animados (grafico.py) — [{"pattern": str,
+    "inicio_s": float, "dur_s": float}, ...], sequências de PNGs RGBA
+    sobrepostas ao vídeo. Enquanto um infográfico está na tela, o branding
+    (logo + handle) some: o infográfico ocupa o lugar dele no terço superior.
     """
     _exigir_ffmpeg()
 
-    duracao = duracao_audio(narracao) + 0.6
+    duracao = duracao_audio(narracao) + RESPIRO_FINAL
+    graficos = graficos or []
+
+    # Janelas dos infográficos: o branding desliga nelas (enable do ffmpeg).
+    janelas_gfx = [
+        (g["inicio_s"], min(g["inicio_s"] + g["dur_s"], duracao)) for g in graficos
+    ]
+    oculta_branding = "".join(
+        f"*(1-between(t,{a:.2f},{b:.2f}))" for a, b in janelas_gfx
+    )
+    enable_branding = f":enable='1{oculta_branding}'" if oculta_branding else ""
 
     sobreposicoes = _ordenar(sobreposicoes)
     janelas = _calcular_janelas(sobreposicoes, duracao)
@@ -338,10 +364,13 @@ def montar_video(
         filtros.append(f"[{corrente}]{filtro_ass}[vleg]")
         corrente = "vleg"
 
-    # Branding no topo (sobre tudo). O logo é a última entrada do ffmpeg.
+    # Branding no topo (sobre tudo). `prox_entrada` numera as entradas extras
+    # do ffmpeg daqui em diante (logo, infográficos, woosh, trilha).
+    prox_entrada = 2 + n
     usar_logo = logo is not None and Path(logo).is_file()
     if usar_logo:
-        idx_logo = 2 + n
+        idx_logo = prox_entrada
+        prox_entrada += 1
         comando += ["-loop", "1", "-i", str(logo)]
         log_l, log_a = _dimensoes(logo)
         largura_logo = round(largura * LOGO_LARGURA_FRAC)
@@ -368,7 +397,8 @@ def montar_video(
             f"fade=t=in:st=0:d={FADE}:alpha=1[logo]"
         )
         filtros.append(
-            f"[{corrente}][logo]overlay=(W-w)/2:{y_logo}:eof_action=pass[vlogo]"
+            f"[{corrente}][logo]overlay=(W-w)/2:{y_logo}:eof_action=pass"
+            f"{enable_branding}[vlogo]"
         )
         corrente = "vlogo"
 
@@ -387,25 +417,48 @@ def montar_video(
             f":fontsize={fonte}"
             f":x=(w-text_w)/2:y={y_handle}"
             f":alpha='if(lt(t,{FADE}),{HANDLE_OPACIDADE}*t/{FADE},{HANDLE_OPACIDADE})'"
+            f"{enable_branding}"
             f"[vbrand]"
         )
         corrente = "vbrand"
 
-    # Efeito sonoro de woosh em cada transição (no instante em que a próxima
-    # imagem começa a deslizar). A primeira imagem não tem transição de entrada.
+    # Infográficos animados (sequências de PNG RGBA do grafico.py) por cima de
+    # tudo — eles ocupam o lugar do branding, que já foi desligado nas janelas.
+    for j, g in enumerate(graficos):
+        idx_gfx = prox_entrada
+        prox_entrada += 1
+        ini, fim = janelas_gfx[j]
+        comando += [
+            "-framerate", str(FPS), "-start_number", "1", "-i", g["pattern"],
+        ]
+        filtros.append(
+            f"[{idx_gfx}:v]format=rgba,setpts=PTS-STARTPTS+{ini:.2f}/TB[gfx{j}]"
+        )
+        filtros.append(
+            f"[{corrente}][gfx{j}]overlay=0:0:eof_action=pass"
+            f":enable='between(t,{ini:.2f},{fim:.2f})'[vgfx{j}]"
+        )
+        corrente = f"vgfx{j}"
+
+    # Áudio: narração + woosh em cada transição de imagem + trilha de fundo
+    # opcional. A primeira imagem não tem transição de entrada.
     mapa_audio = "1:a"
     transicoes = [ini for _, (ini, _) in pares[1:]]
-    if WOOSH.is_file() and transicoes:
-        idx_woosh = 2 + n + (1 if usar_logo else 0)
-        comando += ["-i", str(WOOSH)]
-        m = len(transicoes)
+    usar_woosh = WOOSH.is_file() and bool(transicoes)
+    usar_trilha = TRILHA.is_file()
+    entradas_mix: list[str] = []
+    if usar_woosh or usar_trilha:
         filtros.append(
             "[1:a]aformat=channel_layouts=stereo:sample_rates=44100[narr]"
         )
+    if usar_woosh:
+        idx_woosh = prox_entrada
+        prox_entrada += 1
+        comando += ["-i", str(WOOSH)]
+        m = len(transicoes)
         filtros.append(
             f"[{idx_woosh}:a]asplit={m}" + "".join(f"[ws{k}]" for k in range(m))
         )
-        rotulos = []
         for k, t in enumerate(transicoes):
             ms = max(0, round(t * 1000))
             filtros.append(
@@ -413,10 +466,21 @@ def montar_video(
                 f"aformat=channel_layouts=stereo:sample_rates=44100,"
                 f"volume={WOOSH_VOL}[wd{k}]"
             )
-            rotulos.append(f"[wd{k}]")
+            entradas_mix.append(f"[wd{k}]")
+    if usar_trilha:
+        idx_trilha = prox_entrada
+        prox_entrada += 1
+        comando += ["-stream_loop", "-1", "-t", f"{duracao:.2f}", "-i", str(TRILHA)]
         filtros.append(
-            f"[narr]{''.join(rotulos)}amix=inputs={m + 1}:normalize=0"
-            f":duration=first,alimiter=limit=0.97[aout]"
+            f"[{idx_trilha}:a]aformat=channel_layouts=stereo:sample_rates=44100,"
+            f"volume={TRILHA_VOL},"
+            f"afade=t=out:st={max(0.0, duracao - 0.5):.2f}:d=0.5[trilha]"
+        )
+        entradas_mix.append("[trilha]")
+    if entradas_mix:
+        filtros.append(
+            f"[narr]{''.join(entradas_mix)}amix=inputs={len(entradas_mix) + 1}"
+            f":normalize=0:duration=first,alimiter=limit=0.97[aout]"
         )
         mapa_audio = "[aout]"
 

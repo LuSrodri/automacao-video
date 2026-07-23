@@ -37,7 +37,7 @@ from urllib.parse import urlparse
 from openai import OpenAI
 
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
-from .config import Config
+from .config import AVISO_DADOS_EXTERNOS, Config
 
 # Ritmo real médio da narração do ElevenLabs (medido nas narrações do canal:
 # ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
@@ -760,6 +760,7 @@ def _video_repetido(
         for v in recentes
     ]
     conteudo = (
+        AVISO_DADOS_EXTERNOS + "\n\n"
         f"PAUTA CANDIDATA: {trend.get('trend', '')}\n"
         f"Resumo: {trend.get('resumo', '')}\n\n"
         f"VÍDEOS PUBLICADOS NAS ÚLTIMAS {JANELA_REPETICAO_HORAS} HORAS:\n"
@@ -785,7 +786,7 @@ def _video_repetido(
         ) from erro
     if not veredito["mesmo_fato"]:
         return None
-    return veredito.get("video_repetido") or recentes[0].get("titulo", "")
+    return veredito.get("video_repetido") or "um vídeo publicado nas últimas horas"
 
 
 def _macrotema_no_teto(macros_recentes: list[str]) -> str | None:
@@ -860,7 +861,8 @@ def selecionar_trend(
     recentes_janela = _recentes_na_janela(videos_recentes, JANELA_REPETICAO_HORAS)
     while True:
         conteudo = (
-            "Trends mais faladas do X hoje:\n"
+            AVISO_DADOS_EXTERNOS
+            + "\n\nTrends mais faladas do X hoje:\n"
             + _resumo_trends(candidatas)
             + _resumo_campeoes(campeoes)
             + _resumo_recentes(videos_recentes, macros_recentes)
@@ -892,6 +894,11 @@ def selecionar_trend(
                 "(melhor do que publicar clone)."
             )
 
+    # O OBJETO da trend escolhida segue junto: re-localizar a trend por nome
+    # em cada etapa (com lógicas de match diferentes) deixava o roteiro sair
+    # de um stub e as mídias virem de outra trend quando o modelo parafraseava
+    # o nome — daqui em diante todo mundo usa este objeto.
+    selecao["trend_obj"] = escolhida
     print(f"[roteiro] Trend escolhida: {selecao['trend']}")
     print(f"[roteiro] Motivo: {selecao['motivo']}")
     return selecao
@@ -924,6 +931,47 @@ def _fontes_x(urls: list[str]) -> str:
 def _contar_palavras(texto: str) -> int:
     """Palavras faladas do roteiro (audio tags entre colchetes não contam)."""
     return len(re.sub(r"\[[^\]]*\]", " ", texto).split())
+
+
+def _resumo_estilo(
+    videos_recentes: list[dict] | None, campeoes: list[dict] | None
+) -> str:
+    """Referência de estilo para o ROTEIRISTA: o que a audiência responde.
+
+    Os campeões e as métricas já guiam a SELEÇÃO da pauta; esta seção fecha o
+    ciclo uma etapa adiante — o roteirista calibra título, hook e promessa
+    pelo que o público deste canal comprovadamente clica e assiste.
+    """
+    com_views = sorted(
+        [v for v in videos_recentes or [] if v.get("views") is not None],
+        key=lambda v: v["views"],
+        reverse=True,
+    )
+    top = com_views[:6]
+    flop = [v for v in com_views[-4:] if v not in top] if len(com_views) > 6 else []
+    if not top and not campeoes:
+        return ""
+    partes = [
+        "\n\nREFERÊNCIA DE ESTILO DA AUDIÊNCIA — títulos reais deste canal e "
+        "como performaram. Calibre o TIPO de título, hook e promessa pelo que "
+        "funciona; NUNCA copie um título nem repita o assunto deles:"
+    ]
+    if top:
+        partes.append("Títulos com MAIS views:")
+        partes += [f"- {v.get('titulo', '')} ({v['views']} views)" for v in top]
+    if flop:
+        partes.append("Títulos com MENOS views (o que o público ignora):")
+        partes += [f"- {v.get('titulo', '')} ({v['views']} views)" for v in flop]
+    if campeoes:
+        partes.append(
+            "Campeões de retenção (o público assiste até o fim vídeos assim):"
+        )
+        partes += [
+            f"- {c.get('titulo', '')} "
+            f"(assistem em média {c.get('retencao_media', '?')}% do vídeo)"
+            for c in campeoes
+        ]
+    return "\n".join(partes)
 
 
 def _aparar_hook_final(roteiro: dict) -> None:
@@ -987,16 +1035,21 @@ def gerar_roteiro(
     selecao: dict,
     trends: list[dict],
     noticias: list[dict],
+    videos_recentes: list[dict] | None = None,
+    campeoes: list[dict] | None = None,
 ) -> dict:
     """Gera o roteiro completo da trend escolhida, enriquecido com notícias."""
     cliente = OpenAI(api_key=cfg.openai_api_key)
 
-    trend_escolhida = next(
+    # A seleção devolve o objeto da trend escolhida em "trend_obj"; o match
+    # por nome fica só como reserva (chamadas antigas/testes sem o objeto).
+    trend_escolhida = selecao.get("trend_obj") or next(
         (t for t in trends if t["trend"] == selecao["trend"]),
         {"trend": selecao["trend"], "resumo": selecao.get("motivo", "")},
     )
 
     conteudo = (
+        AVISO_DADOS_EXTERNOS + "\n\n"
         f"TREND ESCOLHIDA: {trend_escolhida['trend']}\n"
         f"Resumo da trend: {trend_escolhida.get('resumo', '')}\n"
         f"Imagem mental da notícia (o que a pessoa visualiza — o HOOK nasce "
@@ -1005,6 +1058,7 @@ def gerar_roteiro(
         + _fontes_x(trend_escolhida.get("posts") or [])
         + "\n\nNOTÍCIAS RECENTES SOBRE A TREND (o veículo entre colchetes é a "
         "fonte citável):\n" + _resumo_noticias(noticias)
+        + _resumo_estilo(videos_recentes, campeoes)
     )
 
     limite = int(cfg.video_duracao * PALAVRAS_POR_SEGUNDO)
@@ -1074,7 +1128,15 @@ def gerar_roteiro(
         ajustado = json.loads(resposta.choices[0].message.content)
         _aparar_hook_final(ajustado)
         ajustadas = _contar_palavras(ajustado["texto_video"])
-        if (ajustadas < palavras) if estourou else (ajustadas > palavras):
+
+        # Aceita a versão ajustada somente se ela ficou MAIS PERTO da faixa —
+        # "melhorou na direção pedida" deixava passar um texto que despencou
+        # para o outro lado (ex.: de 120 palavras acima do teto para 50,
+        # abaixo do piso).
+        def _dist_faixa(n: int) -> int:
+            return max(minimo - n, n - int(limite * FOLGA_PALAVRAS), 0)
+
+        if _dist_faixa(ajustadas) < _dist_faixa(palavras):
             roteiro = ajustado
         palavras = _contar_palavras(roteiro["texto_video"])
 

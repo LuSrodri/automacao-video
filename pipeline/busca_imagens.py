@@ -11,6 +11,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
 
@@ -36,6 +37,10 @@ MAGICAS = {
 }
 
 TAMANHO_MINIMO = 5_000  # bytes; descarta thumbnails/ícones minúsculos
+# Teto de bytes por download: as URLs vêm de busca na web (conteúdo de
+# terceiros) e sem teto um arquivo gigante estoura a memória — o corpo é
+# lido em streaming e abortado assim que passar disto.
+TAMANHO_MAXIMO = 25_000_000
 
 # Domínios de banco de imagens (stock): não são descartados, mas vão pro FIM da
 # fila para que fotos reais do fato sejam tentadas primeiro.
@@ -126,14 +131,27 @@ def _dimensoes_bytes(c: bytes) -> tuple[int, int]:
 
 def _requisitar(url: str) -> bytes | None:
     try:
-        resp = requests.get(
+        with requests.get(
             url,
             timeout=60,
+            stream=True,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-        )
-        resp.raise_for_status()
-        return resp.content
-    except requests.RequestException as erro:
+        ) as resp:
+            resp.raise_for_status()
+            declarado = int(resp.headers.get("Content-Length") or 0)
+            if declarado > TAMANHO_MAXIMO:
+                print(f"[aviso] {url} declara {declarado} bytes (acima do teto), pulando")
+                return None
+            pedacos: list[bytes] = []
+            total = 0
+            for pedaco in resp.iter_content(chunk_size=1 << 16):
+                total += len(pedaco)
+                if total > TAMANHO_MAXIMO:
+                    print(f"[aviso] {url} passou de {TAMANHO_MAXIMO} bytes, pulando")
+                    return None
+                pedacos.append(pedaco)
+            return b"".join(pedacos)
+    except (requests.RequestException, ValueError) as erro:
         print(f"[aviso] Falha ao baixar {url}: {erro}")
         return None
 
@@ -179,9 +197,9 @@ def _baixar(url: str, destino_sem_ext: Path) -> Path | None:
         achado = PADRAO_OG_IMAGE.search(html) or PADRAO_OG_IMAGE_INVERTIDO.search(html)
         if not achado:
             return None
-        url_og = achado.group(1)
-        if url_og.startswith("//"):
-            url_og = "https:" + url_og
+        # urljoin resolve tanto URLs absolutas quanto relativas ("/img.jpg",
+        # "//cdn.site.com/img.jpg") contra a página de origem.
+        url_og = urljoin(url, achado.group(1).strip())
         conteudo = _requisitar(url_og)
         if conteudo is None:
             return None

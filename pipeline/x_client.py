@@ -13,19 +13,23 @@ sentimento, apelo_visual, posts, data).
 """
 
 import json
-import random
 from datetime import datetime, timedelta, timezone
 
 import requests
 from openai import OpenAI
 
-from .config import Config
+from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
 
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
 
 MAX_QUERY = 512  # limite de caracteres da query do search/recent
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
+
+# Estado da rotação de lotes entre execuções: quando X_MAX_POSTS não cobre
+# todas as consultas, as execuções avançam um cursor circular em vez de
+# sortear — sorteio deixava contas dias sem serem lidas no azar.
+ESTADO_ROTACAO = RAIZ / ".rotacao_lotes"
 
 
 def obter_bearer(cfg: Config) -> str | None:
@@ -68,22 +72,44 @@ def _lotes_de_query(contas: list[str]) -> list[str]:
     return lotes
 
 
+def _rotacionar_lotes(lotes: list[str], max_lotes: int) -> list[str]:
+    """Seleciona `max_lotes` consultas avançando um cursor circular persistido.
+
+    Garante que todas as contas sejam lidas ao longo das execuções (o sorteio
+    anterior podia deixar as mesmas contas dias sem coleta).
+    """
+    try:
+        inicio = int(ESTADO_ROTACAO.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        inicio = 0
+    inicio %= len(lotes)
+    escolhidos = [lotes[(inicio + k) % len(lotes)] for k in range(max_lotes)]
+    try:
+        ESTADO_ROTACAO.write_text(
+            str((inicio + max_lotes) % len(lotes)), encoding="utf-8"
+        )
+    except OSError as erro:
+        print(f"[aviso] Não consegui salvar o estado da rotação de lotes: {erro}")
+    return escolhidos
+
+
 def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
     """Posts das contas na janela, limitados a cfg.x_max_posts (leitura é paga)."""
     inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
     lotes = _lotes_de_query(contas)
 
     # Orçamento de leitura: divide o teto entre os lotes. O mínimo da API é 10
-    # por chamada; se há lotes demais para o teto, sorteia quais entram nesta
-    # execução (dia a dia a rotação cobre todas as contas).
+    # por chamada; se há lotes demais para o teto, um cursor circular decide
+    # quais entram nesta execução (execução a execução a rotação cobre todas
+    # as contas, sem depender de sorte).
     max_lotes = max(cfg.x_max_posts // 10, 1)
     if len(lotes) > max_lotes:
         print(
             f"[aviso] {len(contas)} contas geram {len(lotes)} consultas, mas "
-            f"X_MAX_POSTS={cfg.x_max_posts} só cobre {max_lotes}; sorteando "
+            f"X_MAX_POSTS={cfg.x_max_posts} só cobre {max_lotes}; rotacionando "
             "quais contas entram hoje (aumente X_MAX_POSTS para cobrir todas)"
         )
-        lotes = random.sample(lotes, max_lotes)
+        lotes = _rotacionar_lotes(lotes, max_lotes)
     por_lote = min(max(cfg.x_max_posts // len(lotes), 10), 100)
 
     posts: list[dict] = []
@@ -240,7 +266,12 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
         model=cfg.text_model,
         messages=[
             {"role": "system", "content": instrucoes},
-            {"role": "user", "content": "Posts coletados:\n" + _listar_posts(posts)},
+            {
+                "role": "user",
+                "content": AVISO_DADOS_EXTERNOS
+                + "\n\nPosts coletados:\n"
+                + _listar_posts(posts),
+            },
         ],
         response_format={"type": "json_schema", "json_schema": ESQUEMA_TRENDS},
     )

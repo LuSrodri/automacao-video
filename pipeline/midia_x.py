@@ -266,6 +266,10 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, str]:
                 )
             if m.get("texto_post"):
                 contexto += f"\nTexto do post de origem: \"{m['texto_post']}\""
+            if m.get("consulta"):
+                contexto += (
+                    f"\nA imagem foi encontrada com a busca: \"{m['consulta']}\""
+                )
             conteudo = [{"type": "text", "text": PROMPT_DESCRICAO + contexto}] + [
                 {"type": "image_url", "image_url": {"url": _data_uri(img)}}
                 for img in imagens

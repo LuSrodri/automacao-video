@@ -9,8 +9,9 @@ Pipeline em Python que transforma as trends mais quentes de geopolítica, inteli
 5. **GPT 5.6 Luna** escreve o roteiro **explicativo (análise/educacional) em tom adulto**, **sempre citando as fontes** (as contas do X que originaram a trend e os veículos das notícias do Firecrawl): para um adulto leigo (o público real: homens de 25-54) com metade da atenção — frases com **ritmo de fala natural** (8 a 16 palavras, teto 20, alternando curtas de impacto com mais cheias), uma ideia por frase, **vocabulário preciso de telejornal** (sem jargão de nicho nem sigla sem explicação), tom de furo de notícia (nunca infantil), estrutura fixa **HOOK (imagem chocante, 0-2s) → FATO (até a metade, com âncora pró-leigo quando o assunto é de nicho) → IMPLICAÇÃO única (segunda metade) → CORTE em tensão que emenda no hook (loop)**, sem CTA falado. O **título e a descrição são autossuficientes** (teste do leigo: sem nome de nicho, sem cauda de suspense; a descrição entrega o fato com a fonte, não é teaser) e prometem **exatamente** o que o vídeo entrega. Uma **auditoria pró-leigo** (chamada própria ao GPT) confere título, descrição e narração contra essas regras e pede **uma reescrita** quando reprova. O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz e define de **8 a 10 imagens-chave**.
 6. **Firecrawl Search** encontra as **imagens reais** na web — fotos jornalísticas do próprio fato (pessoas, eventos e produtos), nada gerado por IA.
 7. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere) e o pipeline **corta os silêncios** da narração (remapeando os timestamps para as legendas continuarem sincronizadas), deixando o áudio sem trechos parados.
-8. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é a própria imagem daquele trecho, ampliada para cobrir a tela e borrada**; por cima entra a **imagem nítida em largura total com zoom suave** (Ken Burns). As imagens **cobrem 100% da narração** (nunca há um instante sem figura) e fazem **crossfade** entre si — de **8 a 10 imagens**, até **10 segundos** cada. **Legendas** sincronizadas palavra a palavra são queimadas no vídeo, e o **branding** (logo do YouTube Shorts + `@usuário`) fica no topo **com borda branca**.
-9. O `.mp4` final vai para `output/`, é registrado em `videos.txt` e publicado automaticamente no **YouTube** (Data API v3). Roda sempre, independente da flag `-usa`.
+8. **Infográficos animados**: o GPT escolhe até **2 números reais** da história (nunca inventados) e o pipeline renderiza (Pillow) **contadores** que sobem do zero e terminam **verdes** — ou descem até o negativo e terminam **vermelhos** — e **barras comparativas** com a barra destacada crescendo mais que as outras. Estilo minimalista e editorial: Barlow preta com **stroke branco** (o mesmo das legendas), **emoji colorido com halo branco** e a **fonte do dado citada** no rodapé. O painel ocupa o **terço superior no lugar do branding** (que some enquanto ele está na tela) e **sempre surge deslizando da base do vídeo** com easing suave.
+9. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é a própria imagem daquele trecho, ampliada para cobrir a tela e borrada**; por cima entra a **imagem nítida em largura total com zoom suave** (Ken Burns). As imagens **cobrem 100% da narração** (nunca há um instante sem figura) e fazem **crossfade** entre si — de **8 a 10 imagens**, até **10 segundos** cada. **Legendas** sincronizadas palavra a palavra são queimadas no vídeo, e o **branding** (logo do YouTube Shorts + `@usuário`) fica no topo **com borda branca**. Se existir `assets/trilha.mp3`, ela entra em **loop sob a narração** em volume baixo (alavanca de retenção; sem o arquivo, o vídeo sai só com narração + wooshes). A cauda após a narração é de **0,15s** — curta de propósito, para o CORTE emendar no hook quando o Short reinicia (loop).
+10. O `.mp4` final vai para `output/`, é registrado em `videos.txt` e publicado automaticamente no **YouTube** (Data API v3) — na hora, ou **agendado** para o próximo horário de `YOUTUBE_PUBLISH_HOURS` (a primeira hora de distribuição decide o alcance do Short). Roda sempre, independente da flag `-usa`.
 
 ## Pré-requisitos
 
@@ -80,6 +81,7 @@ output/
 | `YOUTUBE_REFRESH_TOKEN` | — | Canal português; preenchido por `--auth-youtube` |
 | `YOUTUBE_REFRESH_TOKEN_USA` | — | Canal inglês (`-usa`); preenchido por `--auth-youtube-usa` |
 | `YOUTUBE_PRIVACY` | `public` | `public`, `unlisted` ou `private` |
+| `YOUTUBE_PUBLISH_HOURS` | vazio | Horas locais (0-23, ex.: `12,18,21`) em que os vídeos entram no ar: o upload sobe `private` com `publishAt` no próximo horário da lista. Vazio = publica na hora |
 | `YOUTUBE_CATEGORY_ID` | `28` | Categoria do YouTube (28 = Science & Technology) |
 
 ## Publicação automática no YouTube
@@ -119,6 +121,15 @@ Depois da narração, o ffmpeg (`silencedetect`) localiza os silêncios e o pipe
 ## Como funcionam as legendas
 
 A ElevenLabs retorna o tempo de fala de cada caractere (`/with-timestamps`), e o pipeline agrupa as palavras em legendas curtas (até ~18 caracteres), gravadas em `legendas.ass` e queimadas no vídeo pelo ffmpeg. Como sempre há imagem na tela, as legendas ficam na **parte inferior** (a 20% de altura) para não cobrir a imagem nítida. O estilo é texto **preto com borda branca**, na fonte **Barlow** (em `fonts/Barlow-Bold.ttf`; a Futura é comercial e não pode ser distribuída com o projeto — se você a tiver licenciada, basta trocar o `Fontname` em `pipeline/legendas.py`). O arquivo `alinhamento.json` de cada execução guarda os timestamps para depuração.
+
+## Como funcionam os infográficos animados
+
+Depois do roteiro e da narração, uma chamada ao GPT (`pipeline/grafico.py`) decide até **2 infográficos** com números que aparecem **de verdade** na narração ou nas notícias — sem número forte, o vídeo sai sem infográfico (a regra é dura: valor inventado é proibido no prompt e o trecho-âncora precisa existir literalmente no texto). Cada infográfico é ancorado numa **citação exata da narração** (convertida em tempo pelos timestamps do ElevenLabs, como nos cortes) e renderizado pelo **Pillow** em frames RGBA transparentes que o ffmpeg sobrepõe:
+
+- **Contador** — número que anima do zero até o valor com easing: alta/ganho termina **verde**, queda/corte desce até o **negativo** e termina **vermelho**. Com prefixo/sufixo (`US$`, `%`, `mil`), rótulo e **emoji colorido com halo branco**.
+- **Barras** — 2 a 4 barras comparativas crescendo em sequência; a barra em **destaque** cresce com um leve overshoot e fica colorida, as demais pretas com contorno branco. Valores contam em cima de cada barra.
+
+O painel entra **sempre deslizando da base do vídeo até o terço superior** (ease-out), fica ~4,5s e sai em fade. Enquanto está na tela, o **branding (logo + handle) some** — o infográfico ocupa o lugar dele. A **fonte do dado** ("Fonte: Reuters", "@conta") aparece no rodapé do painel. O plano de cada execução fica em `graficos.json` na pasta do vídeo, e qualquer falha na etapa só pula os infográficos (nunca derruba o pipeline).
 
 ## Como funcionam as imagens-chave
 

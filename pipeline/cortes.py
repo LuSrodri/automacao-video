@@ -16,7 +16,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from .config import Config
+from .config import AVISO_DADOS_EXTERNOS, Config
 
 # Mínimo de cortes válidos para aceitar o plano (abaixo disso, fallback)
 MIN_CORTES = 2
@@ -155,6 +155,7 @@ def planejar_cortes(
         f"m{k}: {_rotulo(m)}" for k, m in enumerate(midias, 1)
     )
     conteudo = (
+        AVISO_DADOS_EXTERNOS + "\n\n"
         f"NARRAÇÃO ({dur_total:.0f}s, {len(texto_video.split())} palavras):\n"
         f"{texto_video}\n\n"
         f"MÍDIAS DISPONÍVEIS:\n{listagem}"
