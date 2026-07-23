@@ -1,11 +1,10 @@
-"""Coleta dos posts das contas seguidas no X e sumarização das trends via GPT.
+"""Coleta dos posts da lista fixa de contas do X e sumarização das trends via GPT.
 
 Usa a X API oficial v2 em modo pay-per-use (a mesma credencial do download de
-mídias em midia_x.py): resolve o usuário de X_USERNAME, busca a lista de contas
-que ele segue (com cache local em seguindo.json, renovado a cada 7 dias, para
-não pagar essa leitura toda execução) e coleta os posts dessas contas na janela
-configurada via /2/tweets/search/recent. Como a leitura é cobrada por post
-(~US$ 0,005 cada), X_MAX_POSTS limita o total lido por execução.
+mídias em midia_x.py): coleta os posts das contas configuradas (CONTAS_PADRAO
+em config.py, ou X_ACCOUNTS no .env) na janela configurada via
+/2/tweets/search/recent. Como a leitura é cobrada por post (~US$ 0,005 cada),
+X_MAX_POSTS limita o total lido por execução.
 
 Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes —
 notícias, lançamentos, novidades, curiosidades e tretas — no mesmo formato que
@@ -15,21 +14,15 @@ sentimento, apelo_visual, posts, data).
 
 import json
 import random
-import time
 from datetime import datetime, timedelta, timezone
 
 import requests
 from openai import OpenAI
 
-from .config import RAIZ, Config
+from .config import Config
 
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
-USERS_BY_USERNAME_ENDPOINT = "https://api.x.com/2/users/by/username/{username}"
-FOLLOWING_ENDPOINT = "https://api.x.com/2/users/{id}/following"
 SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
-
-CACHE_SEGUINDO = RAIZ / "seguindo.json"
-CACHE_SEGUINDO_DIAS = 7  # idade máxima do cache da lista de seguidos
 
 MAX_QUERY = 512  # limite de caracteres da query do search/recent
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
@@ -57,57 +50,6 @@ def _get(token: str, url: str, params: dict) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
-
-
-def _contas_seguidas(cfg: Config, token: str) -> list[str]:
-    """Lista de @usuários que X_USERNAME segue, com cache local de alguns dias."""
-    if CACHE_SEGUINDO.exists():
-        try:
-            cache = json.loads(CACHE_SEGUINDO.read_text(encoding="utf-8"))
-            idade = time.time() - cache.get("quando", 0)
-            if (
-                cache.get("usuario") == cfg.x_username
-                and idade < CACHE_SEGUINDO_DIAS * 86400
-                and cache.get("contas")
-            ):
-                print(
-                    f"[x] {len(cache['contas'])} contas seguidas (cache de "
-                    f"{idade / 86400:.0f} dia(s))"
-                )
-                return cache["contas"]
-        except (ValueError, OSError):
-            pass
-
-    dados = _get(
-        token, USERS_BY_USERNAME_ENDPOINT.format(username=cfg.x_username), {}
-    )
-    id_usuario = dados["data"]["id"]
-
-    contas: list[str] = []
-    params: dict = {"max_results": 1000, "user.fields": "username"}
-    while True:
-        pagina = _get(token, FOLLOWING_ENDPOINT.format(id=id_usuario), params)
-        contas += [u["username"] for u in pagina.get("data") or []]
-        proximo = (pagina.get("meta") or {}).get("next_token")
-        if not proximo:
-            break
-        params["pagination_token"] = proximo
-
-    if not contas:
-        raise SystemExit(
-            f"A conta @{cfg.x_username} não segue ninguém no X. "
-            "Siga as contas que quer acompanhar ou preencha X_ACCOUNTS no .env."
-        )
-
-    CACHE_SEGUINDO.write_text(
-        json.dumps(
-            {"usuario": cfg.x_username, "quando": time.time(), "contas": contas},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    print(f"[x] {len(contas)} contas seguidas por @{cfg.x_username}")
-    return contas
 
 
 def _lotes_de_query(contas: list[str]) -> list[str]:
@@ -155,10 +97,9 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
                     "max_results": por_lote,
                     "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "sort_order": "relevancy",
-                    "tweet.fields": "created_at,public_metrics,attachments,text",
-                    "expansions": "author_id,attachments.media_keys",
+                    "tweet.fields": "created_at,public_metrics,text",
+                    "expansions": "author_id",
                     "user.fields": "username",
-                    "media.fields": "type",
                 },
             )
         except requests.RequestException as erro:
@@ -167,12 +108,9 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
 
         includes = dados.get("includes") or {}
         autores = {u["id"]: u["username"] for u in includes.get("users") or []}
-        tipos_midia = {m["media_key"]: m.get("type", "") for m in includes.get("media") or []}
 
         for post in dados.get("data") or []:
             metricas = post.get("public_metrics") or {}
-            chaves = (post.get("attachments") or {}).get("media_keys") or []
-            midias = [tipos_midia.get(k, "") for k in chaves]
             usuario = autores.get(post.get("author_id"), "")
             posts.append(
                 {
@@ -184,11 +122,6 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
                     "reposts": metricas.get("retweet_count", 0)
                     + metricas.get("quote_count", 0),
                     "respostas": metricas.get("reply_count", 0),
-                    "midia": (
-                        "vídeo"
-                        if any(t in ("video", "animated_gif") for t in midias)
-                        else "foto" if "photo" in midias else ""
-                    ),
                 }
             )
 
@@ -203,10 +136,9 @@ def _listar_posts(posts: list[dict]) -> str:
     linhas = []
     for p in posts:
         texto = " ".join(p["texto"].split())[:MAX_TEXTO_POST]
-        midia = f" | mídia: {p['midia']}" if p["midia"] else ""
         linhas.append(
             f"- @{p['usuario']} | {p['data']} UTC | {p['likes']} likes, "
-            f"{p['reposts']} reposts, {p['respostas']} respostas{midia}\n"
+            f"{p['reposts']} reposts, {p['respostas']} respostas\n"
             f"  {p['url']}\n"
             f"  \"{texto}\""
         )
@@ -214,12 +146,14 @@ def _listar_posts(posts: list[dict]) -> str:
 
 
 INSTRUCOES_RESUMO = """\
-Você é curador de um canal de vídeos curtos sobre tecnologia, inteligência
-artificial, desenvolvimento de software e mercado de trabalho de TI.
+Você é curador de um canal de vídeos curtos sobre geopolítica, inteligência
+(espionagem, defesa, OSINT), inteligência artificial e tecnologia. O canal
+trata cada pauta em formato EXPLICATIVO — análise ou educacional: o vídeo
+explica o que aconteceu e por que importa.
 
 Você recebe os posts publicados nas últimas {horas} horas pelas contas que o
-canal acompanha no X, com autor, data, métricas de engajamento, mídia anexada e
-texto. Agrupe-os nas ATÉ {n} TRENDS mais quentes: notícias, anúncios e
+canal acompanha no X, com autor, data, métricas de engajamento e texto.
+Agrupe-os nas ATÉ {n} TRENDS mais quentes: notícias, anúncios e
 lançamentos, novidades, curiosidades, tretas/polêmicas, rumores, quedas de
 serviço, demissões/contratações e viradas que estão dominando a conversa.
 Ordene da mais quente para a menos quente, pesando engajamento (likes, reposts,
@@ -243,8 +177,8 @@ Regras dos campos:
 - "apelo_visual": uma frase sobre o quanto o assunto rende boas imagens reais
   (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo e por quê.
 - "posts": até 5 URLs escolhidas SOMENTE entre as listadas acima, dos posts
-  mais centrais da trend — PRIORIZE os marcados com "mídia: vídeo", depois
-  "mídia: foto". Nunca invente URL.
+  mais centrais da trend (os que originaram ou melhor documentam o assunto).
+  Nunca invente URL.
 - "data": YYYY-MM-DD do acontecimento.\
 """
 
@@ -314,7 +248,7 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
 
 
 def coletar_trends(cfg: Config) -> list[dict]:
-    """Posts das contas seguidas (X API) sumarizados em trends pelo GPT."""
+    """Posts da lista fixa de contas (X API) sumarizados em trends pelo GPT."""
     token = obter_bearer(cfg)
     if token is None:
         raise SystemExit(
@@ -322,18 +256,7 @@ def coletar_trends(cfg: Config) -> list[dict]:
             "e X_CONSUMER_SECRET no .env."
         )
 
-    if cfg.contas:
-        contas = cfg.contas
-        print(f"[x] Usando as {len(contas)} contas de X_ACCOUNTS")
-    else:
-        try:
-            contas = _contas_seguidas(cfg, token)
-        except requests.RequestException as erro:
-            raise SystemExit(
-                f"X API: falha ao ler as contas seguidas ({erro}). Se o seu "
-                "plano não permite essa leitura, preencha X_ACCOUNTS no .env."
-            )
-
+    contas = cfg.contas
     print(
         f"[x] Coletando até {cfg.x_max_posts} posts das últimas "
         f"{cfg.janela_horas}h de {len(contas)} contas..."
@@ -348,16 +271,6 @@ def coletar_trends(cfg: Config) -> list[dict]:
 
     brutos = _resumir_trends(cfg, posts)
     urls_reais = {p["url"] for p in posts}
-    midia_por_url = {p["url"]: p["midia"] for p in posts}
-
-    def _midia_posts(urls: list[str]) -> str:
-        """Melhor mídia disponível nos posts da trend: vídeo > foto > só texto."""
-        midias = {midia_por_url.get(u, "") for u in urls}
-        if "vídeo" in midias:
-            return "vídeo"
-        if "foto" in midias:
-            return "foto"
-        return "só texto"
 
     trends = []
     for t in brutos:
@@ -374,7 +287,6 @@ def coletar_trends(cfg: Config) -> list[dict]:
                 "sentimento": t.get("sentimento", "").strip(),
                 "apelo_visual": t.get("apelo_visual", "").strip(),
                 "posts": urls,
-                "midia_posts": _midia_posts(urls),
                 "data": t.get("data", ""),
             }
         )

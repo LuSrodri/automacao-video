@@ -1,9 +1,10 @@
-"""Automação de vídeos de notícias de tech/AI, dev e mercado de trabalho de TI
+"""Automação de vídeos de notícias de geopolítica, inteligência, IA e tech
 a partir das trends do X.
 
 Fluxo:
-1. X API coleta os posts das últimas 24h das contas que você segue no X e o
-   GPT os sumariza nas 10 trends mais quentes (notícias, novidades, tretas).
+1. X API coleta os posts das últimas 24h da lista fixa de contas (CONTAS_PADRAO
+   em config.py, ou X_ACCOUNTS no .env) e o GPT os sumariza nas 10 trends mais
+   quentes (notícias, novidades, tretas).
 2. GPT classifica cada candidata (macrotema + imagem mental) — sem filtro
    nem score: todas as candidatas seguem vivas para a seleção.
 3. GPT escolhe a trend guiado SOMENTE pela audiência: recebe os últimos
@@ -13,9 +14,10 @@ Fluxo:
    dura: o mesmo macrotema não emenda mais de 4 vídeos seguidos. Define
    também uma consulta de notícias.
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
-5. GPT escreve o roteiro pré-conceitual em tom adulto (frases curtas,
-   vocabulário leigo, HOOK -> FATO -> IMPLICAÇÃO -> CORTE emendando no hook
-   para rodar em loop) e define de 8 a 10 imagens-chave.
+5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
+   citando as fontes (contas do X e veículos das notícias), com HOOK -> FATO
+   -> IMPLICAÇÃO -> CORTE emendando no hook para rodar em loop, e define de
+   8 a 10 imagens-chave.
 6. X API baixa as fotos e vídeos dos posts originais da trend, e o Firecrawl
    Search busca as demais imagens reais na web.
 7. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.

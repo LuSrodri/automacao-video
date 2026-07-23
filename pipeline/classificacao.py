@@ -41,15 +41,16 @@ MACROTEMAS_DESCRICAO = """\
 - hardware-chips: chips, GPUs, dispositivos, robôs, data centers
 - bigtech-negocios: negócios, aquisições, disputas e resultados das big techs
 - mercado-trabalho-ti: empregos, demissões, salários e carreira em tecnologia
-- guerra-geopolitica: guerra, conflito militar, geopolítica
+- guerra-geopolitica: guerra, conflito militar, geopolítica, inteligência,
+  espionagem, defesa
 - ciencia-espaco: ciência, espaço, energia
 - outro: o que não couber acima\
 """
 
 INSTRUCOES_CLASSIFICACAO = """\
 Você anota notícias candidatas a vídeo curto (YouTube Shorts) de um canal de
-notícias quentes (tecnologia, IA, geopolítica, negócios e o que mais estiver
-dominando a conversa).
+notícias quentes (geopolítica, inteligência, IA, tecnologia, negócios e o que
+mais estiver dominando a conversa).
 
 Para CADA notícia, preencha:
 - "macrotema": UM macrotema da lista:

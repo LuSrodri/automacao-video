@@ -4,5 +4,4 @@ __pycache__/
 .env
 output/
 videos.txt
-seguindo.json
 av paulista*.mp4

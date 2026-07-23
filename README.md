@@ -1,12 +1,12 @@
-﻿# Automação de Vídeos — Notícias Tech & AI
+﻿# Automação de Vídeos — Geopolítica, Inteligência, IA & Tech
 
-Pipeline em Python que transforma as trends de tech/AI mais quentes do X (Twitter) em um vídeo vertical narrado, pronto para publicar:
+Pipeline em Python que transforma as trends mais quentes de geopolítica, inteligência, IA e tech no X (Twitter) em um vídeo vertical narrado, em formato explicativo (análise/educacional), pronto para publicar:
 
-1. **Coleta** os posts das últimas 24h das **contas que você segue no X** (X API oficial v2, pay-per-use, com teto de leitura configurável) e o **GPT** os sumariza nas **10 trends mais quentes** — notícias, lançamentos, novidades, curiosidades e tretas — cada uma com resumo, engajamento e uma nota de apelo visual. A lista de seguidos fica em cache local por 7 dias; `X_ACCOUNTS` permite fixar contas específicas no lugar dela.
+1. **Coleta** os posts das últimas 24h da **lista fixa de contas** do canal (`CONTAS_PADRAO` em `pipeline/config.py`; `X_ACCOUNTS` no `.env` a substitui) via X API oficial v2, pay-per-use, com teto de leitura configurável, e o **GPT** os sumariza nas **10 trends mais quentes** — notícias, lançamentos, novidades, curiosidades e tretas — cada uma com resumo, engajamento e uma nota de apelo visual.
 2. **GPT 5.6 Luna** classifica cada candidata (**macrotema** + **imagem mental**) — sem filtro nem score: todas as candidatas seguem vivas para a seleção.
 3. **GPT 5.6 Luna** escolhe a trend guiado **somente pela audiência**: recebe os **últimos 100 vídeos publicados no canal selecionado com as métricas reais** (views/likes em tempo real, YouTube Data API) e os **campeões de retenção** (YouTube Analytics), e escolhe a candidata com a maior chance de performar com esse público — repetir o tipo de conteúdo que está performando é bem-vindo. A única regra dura, aplicada em código: **o mesmo macrotema não emenda mais de 4 vídeos seguidos** (se todas as candidatas do dia caírem nesse teto, não há vídeo).
 4. **Firecrawl (sources=news)** busca **notícias recentes** sobre a trend escolhida (título, link, resumo e data) para complementar o material com fatos, nomes e números corretos.
-5. **GPT 5.6 Luna** escreve o roteiro **pré-conceitual em tom adulto**: para um adulto leigo (o público real: homens de 25-54) com metade da atenção — frases **curtas** (mira em 8 palavras, máximo 12), uma ideia por frase, **vocabulário do dia a dia** (sem jargão nem siglas), tom de furo de notícia (nunca infantil), estrutura fixa **HOOK (imagem chocante, 0-2s) → FATO (até a metade) → IMPLICAÇÃO única (segunda metade) → CORTE em tensão que emenda no hook (loop)**, sem CTA falado. O título promete **exatamente** o que o vídeo entrega (1 fato real + 1 implicação — clickbait sem payload é proibido). O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz e define de **8 a 10 imagens-chave**.
+5. **GPT 5.6 Luna** escreve o roteiro **explicativo (análise/educacional) em tom adulto**, **sempre citando as fontes** (as contas do X que originaram a trend e os veículos das notícias do Firecrawl): para um adulto leigo (o público real: homens de 25-54) com metade da atenção — frases **curtas** (mira em 8 palavras, máximo 12), uma ideia por frase, **vocabulário do dia a dia** (sem jargão nem siglas), tom de furo de notícia (nunca infantil), estrutura fixa **HOOK (imagem chocante, 0-2s) → FATO (até a metade) → IMPLICAÇÃO única (segunda metade) → CORTE em tensão que emenda no hook (loop)**, sem CTA falado. O título promete **exatamente** o que o vídeo entrega (1 fato real + 1 implicação — clickbait sem payload é proibido). O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz e define de **8 a 10 imagens-chave**.
 6. **Firecrawl Search** encontra as **imagens reais** na web — fotos jornalísticas do próprio fato (pessoas, eventos e produtos), nada gerado por IA.
 7. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere) e o pipeline **corta os silêncios** da narração (remapeando os timestamps para as legendas continuarem sincronizadas), deixando o áudio sem trechos parados.
 8. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é a própria imagem daquele trecho, ampliada para cobrir a tela e borrada**; por cima entra a **imagem nítida em largura total com zoom suave** (Ken Burns). As imagens **cobrem 100% da narração** (nunca há um instante sem figura) e fazem **crossfade** entre si — de **8 a 10 imagens**, até **10 segundos** cada. **Legendas** sincronizadas palavra a palavra são queimadas no vídeo, e o **branding** (logo do YouTube Shorts + `@usuário`) fica no topo **com borda branca**.
@@ -19,7 +19,7 @@ Pipeline em Python que transforma as trends de tech/AI mais quentes do X (Twitte
 - O fundo é montado a partir das próprias imagens (não há fundo de cor); a resolução (padrão vertical 9:16, `1080x1920`) é configurável por `VIDEO_LARGURA`/`VIDEO_ALTURA`.
 - Chaves de API (quatro):
   - **OpenAI** — em [platform.openai.com/api-keys](https://platform.openai.com/api-keys) (sumarização das trends, roteiro e descrição das mídias com `gpt-5.6-luna`).
-  - **X API** — Consumer Key + Secret do app em [developer.x.com](https://developer.x.com) (coleta dos posts de quem você segue e download das mídias; pay-per-use).
+  - **X API** — Consumer Key + Secret do app em [developer.x.com](https://developer.x.com) (coleta dos posts das contas acompanhadas e download das mídias; pay-per-use).
   - **Firecrawl** — em [firecrawl.dev](https://firecrawl.dev) (busca das imagens via Search API com `sources=["images"]`).
   - **ElevenLabs** — em [elevenlabs.io/app/settings/api-keys](https://elevenlabs.io/app/settings/api-keys) (narração TTS).
 
@@ -63,8 +63,7 @@ output/
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
-| `X_USERNAME` | — | Seu @ no X (sem @): a coleta pega os posts das contas que você segue |
-| `X_ACCOUNTS` | vazio | Opcional: usa somente estas contas no lugar da lista de seguidos |
+| `X_ACCOUNTS` | vazio | Opcional: usa somente estas contas no lugar da lista fixa `CONTAS_PADRAO` (`pipeline/config.py`) |
 | `X_MAX_POSTS` | `60` | Teto de posts lidos por execução (a X API cobra por post lido) |
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
@@ -135,12 +134,12 @@ O GPT define, para cada imagem, uma **consulta de busca** coerente com o fato da
 | GPT 5.6 Luna (sumarização das trends + seleção + roteiro + visão das mídias) | < US$ 0,04 |
 | ElevenLabs (~1.000 caracteres por narração de 60s) | ~1.000 créditos do plano |
 
-A lista de quem você segue é lida no máximo 1x por semana (cache em `seguindo.json`). O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para equilibrar cobertura e preço. O custo fixo segue sendo o plano da ElevenLabs: o gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana.
+O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para equilibrar cobertura e preço. O custo fixo segue sendo o plano da ElevenLabs: o gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana.
 
 ## Problemas comuns
 
-- **Erro na coleta de posts** — confira `X_CONSUMER_KEY`/`X_CONSUMER_SECRET` e o saldo/plano do app em [developer.x.com](https://developer.x.com). Se a leitura da lista de seguidos for negada (403), preencha `X_ACCOUNTS` no `.env` com as contas desejadas.
-- **Trocou as contas que segue e a coleta não refletiu** — apague `seguindo.json` (cache de 7 dias da lista de seguidos).
+- **Erro na coleta de posts** — confira `X_CONSUMER_KEY`/`X_CONSUMER_SECRET` e o saldo/plano do app em [developer.x.com](https://developer.x.com).
+- **Quer mudar as contas acompanhadas** — edite `CONTAS_PADRAO` em `pipeline/config.py`, ou preencha `X_ACCOUNTS` no `.env` para substituir a lista sem mexer no código.
 - **Erro/429 na busca de imagens** — confira a `FIRECRAWL_API_KEY` e o saldo de créditos no [dashboard do Firecrawl](https://firecrawl.dev); o pipeline já espaça as buscas e tenta de novo em 429.
 - **HTTP 401 na ElevenLabs** — chave errada no `.env`; **422** — texto/parâmetros inválidos (a mensagem detalha).
 - **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal.

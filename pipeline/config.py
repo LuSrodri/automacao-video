@@ -8,6 +8,21 @@ from dotenv import load_dotenv
 
 RAIZ = Path(__file__).resolve().parent.parent
 
+# Contas fixas do X que alimentam a coleta (geopolítica, inteligência, IA e
+# tech). X_ACCOUNTS no .env, quando preenchido, substitui esta lista.
+CONTAS_PADRAO = [
+    "elonmusk", "CNNBrasil", "brasilparalelo", "exercitooficial", "SpaceX",
+    "revistaoeste", "EmbaixadaEUA", "OpenAI", "sama", "huggingface",
+    "StanfordAILab", "OpenAIDevs", "DarioAmodei", "AnthropicAI", "rakyll",
+    "GoogleAI", "gdb", "hardmaru", "WhiteHouse", "SamPancher", "business",
+    "Osint613", "Kalshi", "dfolloni", "bcherny", "trq212", "addyosmani",
+    "claudeai", "noahzweben", "ClaudeDevs", "googlegemma", "arena",
+    "cursor_ai", "satyanadella", "_cyberhusky", "lucasjvds", "unusual_whales",
+    "WatcherGuru", "kimmonismus", "sentdefender", "Faytuks", "demishassabis",
+    "alexandr_wang", "mustafasuleyman", "SecRubio", "intheworldofai",
+    "chetaslua", "Sam_Acqua", "BancoCentralBR", "FBI",
+]
+
 
 @dataclass
 class Config:
@@ -17,7 +32,6 @@ class Config:
     contas: list[str]
     x_consumer_key: str  # X API oficial: coleta dos posts + mídias
     x_consumer_secret: str
-    x_username: str = ""  # @usuário cuja lista de seguidos alimenta a coleta
     x_max_posts: int = 60  # teto de posts lidos por execução (leitura é paga)
     video_largura: int = 1080
     video_altura: int = 1920
@@ -75,19 +89,13 @@ def carregar_config() -> Config:
             "Copie o .env.example para .env e preencha as chaves."
         )
 
-    # X_ACCOUNTS é opcional: vazio = coleta dos posts das contas que
-    # X_USERNAME segue; preenchido = usa somente as contas listadas.
+    # X_ACCOUNTS é opcional: vazio = usa a lista fixa CONTAS_PADRAO;
+    # preenchido = usa somente as contas listadas no .env.
     contas = [
         c.strip().lstrip("@")
         for c in os.getenv("X_ACCOUNTS", "").split(",")
         if c.strip()
-    ]
-    x_username = os.getenv("X_USERNAME", "").strip().lstrip("@")
-    if not contas and not x_username:
-        raise SystemExit(
-            "Preencha X_USERNAME no .env (seu @ no X, para coletar os posts de "
-            "quem você segue) ou liste contas em X_ACCOUNTS."
-        )
+    ] or list(CONTAS_PADRAO)
 
     cfg = Config(
         openai_api_key=os.environ["OPENAI_API_KEY"],
@@ -96,7 +104,6 @@ def carregar_config() -> Config:
         contas=contas,
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
-        x_username=x_username,
         x_max_posts=int(os.getenv("X_MAX_POSTS", "60")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),

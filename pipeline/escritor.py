@@ -10,15 +10,18 @@ Duas etapas:
    vídeos seguidos do mesmo macrotema — variabilidade mínima do canal.
    Devolve também uma consulta de notícias para enriquecer o material.
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
-   roteiro pré-conceitual em tom adulto e inteligente (ritmo de fala natural,
-   vocabulário preciso de telejornal, estrutura HOOK → FATO → IMPLICAÇÃO →
-   CORTE em loop), dentro de uma FAIXA dura de palavras (piso e teto derivados
-   de VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
+   roteiro em enquadramento de ANÁLISE/EDUCACIONAL (formato explicativo), em
+   tom adulto e inteligente (ritmo de fala natural, vocabulário preciso de
+   telejornal, estrutura HOOK → FATO → IMPLICAÇÃO → CORTE em loop), SEMPRE
+   citando as fontes (contas do X e veículos das notícias do Firecrawl),
+   dentro de uma FAIXA dura de palavras (piso e teto derivados de
+   VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
    duração-alvo) e define de 8 a 10 imagens-chave.
 """
 
 import json
 import re
+from urllib.parse import urlparse
 
 from openai import OpenAI
 
@@ -141,6 +144,10 @@ ESQUEMA_ROTEIRO = {
                     "palavras, teto 20, alternando curtas de impacto com mais "
                     "cheias), vocabulário preciso de telejornal — tom adulto "
                     "e inteligente, nunca infantil nem robótico. "
+                    "Enquadramento explicativo (análise/educacional) e "
+                    "citação de fonte obrigatória: o fato central é atribuído "
+                    "nominalmente ao veículo ou à conta do X de onde veio "
+                    "(somente fontes das listas recebidas). "
                     "Estrutura obrigatória: HOOK (a primeira frase = campo "
                     "hook) → FATO (o que aconteceu, coisa concreta primeiro; "
                     "se o assunto central for de nicho, a primeira frase do "
@@ -263,10 +270,12 @@ INSTRUCOES_SELECAO = """\
 Você é editor de um canal de vídeos curtos (YouTube Shorts) de notícias
 quentes.
 
-Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema,
-imagem mental e a mídia dos posts), os vídeos CAMPEÕES DE RETENÇÃO do canal
-(quando houver) e os últimos vídeos publicados COM as métricas reais de
-audiência (views e likes).
+Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema e
+imagem mental), os vídeos CAMPEÕES DE RETENÇÃO do canal (quando houver) e os
+últimos vídeos publicados COM as métricas reais de audiência (views e likes).
+Todo vídeo do canal é EXPLICATIVO — análise ou educacional —, então prefira,
+em empate, a candidata que rende a melhor explicação (um acontecimento com
+causa, mecanismo e consequência claros).
 
 CRITÉRIO ÚNICO — O QUE A AUDIÊNCIA ESTÁ ASSISTINDO: escolha a trend com a
 maior chance de performar com a audiência DESTE canal, e a régua são os
@@ -292,13 +301,29 @@ Responda somente com o JSON pedido.\
 """
 
 INSTRUCOES_ROTEIRO = """\
-Você é roteirista de vídeos curtos (YouTube Shorts/Reels/TikTok) sobre trends de
-tecnologia, inteligência artificial, desenvolvimento de software e mercado de
-trabalho de TI. {foco}
+Você é roteirista de vídeos curtos (YouTube Shorts/Reels/TikTok) sobre
+geopolítica, inteligência (espionagem, defesa, OSINT), inteligência artificial
+e tecnologia. {foco}
 
-Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca) e NOTÍCIAS
-recentes sobre ela. Use as notícias para acertar fatos, nomes, empresas, datas e
-números — não invente.
+Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
+X que originaram a trend e NOTÍCIAS recentes sobre ela. Use as notícias para
+acertar fatos, nomes, empresas, datas e números — não invente.
+
+ENQUADRAMENTO — SEMPRE análise ou educacional, em formato EXPLICATIVO: o vídeo
+explica o que aconteceu, como e por que importa — nunca é um grito de manchete
+sem explicação, nunca é opinião militante. A estrutura abaixo (HOOK → FATO →
+IMPLICAÇÃO → CORTE) já é o formato explicativo: o FATO mostra o acontecimento
+e o mecanismo por trás dele, a IMPLICAÇÃO é a análise (a consequência que o
+espectador leva para casa). Explicar NÃO é palestrar: o tom continua de
+jornalista afiado, não de professor.
+
+FONTES — OBRIGATÓRIO citar a fonte na narração: todo fato central do vídeo é
+atribuído a quem o publicou — o veículo de notícias ("segundo a Reuters", "o
+Financial Times revelou") ou a conta do X ("no post de @sentdefender", "Elon
+Musk postou"). Cite SOMENTE fontes que estão nas listas recebidas (posts do X
+e notícias); cite pelo menos uma, no ponto onde o fato dela entra, embutida na
+frase — nunca em bloco de leitura de créditos. Nome de veículo ou de conta
+citado como fonte NÃO conta no teto de nomes próprios desconhecidos.
 
 PÚBLICO — A REGRA QUE MANDA EM TODAS AS OUTRAS: escreva para um ADULTO leigo
 (o espectador real do canal: homem de 25 a 54 anos, curioso por tecnologia,
@@ -358,13 +383,15 @@ ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
    no hook.
 
 PROIBIDO NO TEXTO:
-- Frases de analista: "no cenário geopolítico", "especialistas afirmam",
-  "segundo fontes", "o mercado reagiu" e afins.
+- Frases de analista vazias: "no cenário geopolítico", "especialistas
+  afirmam", "o mercado reagiu" e afins — e "segundo fontes" SEM nomear a
+  fonte (a citação obrigatória é sempre nominal: veículo ou conta do X).
 - Número com mais de 2 dígitos significativos: escreva "2 bilhões", "150 mil",
   "quase 30%" — nunca "2,37 bilhões", "148.532" ou "29,7%".
 - Mais de 1 nome próprio DESCONHECIDO por vídeo. Nomes que todo mundo conhece
-  (Trump, Google, China, Elon Musk) não contam; o segundo nome obscuro vira
-  "um chefe da empresa", "um general", "o dono do site".
+  (Trump, Google, China, Elon Musk) não contam, nem veículo/conta citado como
+  fonte; o segundo nome obscuro vira "um chefe da empresa", "um general", "o
+  dono do site".
 
 PAYLOAD OBRIGATÓRIO: o roteiro entrega 1 fato real e 1 implicação. Clickbait
 sem payload é PROIBIDO — o título promete exatamente o que o vídeo entrega.
@@ -440,7 +467,6 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"   Resumo: {t['resumo']}\n"
             f"   Macrotema: {t.get('macrotema', '?')}\n"
             f"   Posts coletados sobre o assunto: {t.get('num_posts', '?')}\n"
-            f"   Mídia dos posts: {t.get('midia_posts', '?')}\n"
             f"   Imagem mental: {t.get('imagem_mental', '?')}\n"
             f"   Engajamento: {t.get('engajamento', '?')}\n"
             f"   Sentimento: {t.get('sentimento', '?')}\n"
@@ -622,7 +648,21 @@ def _resumo_noticias(noticias: list[dict]) -> str:
     linhas = []
     for n in noticias:
         data = f" ({n['data']})" if n.get("data") else ""
-        linhas.append(f"- {n['titulo']}{data}: {n.get('resumo', '')}")
+        veiculo = urlparse(n.get("url", "")).netloc.removeprefix("www.")
+        fonte = f" [fonte: {veiculo}]" if veiculo else ""
+        linhas.append(f"- {n['titulo']}{data}{fonte}: {n.get('resumo', '')}")
+    return "\n".join(linhas)
+
+
+def _fontes_x(urls: list[str]) -> str:
+    """Lista as contas do X por trás dos posts da trend (fontes citáveis)."""
+    if not urls:
+        return "(nenhum post do X associado à trend.)"
+    linhas = []
+    for u in urls:
+        usuario = urlparse(u).path.strip("/").split("/")[0]
+        conta = f"@{usuario}" if usuario else "(conta desconhecida)"
+        linhas.append(f"- {conta}: {u}")
     return "\n".join(linhas)
 
 
@@ -677,7 +717,10 @@ def gerar_roteiro(
         f"Resumo da trend: {trend_escolhida.get('resumo', '')}\n"
         f"Imagem mental da notícia (o que a pessoa visualiza — o HOOK nasce "
         f"daqui): {trend_escolhida.get('imagem_mental', '?')}\n\n"
-        "NOTÍCIAS RECENTES SOBRE A TREND:\n" + _resumo_noticias(noticias)
+        "POSTS DO X QUE ORIGINARAM A TREND (fontes citáveis na narração):\n"
+        + _fontes_x(trend_escolhida.get("posts") or [])
+        + "\n\nNOTÍCIAS RECENTES SOBRE A TREND (o veículo entre colchetes é a "
+        "fonte citável):\n" + _resumo_noticias(noticias)
     )
 
     limite = int(cfg.video_duracao * PALAVRAS_POR_SEGUNDO)
