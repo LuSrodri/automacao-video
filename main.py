@@ -18,20 +18,21 @@ Fluxo:
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
    citando as fontes (contas do X e veículos das notícias), com HOOK -> FATO
-   -> IMPLICAÇÃO -> CORTE emendando no hook para rodar em loop, e define de
-   8 a 10 imagens-chave.
-6. X API baixa as fotos e vídeos dos posts originais da trend, e o Firecrawl
-   Search busca as demais imagens reais na web.
+   -> IMPLICAÇÃO -> CORTE emendando no hook para rodar em loop.
+6. X API baixa até 3 CLIPES DE VÍDEO dos posts originais da trend (imagem
+   estática é proibida no formato; trend sem post com vídeo nem chega aqui —
+   a seleção já a descarta), com a conta de origem de cada clipe.
 7. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
-8. A IA planeja os cortes: o GPT (visão) descreve TODAS as mídias baixadas
-   (dos posts do X e da web) e um "editor de cortes" casa cada mídia com o
-   momento exato da narração (citações do texto -> timestamps do alinhamento).
+8. A IA planeja os cortes: o GPT (visão) descreve os clipes baixados e um
+   "editor de cortes" casa cada clipe com o momento exato da narração
+   (citações do texto -> timestamps do alinhamento).
 9. Infográficos animados: o GPT escolhe até 2 números reais da história e o
    pipeline renderiza contadores/barras minimalistas (Pillow) que sobem da
-   base do vídeo para o terço superior, no lugar do branding.
-10. ffmpeg monta: fundo = a própria imagem borrada (cobertura total, sem
-    instante vazio) + imagem nítida com zoom suave + crossfade + legendas +
-    infográficos + branding com borda branca (+ trilha de fundo opcional).
+   base do vídeo para o terço superior.
+10. ffmpeg monta: fundo = o próprio clipe borrado (cobertura total, sem
+    instante vazio) + clipe nítido centrado + crossfade curto + legendas
+    grandes (Archivo Black) + crédito de reprodução no canto superior direito
+    ("Reprodução Imagem: X" + conta do post) + infográficos (+ trilha).
 11. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução).
 """
@@ -43,7 +44,6 @@ import unicodedata
 from datetime import datetime
 
 from pipeline.audio import gerar_narracao
-from pipeline.busca_imagens import buscar_imagens
 from pipeline.classificacao import classificar_trends
 from pipeline.config import carregar_config
 from pipeline.cortes import planejar_cortes
@@ -70,37 +70,6 @@ def _slug(texto: str, limite: int = 40) -> str:
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
     texto = re.sub(r"[^a-zA-Z0-9]+", "-", texto).strip("-").lower()
     return texto[:limite].rstrip("-") or "video"
-
-
-def _sobreposicoes(texto_video: str, imagens: list[dict]) -> list[dict]:
-    """Posiciona cada imagem na fração da narração em que seu trecho ocorre.
-
-    As imagens vêm em ordem de narração, então a busca avança um cursor: se o
-    texto repete uma frase, cada trecho casa com a ocorrência a partir da
-    imagem anterior — não sempre com a primeira do texto.
-    """
-    resultado = []
-    texto_baixo = texto_video.lower()
-    cursor = 0
-    for img in imagens:
-        trecho = img["trecho"].strip().lower()
-        pos = texto_baixo.find(trecho, cursor) if trecho else -1
-        if pos < 0 and trecho:
-            pos = texto_baixo.find(trecho)
-        if pos < 0:
-            resultado.append(
-                {"caminho": img["caminho"], "inicio_frac": None, "fim_frac": None}
-            )
-        else:
-            cursor = pos + 1
-            resultado.append(
-                {
-                    "caminho": img["caminho"],
-                    "inicio_frac": pos / len(texto_video),
-                    "fim_frac": (pos + len(trecho)) / len(texto_video),
-                }
-            )
-    return resultado
 
 
 def main() -> None:
@@ -155,15 +124,14 @@ def main() -> None:
     )
 
     # O OBJETO da trend vem da própria seleção (selecionar_trend) — é o mesmo
-    # que o roteiro usou, então as mídias baixadas são sempre da trend certa.
+    # que o roteiro usou, então os clipes baixados são sempre da trend certa.
     trend_video = selecao["trend_obj"]
-    midias_x = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
-    imagens = buscar_imagens(cfg, roteiro["imagens"], pasta)
-    if not imagens and not midias_x:
+    clipes = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
+    if not clipes:
         raise SystemExit(
-            "Nenhum material visual disponível (zero imagens da web e zero "
-            "mídias dos posts do X) — o vídeo sairia sem nenhuma imagem na "
-            "tela; abortando."
+            "Nenhum clipe de vídeo baixado dos posts da trend — o formato é "
+            "montado só com clipes do X (imagem estática é proibida); "
+            "abortando."
         )
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
@@ -173,57 +141,44 @@ def main() -> None:
     largura, altura = cfg.video_largura, cfg.video_altura
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
-    # Posicionamento automático (reserva): imagens perto dos seus trechos e
-    # mídias do X espalhadas, com a primeira abrindo o gancho.
-    sobreposicoes = _sobreposicoes(roteiro["texto_video"], imagens)
-    sobreposicoes += [
+    # Posicionamento automático (reserva): clipes espalhados uniformemente,
+    # com o primeiro abrindo o gancho.
+    sobreposicoes = [
         {
             "caminho": m["caminho"],
-            "inicio_frac": k / max(len(midias_x), 1),
+            "inicio_frac": k / max(len(clipes), 1),
             "fim_frac": None,
+            "conta": m.get("conta", ""),
         }
-        for k, m in enumerate(midias_x)
+        for k, m in enumerate(clipes)
     ]
 
-    # Planejador de cortes: a IA casa cada mídia com o momento da narração.
-    # O GPT com visão descreve TODAS as mídias baixadas — as dos posts do X e
-    # as da web (o que a busca devolve muitas vezes não é o que a consulta
-    # pediu; descrever o arquivo real evita casar a narração com uma imagem
-    # errada e melhora a escolha da primeira imagem, a que decide o swipe).
-    para_visao = midias_x + [
-        {"caminho": img["caminho"], "consulta": img.get("consulta", "")}
-        for img in imagens
-    ]
-    descricoes = descrever_midias(cfg, para_visao) if para_visao else {}
+    # Planejador de cortes: a IA casa cada clipe com o momento da narração.
+    # O GPT com visão descreve os clipes baixados (descrever o arquivo real
+    # evita casar a narração com a cena errada e melhora a escolha do
+    # primeiro clipe, o que decide o swipe).
+    descricoes = descrever_midias(cfg, clipes)
     midias_plano = [
         {
             "caminho": m["caminho"],
             "tipo": m.get("tipo", ""),
             "dur_s": m.get("dur_s"),
-            "origem": "x",
+            "conta": m.get("conta", ""),
             "descricao": descricoes.get(
-                str(m["caminho"]), "mídia anexada a um post original da trend"
+                str(m["caminho"]), "clipe anexado a um post original da trend"
             ),
         }
-        for m in midias_x
-    ] + [
-        {
-            "caminho": img["caminho"],
-            "tipo": "photo",
-            "dur_s": None,
-            "origem": "web",
-            "descricao": descricoes.get(
-                str(img["caminho"]),
-                f"imagem buscada por \"{img.get('consulta', '')}\"; ilustra o "
-                f"trecho: \"{img.get('trecho', '')}\"",
-            ),
-        }
-        for img in imagens
+        for m in clipes
     ]
     plano = planejar_cortes(
         cfg, roteiro["texto_video"], midias_plano, alinhamento, duracao
     )
     if plano:
+        # O plano volta só com caminho/tempos; a conta de origem (crédito de
+        # reprodução na tela) é reanexada pelo caminho do arquivo.
+        conta_por_caminho = {str(m["caminho"]): m.get("conta", "") for m in clipes}
+        for p in plano:
+            p["conta"] = conta_por_caminho.get(str(p["caminho"]), "")
         sobreposicoes = plano
         (pasta / "cortes.json").write_text(
             json.dumps(
@@ -248,7 +203,7 @@ def main() -> None:
     )
 
     # Infográficos animados: contadores/barras com os números reais da
-    # história, no terço superior (no lugar do branding), subindo da base.
+    # história, no terço superior, subindo da base.
     graficos = gerar_graficos(
         cfg, roteiro["texto_video"], noticias, alinhamento, duracao, pasta
     )
@@ -260,8 +215,8 @@ def main() -> None:
         largura,
         altura,
         legendas=legendas,
-        handle=cfg.handle_do_publico,
         graficos=graficos,
+        publico=cfg.publico,
     )
 
     registrar(cfg, video_final, roteiro["titulo"], roteiro["descricao"])

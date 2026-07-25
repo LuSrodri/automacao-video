@@ -1,15 +1,16 @@
-"""Download e descrição das mídias (fotos e vídeos) dos posts da trend.
+"""Download e descrição dos clipes de vídeo dos posts da trend.
 
-Download via X API oficial v2 em modo pay-per-use (~US$ 0,005 por post/mídia
-lida): um único GET /2/tweets com `expansions=attachments.media_keys` resolve
-todos os posts da trend de uma vez. Fotos vêm por URL direta (pbs.twimg.com,
-pedida em resolução original); vídeos vêm como variantes MP4, das quais
-baixamos a de maior bitrate. Em qualquer falha da API, o pipeline segue só com
-as imagens da busca web.
+O formato do canal é montado SOMENTE com clipes de vídeo dos posts do X (até
+MAX_CLIPES por vídeo; imagem estática é proibida). Download via X API oficial
+v2 em modo pay-per-use (~US$ 0,005 por post/mídia lida): um único GET /2/tweets
+com `expansions=attachments.media_keys,author_id` resolve todos os posts da
+trend de uma vez. Vídeos vêm como variantes MP4, das quais baixamos a de maior
+bitrate; a conta do autor (@usuario) segue junto de cada clipe para o crédito
+de reprodução exibido na tela ("Reprodução Imagem: X / Conta @...").
 
-Descrição via GPT com visão sobre os arquivos baixados: fotos vão direto; de
-vídeos o ffmpeg extrai alguns frames. As descrições orientam o planejador de
-cortes (cortes.py) a casar cada mídia com o momento certo da narração.
+Descrição via GPT com visão sobre os arquivos baixados: o ffmpeg extrai alguns
+frames de cada clipe. As descrições orientam o planejador de cortes
+(cortes.py) a casar cada clipe com o momento certo da narração.
 """
 
 import base64
@@ -21,7 +22,6 @@ from pathlib import Path
 import requests
 from openai import OpenAI
 
-from .busca_imagens import _baixar as _baixar_imagem
 from .config import Config
 from .edicao import duracao_audio
 from .x_client import obter_bearer
@@ -29,7 +29,7 @@ from .x_client import obter_bearer
 TWEETS_ENDPOINT = "https://api.x.com/2/tweets"
 
 MAX_POSTS = 5  # posts consultados por vídeo (cada um custa ~US$ 0,005)
-MAX_MIDIAS = 6  # mídias baixadas por vídeo (as primeiras encontradas)
+MAX_CLIPES = 3  # clipes de vídeo baixados por vídeo (os primeiros encontrados)
 MAX_VIDEO_BYTES = 60_000_000  # ~60 MB; vídeo maior que isso é descartado
 
 PADRAO_ID_POST = re.compile(r"(?:x|twitter)\.com/[^/]+/status/(\d+)")
@@ -38,11 +38,6 @@ PADRAO_ID_POST = re.compile(r"(?:x|twitter)\.com/[^/]+/status/(\d+)")
 def _ids_dos_posts(urls: list[str]) -> list[str]:
     ids = [m.group(1) for u in urls if (m := PADRAO_ID_POST.search(u))]
     return list(dict.fromkeys(ids))[:MAX_POSTS]
-
-
-def _url_foto_original(url: str) -> str:
-    """Pede a foto na resolução original (name=orig) mantendo a query existente."""
-    return f"{url}{'&' if '?' in url else '?'}name=orig"
 
 
 def _melhor_variante(variantes: list[dict]) -> str | None:
@@ -54,12 +49,6 @@ def _melhor_variante(variantes: list[dict]) -> str | None:
     if not mp4s:
         return None
     return max(mp4s, key=lambda v: v.get("bit_rate") or 0)["url"]
-
-
-def _baixar_foto(url: str, destino_sem_ext: Path) -> Path | None:
-    # Reaproveita o fluxo de fotos da busca web (verificação de formato, piso
-    # de tamanho e teto de resolução).
-    return _baixar_imagem(_url_foto_original(url), destino_sem_ext)
 
 
 def _baixar_video(url: str, destino: Path) -> Path | None:
@@ -88,16 +77,15 @@ def _baixar_video(url: str, destino: Path) -> Path | None:
 
 
 def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list[dict]:
-    """Baixa as mídias dos posts; devolve [{"caminho": Path, "trecho": ""}, ...].
+    """Baixa os clipes de vídeo dos posts; [{"caminho": Path, "conta": str}, ...].
 
-    Compatível com o formato de `buscar_imagens` — o `main.py` mescla as duas
-    listas. Vídeos saem como .mp4 e a montagem (edicao.py) os detecta pela
-    extensão.
+    Só vídeos e GIFs animados (saem como .mp4) — foto é ignorada: o formato do
+    canal proíbe imagem estática. Cada clipe carrega a conta do autor
+    ("conta": "@usuario") para o crédito de reprodução na tela.
 
-    Falhas de credencial/API ABORTAM a execução: a trend costuma ser escolhida
-    justamente por ter vídeo/foto nos posts, e pular a etapa entregaria um
-    vídeo sem o material que motivou a escolha. Posts sem mídia anexada não
-    são erro — aí a lista sai vazia e o vídeo usa só as imagens da web.
+    Falhas de credencial/API ABORTAM a execução: a trend é escolhida
+    justamente por ter clipes nos posts, e pular a etapa entregaria um vídeo
+    sem material nenhum.
     """
     ids = _ids_dos_posts(urls_posts)
     if not ids:
@@ -106,12 +94,12 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
     if not (cfg.x_consumer_key and cfg.x_consumer_secret):
         raise SystemExit(
             "X_CONSUMER_KEY/X_CONSUMER_SECRET ausentes — sem eles não dá para "
-            "baixar as mídias dos posts da trend; abortando."
+            "baixar os clipes dos posts da trend; abortando."
         )
     token = obter_bearer(cfg)
     if token is None:
         raise SystemExit(
-            "X API sem token — sem ele não dá para baixar as mídias dos posts "
+            "X API sem token — sem ele não dá para baixar os clipes dos posts "
             "da trend; abortando. Confira as credenciais no .env."
         )
 
@@ -122,7 +110,8 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
             params={
                 "ids": ",".join(ids),
                 "tweet.fields": "text",
-                "expansions": "attachments.media_keys",
+                "expansions": "attachments.media_keys,author_id",
+                "user.fields": "username",
                 "media.fields": (
                     "media_key,type,url,variants,preview_image_url,width,height"
                 ),
@@ -138,51 +127,61 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
             f"material que motivou a escolha da trend; abortando: {erro}"
         ) from erro
 
-    midias = (dados.get("includes") or {}).get("media") or []
+    includes = dados.get("includes") or {}
+    midias = includes.get("media") or []
     if not midias:
         print("[midia-x] Nenhuma mídia anexada nos posts consultados")
         return []
 
-    # De qual post veio cada mídia e o texto do post (contexto para a descrição)
+    # De qual post veio cada mídia, o texto do post (contexto para a
+    # descrição) e a conta do autor (crédito de reprodução na tela).
+    usuarios = {u.get("id"): u.get("username", "") for u in includes.get("users") or []}
     dono_da_midia: dict[str, str] = {}
     texto_do_post: dict[str, str] = {}
+    conta_do_post: dict[str, str] = {}
     for post in dados.get("data") or []:
-        texto_do_post[post.get("id", "")] = post.get("text", "")
+        post_id = post.get("id", "")
+        texto_do_post[post_id] = post.get("text", "")
+        usuario = usuarios.get(post.get("author_id"), "")
+        conta_do_post[post_id] = f"@{usuario}" if usuario else ""
         for chave in (post.get("attachments") or {}).get("media_keys") or []:
-            dono_da_midia.setdefault(chave, post.get("id", ""))
+            dono_da_midia.setdefault(chave, post_id)
+
+    clipes = [m for m in midias if m.get("type") in ("video", "animated_gif")]
+    if not clipes:
+        print("[midia-x] Nenhum clipe de vídeo anexado nos posts consultados")
+        return []
 
     baixadas: list[dict] = []
-    for k, m in enumerate(midias[:MAX_MIDIAS], 1):
-        tipo = m.get("type")
-        caminho = None
-        if tipo == "photo" and m.get("url"):
-            caminho = _baixar_foto(m["url"], pasta / f"midia_x_{k}")
-        elif tipo in ("video", "animated_gif"):
-            url_mp4 = _melhor_variante(m.get("variants") or [])
-            if url_mp4:
-                caminho = _baixar_video(url_mp4, pasta / f"midia_x_{k}.mp4")
+    for k, m in enumerate(clipes[:MAX_CLIPES], 1):
+        url_mp4 = _melhor_variante(m.get("variants") or [])
+        if not url_mp4:
+            continue
+        caminho = _baixar_video(url_mp4, pasta / f"clipe_x_{k}.mp4")
         if caminho:
-            dur_s = None
-            if caminho.suffix == ".mp4":
-                try:
-                    dur_s = duracao_audio(caminho)  # ffprobe format=duration
-                except (subprocess.CalledProcessError, ValueError, OSError):
-                    dur_s = None
+            try:
+                dur_s = duracao_audio(caminho)  # ffprobe format=duration
+            except (subprocess.CalledProcessError, ValueError, OSError):
+                dur_s = None
             post_id = dono_da_midia.get(m.get("media_key", ""), "")
             baixadas.append(
                 {
                     "caminho": caminho,
                     "trecho": "",
-                    "tipo": tipo,
+                    "tipo": m.get("type"),
                     "post_id": post_id,
+                    "conta": conta_do_post.get(post_id, ""),
                     "texto_post": texto_do_post.get(post_id, ""),
                     "dur_s": dur_s,
                 }
             )
-            print(f"[midia-x] {caminho.name} ({tipo})")
+            print(
+                f"[midia-x] {caminho.name} ({m.get('type')}, "
+                f"{conta_do_post.get(post_id) or 'conta desconhecida'})"
+            )
 
     if not baixadas:
-        print("[midia-x] Nenhuma mídia dos posts pôde ser baixada")
+        print("[midia-x] Nenhum clipe dos posts pôde ser baixado")
     return baixadas
 
 
@@ -266,10 +265,6 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, str]:
                 )
             if m.get("texto_post"):
                 contexto += f"\nTexto do post de origem: \"{m['texto_post']}\""
-            if m.get("consulta"):
-                contexto += (
-                    f"\nA imagem foi encontrada com a busca: \"{m['consulta']}\""
-                )
             conteudo = [{"type": "text", "text": PROMPT_DESCRICAO + contexto}] + [
                 {"type": "image_url", "image_url": {"url": _data_uri(img)}}
                 for img in imagens

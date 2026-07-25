@@ -1,11 +1,14 @@
 """Montagem final do vídeo com ffmpeg.
 
-O fundo de cada momento é a PRÓPRIA imagem daquele trecho, ampliada para cobrir
-a tela toda e BORRADA; por cima entra a imagem nítida em largura total, com uma
-animação suave de zoom (Ken Burns). As imagens cobrem 100% da narração — nunca
-há um instante sem figura na tela — e fazem crossfade entre si. A narração TTS
-(sem silêncios) é a trilha, e o branding (logo do Shorts + @usuário) fica no
-topo com bordas brancas.
+O vídeo é montado SOMENTE com clipes de vídeo dos posts do X (imagem estática
+é proibida — a montagem aborta se receber uma). O fundo de cada momento é o
+PRÓPRIO clipe daquele trecho, ampliado para cobrir a tela toda e BORRADO; por
+cima entra o clipe nítido em largura total, centrado. Os clipes cobrem 100% da
+narração — nunca há um instante sem imagem na tela — com um crossfade curto e
+limpo entre si (corte editorial, sem deslizes). A narração TTS (sem silêncios)
+é a trilha, e o crédito de reprodução ("Reprodução Imagem: X" + "Conta
+@usuario" do post de origem) fica no canto superior direito enquanto o clipe
+daquela conta está na tela.
 """
 
 import subprocess
@@ -15,20 +18,17 @@ from pathlib import Path
 from .config import RAIZ
 
 FPS = 30
-MIN_EXIBICAO = 2.0  # segundos mínimos de exibição de cada imagem
-MAX_EXIBICAO = 10.0  # segundos máximos de exibição de cada imagem
-CROSSFADE = 0.4  # duração do crossfade entre imagens consecutivas
-FADE = 0.35  # duração do fade de entrada do branding
+MIN_EXIBICAO = 3.0  # segundos mínimos de exibição de cada clipe
+MAX_EXIBICAO = 15.0  # segundos máximos de exibição de cada clipe (só aviso)
+CROSSFADE = 0.3  # duração do crossfade entre clipes consecutivos
 # Respiro entre o fim da narração e o fim do vídeo. Curto de propósito: o
 # CORTE do roteiro emenda no hook do reinício (loop), e uma cauda longa de
 # tela parada quebra exatamente essa emenda (era 0,6s).
 RESPIRO_FINAL = 0.15
 BLUR_SIGMA = 18  # intensidade do desfoque do fundo
-ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça a imagem nítida)
-ZOOM_MAX = 1.15  # zoom máximo da animação
-ZOOM_RATE = 0.0008  # incremento de zoom por quadro
+ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça o clipe nítido)
 
-# Efeito sonoro de "woosh" tocado em cada transição entre imagens.
+# Efeito sonoro de "woosh" tocado em cada transição entre clipes.
 WOOSH = RAIZ / "assets" / "woosh.mp3"
 WOOSH_VOL = 0.5  # volume do efeito relativo à narração
 
@@ -40,16 +40,22 @@ WOOSH_VOL = 0.5  # volume do efeito relativo à narração
 TRILHA = RAIZ / "assets" / "trilha.mp3"
 TRILHA_VOL = 0.12  # ~-18 dB sob a narração (a trilha já vem normalizada)
 
-# Branding discreto no topo: logo do YouTube Shorts + @usuário do canal.
-LOGO_PADRAO = RAIZ / "assets" / "YouTube-Shorts-Logo.png"
-FONTE_HANDLE = RAIZ / "fonts" / "Barlow-Bold.ttf"
-LOGO_LARGURA_FRAC = 0.30  # largura do logo como fração da largura do vídeo
-LOGO_OPACIDADE = 0.85  # opacidade do logo (0 a 1)
-LOGO_Y_FRAC = 0.06  # distância do topo como fração da altura
-LOGO_BORDA_FRAC = 0.02  # espessura da borda branca do logo (fração da sua largura)
-HANDLE_OPACIDADE = 0.9  # opacidade do nome de usuário
-HANDLE_FONTE_FRAC = 0.030  # tamanho da fonte como fração da largura
-HANDLE_GAP_FRAC = 0.80  # posição do @usuário dentro da caixa do logo
+# Crédito de reprodução no canto superior direito, por clipe: linha 1 fixa
+# ("Reprodução Imagem: X") e linha 2 com a conta do post de origem. Estética
+# editorial de rede social: Archivo Black branca sobre tarja preta
+# semitransparente, alinhada à direita. Some enquanto um infográfico ocupa o
+# terço superior (mesmo mecanismo que escondia o antigo branding).
+FONTE_CREDITO = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
+CREDITO_TEXTOS = {
+    "brasil": ("Reprodução Imagem: X", "Conta {conta}"),
+    "usa": ("Image Credit: X", "Account {conta}"),
+}
+CREDITO_FONTE_FRAC = 0.026  # tamanho da fonte como fração da largura do vídeo
+CREDITO_MARGEM_FRAC = 0.030  # distância da borda direita (fração da largura)
+CREDITO_Y_FRAC = 0.045  # distância do topo como fração da altura
+CREDITO_ENTRELINHA = 1.55  # distância entre as duas linhas (fração da fonte)
+CREDITO_TARJA = 0.45  # opacidade da tarja preta atrás do texto
+CREDITO_TARJA_PAD_FRAC = 0.45  # respiro da tarja ao redor do texto (fração da fonte)
 
 
 def _exigir_ffmpeg() -> None:
@@ -59,22 +65,6 @@ def _exigir_ffmpeg() -> None:
                 f"{binario} não encontrado no PATH. "
                 "Instale o ffmpeg (winget install Gyan.FFmpeg) e reabra o terminal."
             )
-
-
-def _probe(arquivo: Path, entrada: str, fluxo: str = "v:0") -> str:
-    saida = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-select_streams", fluxo,
-            "-show_entries", entrada,
-            "-of", "csv=p=0",
-            str(arquivo),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return saida.stdout.strip().splitlines()[0] if saida.stdout.strip() else ""
 
 
 def duracao_audio(audio: Path) -> float:
@@ -92,13 +82,8 @@ def duracao_audio(audio: Path) -> float:
     return float(saida.stdout.strip())
 
 
-def _dimensoes(imagem: Path) -> tuple[int, int]:
-    valores = _probe(imagem, "stream=width,height").split(",")
-    return int(valores[0]), int(valores[1])
-
-
-# Extensões tratadas como clipe de vídeo nas sobreposições (mídias dos posts do
-# X baixadas pelo midia_x.py). O resto é tratado como imagem estática.
+# Extensões aceitas nas sobreposições (clipes dos posts do X baixados pelo
+# midia_x.py). Qualquer outra coisa é imagem estática — proibida no formato.
 EXTENSOES_VIDEO = {".mp4", ".mov", ".webm", ".mkv"}
 
 
@@ -121,17 +106,11 @@ def _ordenar(sobreposicoes: list[dict]) -> list[dict]:
     return sorted(sobreposicoes, key=chave)
 
 
-# Quanto puxar o início de cada imagem para a distribuição uniforme (0 = usa só
+# Quanto puxar o início de cada clipe para a distribuição uniforme (0 = usa só
 # o ponto do trecho, gerando durações bem irregulares; 1 = ignora o trecho e
-# espaça tudo igual). 0.6 equilibra: cada imagem fica perto do momento da
+# espaça tudo igual). 0.6 equilibra: cada clipe fica perto do momento da
 # narração que ilustra, mas sem piscar nem eternizar.
 PESO_UNIFORME = 0.6
-# Piso de duração de cada imagem, como fração do passo médio (duração/n). Garante
-# que nenhuma imagem fique pouco tempo demais na tela.
-PISO_FRACAO_PASSO = 0.5
-# Piso de duração quando os tempos vêm do planejador de cortes (segundos). O
-# plano manda; o piso só protege de cortes colados por citações vizinhas.
-PISO_PLANO = 1.0
 
 
 def _calcular_janelas(
@@ -141,21 +120,25 @@ def _calcular_janelas(
 
     Com tempos explícitos do planejador de cortes ("inicio_s" em todas as
     entradas), os inícios são usados como estão, só com saneamento (ordem,
-    piso, limites). Sem plano, cada imagem entra perto do ponto da narração do
-    seu trecho e fica até a próxima entrar, misturando o ponto do trecho com
-    uma distribuição uniforme para evitar durações irregulares; imagens sem
+    piso, limites). Sem plano, cada clipe entra perto do ponto da narração do
+    seu trecho e fica até o próximo entrar, misturando o ponto do trecho com
+    uma distribuição uniforme para evitar durações irregulares; clipes sem
     sincronização conhecida entram na posição uniforme.
+
+    O piso de exibição é MIN_EXIBICAO, mas nunca mais que a fatia média
+    (duração/n): com poucos clipes a fatia média é larga e o piso só protege
+    de cortes colados; num vídeo curto demais para o piso, ele cede em vez de
+    empilhar todos os clipes no fim.
     """
     n = len(sobreposicoes)
     if n == 0:
         return []
 
+    piso = min(MIN_EXIBICAO, duracao / n)
     if all(s.get("inicio_s") is not None for s in sobreposicoes):
-        piso = PISO_PLANO
         inicios = [min(max(0.0, float(s["inicio_s"])), duracao) for s in sobreposicoes]
     else:
         passo = duracao / n
-        piso = PISO_FRACAO_PASSO * passo
         inicios = []
         for i, s in enumerate(sobreposicoes):
             uniforme = i * passo
@@ -166,8 +149,8 @@ def _calcular_janelas(
                 alvo = max(0.0, frac * duracao)
                 inicios.append(PESO_UNIFORME * uniforme + (1 - PESO_UNIFORME) * alvo)
 
-    # Garante ordem crescente, início em 0 e duração mínima (piso) em todas,
-    # inclusive na última (reservando 'piso' para cada imagem ainda por vir).
+    # Garante ordem crescente, início em 0 e duração mínima (piso) em todos,
+    # inclusive no último (reservando 'piso' para cada clipe ainda por vir).
     inicios[0] = 0.0
     for i in range(1, n):
         inicios[i] = max(inicios[i], inicios[i - 1] + piso)
@@ -197,12 +180,15 @@ def _caminho_filtro(caminho: Path) -> str:
 
 
 def _texto_drawtext(texto: str) -> str:
-    """Escapa um texto para uso dentro de text='...' do filtro drawtext."""
-    return texto.replace("\\", "\\\\").replace("'", r"'\''")
+    """Escapa um texto para uso dentro de text='...' do filtro drawtext.
 
-
-def _par(valor: int) -> int:
-    return valor if valor % 2 == 0 else valor + 1
+    O ':' precisa de escape próprio: as aspas simples protegem no nível do
+    GRAFO de filtros, mas o parser de opções do drawtext ainda divide em ':'
+    — sem o '\\:' um texto como "Reprodução Imagem: X" quebra o filtro.
+    """
+    return (
+        texto.replace("\\", "\\\\").replace("'", r"'\''").replace(":", "\\:")
+    )
 
 
 def montar_video(
@@ -212,52 +198,64 @@ def montar_video(
     largura: int,
     altura: int,
     legendas: Path | None = None,
-    handle: str | None = None,
-    logo: Path | None = LOGO_PADRAO,
     graficos: list[dict] | None = None,
+    publico: str = "brasil",
 ) -> Path:
-    """Monta o vídeo final com fundo borrado da própria imagem e zoom suave.
+    """Monta o vídeo final: clipes do X com fundo borrado do próprio clipe.
 
     `sobreposicoes`: [{"caminho": Path, "inicio_frac": float|None,
-    "fim_frac": float|None}, ...] — frações (0 a 1) da narração em que a
-    imagem entra; None usa distribuição uniforme. As imagens cobrem 100% da
-    narração (sem instante vazio) e fazem crossfade entre si.
-
-    `logo`/`handle`: branding no topo (logo do YouTube Shorts e @usuário), ambos
-    com borda branca para destacar sobre o fundo da imagem.
+    "fim_frac": float|None, "conta": str}, ...] — frações (0 a 1) da narração
+    em que o clipe entra; None usa distribuição uniforme. SOMENTE clipes de
+    vídeo (imagem estática aborta). Os clipes cobrem 100% da narração (sem
+    instante vazio) e fazem crossfade entre si; "conta" (@usuario do post de
+    origem) alimenta o crédito de reprodução no canto superior direito.
 
     `graficos`: infográficos animados (grafico.py) — [{"pattern": str,
     "inicio_s": float, "dur_s": float}, ...], sequências de PNGs RGBA
-    sobrepostas ao vídeo. Enquanto um infográfico está na tela, o branding
-    (logo + handle) some: o infográfico ocupa o lugar dele no terço superior.
+    sobrepostas ao vídeo. Enquanto um infográfico está na tela, o crédito
+    some: o infográfico ocupa o terço superior.
+
+    `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
     """
     _exigir_ffmpeg()
+    if not FONTE_CREDITO.is_file():
+        raise SystemExit(
+            f"Fonte do crédito de reprodução ausente ({FONTE_CREDITO}) — sem "
+            "ela o vídeo sairia sem creditar a conta de origem dos clipes; "
+            "abortando."
+        )
 
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
     graficos = graficos or []
 
-    # Janelas dos infográficos: o branding desliga nelas (enable do ffmpeg).
+    # Janelas dos infográficos: o crédito desliga nelas (enable do ffmpeg).
     janelas_gfx = [
         (g["inicio_s"], min(g["inicio_s"] + g["dur_s"], duracao)) for g in graficos
     ]
-    oculta_branding = "".join(
+    oculta_gfx = "".join(
         f"*(1-between(t,{a:.2f},{b:.2f}))" for a, b in janelas_gfx
     )
-    enable_branding = f":enable='1{oculta_branding}'" if oculta_branding else ""
 
     sobreposicoes = _ordenar(sobreposicoes)
+    estaticas = [s for s in sobreposicoes if not _e_video(s["caminho"])]
+    if estaticas:
+        raise SystemExit(
+            "Imagem estática na montagem é proibida (o formato usa só clipes "
+            "de vídeo do X): "
+            + ", ".join(Path(s["caminho"]).name for s in estaticas)
+        )
     janelas = _calcular_janelas(sobreposicoes, duracao)
     pares = list(zip(sobreposicoes, janelas))
     n = len(pares)
     for s, (ini, fim) in pares:
         if fim - ini > MAX_EXIBICAO + 0.01:
             print(
-                f"[edicao] aviso: imagem fica {fim - ini:.1f}s na tela "
+                f"[edicao] aviso: clipe fica {fim - ini:.1f}s na tela "
                 f"(acima do alvo de {MAX_EXIBICAO:.0f}s)"
             )
 
     # Base preta (entrada 0); narração é a entrada 1. Com cobertura total, a
-    # base só aparece se faltarem imagens.
+    # base só aparece se faltarem clipes.
     filtros = [f"[0:v]fps={FPS},format=rgba[base]"]
     corrente = "base"
 
@@ -271,17 +269,11 @@ def montar_video(
     for i, (s, (ini, fim)) in enumerate(pares):
         fim_render = min(fim + CROSSFADE, duracao)
         dur_render = fim_render - ini
-        e_video = _e_video(s["caminho"])
-        if e_video:
-            # Clipe: repete em loop se for mais curto que a janela; -t corta.
-            comando += ["-stream_loop", "-1", "-t", f"{dur_render:.2f}",
-                        "-i", str(s["caminho"])]
-        else:
-            comando += ["-loop", "1", "-t", f"{dur_render:.2f}", "-i", str(s["caminho"])]
+        # Clipe: repete em loop se for mais curto que a janela; -t corta.
+        comando += ["-stream_loop", "-1", "-t", f"{dur_render:.2f}",
+                    "-i", str(s["caminho"])]
 
         idx = i + 2
-        larg_img, alt_img = _dimensoes(s["caminho"])
-        fg_h = _par(round(largura * alt_img / max(larg_img, 1)))
 
         fade_in = (
             f"fade=t=in:st=0:d={CROSSFADE}:alpha=1," if i > 0 else ""
@@ -291,24 +283,11 @@ def montar_video(
             if i < n - 1 else ""
         )
 
-        # Achata sobre BRANCO antes de dividir: imagens com fundo transparente
-        # (logos, recortes em PNG) ganham um fundo branco sólido em vez de deixar
-        # o vídeo vazar por trás. Fotos opacas não mudam (o branco fica coberto).
-        # Clipes de vídeo são opacos e pulam a etapa — e o canvas de ffprobe não
-        # é confiável para eles (rotação de celular troca largura/altura).
-        if e_video:
-            filtros.append(
-                f"[{idx}:v]fps={FPS},format=rgba,split[in_bg{i}][in_fg{i}]"
-            )
-        else:
-            filtros.append(f"color=c=white:s={larg_img}x{alt_img}:r={FPS}[wbg{i}]")
-            filtros.append(f"[{idx}:v]fps={FPS},format=rgba[src{i}]")
-            filtros.append(
-                f"[wbg{i}][src{i}]overlay=0:0:shortest=1,format=rgba,"
-                f"split[in_bg{i}][in_fg{i}]"
-            )
+        filtros.append(
+            f"[{idx}:v]fps={FPS},format=rgba,split[in_bg{i}][in_fg{i}]"
+        )
 
-        # Fundo: a própria imagem cobrindo a tela toda, borrada e levemente escura.
+        # Fundo: o próprio clipe cobrindo a tela toda, borrado e levemente escuro.
         filtros.append(
             f"[in_bg{i}]scale={largura}:{altura}:force_original_aspect_ratio=increase,"
             f"crop={largura}:{altura},gblur=sigma={BLUR_SIGMA},"
@@ -317,43 +296,22 @@ def montar_video(
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
         )
 
-        # Frente: imagem nítida em largura total com zoom suave (alterna a
-        # direção). Clipes de vídeo dispensam o zoompan: já têm movimento
-        # próprio, e o zoompan quadro a quadro os congelaria.
-        if e_video:
-            filtros.append(
-                f"[in_fg{i}]scale={largura}:-2,"
-                f"format=rgba,{fade_in}{fade_out}"
-                f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
-            )
-        else:
-            if i % 2 == 0:
-                zoom = f"min(1+{ZOOM_RATE}*on,{ZOOM_MAX})"
-            else:
-                zoom = f"max({ZOOM_MAX}-{ZOOM_RATE}*on,1.0)"
-            filtros.append(
-                f"[in_fg{i}]scale={largura}:-2,"
-                f"zoompan=z='{zoom}':d=1:s={largura}x{fg_h}:fps={FPS}"
-                f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)',"
-                f"format=rgba,{fade_in}{fade_out}"
-                f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
-            )
+        # Frente: o clipe nítido em largura total, centrado. Sem zoom nem
+        # deslize — o clipe já tem movimento próprio; a transição editorial é
+        # um crossfade curto e limpo.
+        filtros.append(
+            f"[in_fg{i}]scale={largura}:-2,"
+            f"format=rgba,{fade_in}{fade_out}"
+            f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
+        )
 
         # Sobrepõe fundo e depois a frente, ambos ativos na janela (+ crossfade).
         filtros.append(
             f"[{corrente}][bg{i}]overlay=0:0:eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[b{i}]"
         )
-        # "Woosh": a imagem nítida desliza para o centro durante o crossfade,
-        # alternando o lado (direita/esquerda), em sincronia com o efeito sonoro.
-        if i == 0:
-            x_fg = "(W-w)/2"
-        else:
-            sinal = "+" if i % 2 == 0 else "-"
-            prog = f"(1-min(1\\,(t-{ini:.2f})/{CROSSFADE:.2f}))"
-            x_fg = f"(W-w)/2{sinal}(W+w)/2*{prog}"
         filtros.append(
-            f"[b{i}][fg{i}]overlay={x_fg}:(H-h)/2:eof_action=pass"
+            f"[b{i}][fg{i}]overlay=(W-w)/2:(H-h)/2:eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[f{i}]"
         )
         corrente = f"f{i}"
@@ -366,66 +324,42 @@ def montar_video(
         filtros.append(f"[{corrente}]{filtro_ass}[vleg]")
         corrente = "vleg"
 
-    # Branding no topo (sobre tudo). `prox_entrada` numera as entradas extras
-    # do ffmpeg daqui em diante (logo, infográficos, woosh, trilha).
+    # Crédito de reprodução no canto superior direito (sobre as legendas):
+    # linha 1 fixa e linha 2 com a conta do post de origem do clipe que está
+    # na tela — cada clipe liga o seu crédito na sua janela. `prox_entrada`
+    # numera as entradas extras do ffmpeg daqui em diante (infográficos,
+    # woosh, trilha).
     prox_entrada = 2 + n
-    usar_logo = logo is not None and Path(logo).is_file()
-    if usar_logo:
-        idx_logo = prox_entrada
-        prox_entrada += 1
-        comando += ["-loop", "1", "-i", str(logo)]
-        log_l, log_a = _dimensoes(logo)
-        largura_logo = round(largura * LOGO_LARGURA_FRAC)
-        altura_logo = round(largura_logo * log_a / log_l)
-        y_logo = round(altura * LOGO_Y_FRAC)
-        borda = max(3, round(largura_logo * LOGO_BORDA_FRAC))
-        # Borda branca: cópia branca do logo com o alfa dilatado (cada passe de
-        # `dilation` engrossa 1 px), posta atrás. O pad garante espaço para a
-        # borda crescer sem ser cortada na beirada da imagem.
-        filtros.append(
-            f"[{idx_logo}:v]format=rgba,scale={largura_logo}:{altura_logo},"
-            f"pad={largura_logo + 2 * borda}:{altura_logo + 2 * borda}"
-            f":{borda}:{borda}:color=black@0,split[lg][lg2]"
-        )
-        dilatacao = ",".join(["dilation"] * borda)
-        filtros.append(
-            f"[lg2]lutrgb=r=255:g=255:b=255,{dilatacao}[halo]"
-        )
-        filtros.append(
-            f"[halo][lg]overlay=0:0[logocb]"
-        )
-        filtros.append(
-            f"[logocb]colorchannelmixer=aa={LOGO_OPACIDADE},"
-            f"fade=t=in:st=0:d={FADE}:alpha=1[logo]"
-        )
-        filtros.append(
-            f"[{corrente}][logo]overlay=(W-w)/2:{y_logo}:eof_action=pass"
-            f"{enable_branding}[vlogo]"
-        )
-        corrente = "vlogo"
-
-    if handle and FONTE_HANDLE.is_file():
-        y_base = round(altura * LOGO_Y_FRAC)
-        if usar_logo:
-            y_handle = y_base + round(altura_logo * HANDLE_GAP_FRAC)
-        else:
-            y_handle = y_base
-        fonte = round(largura * HANDLE_FONTE_FRAC)
-        borda_txt = max(2, round(fonte * 0.12))
-        filtros.append(
-            f"[{corrente}]drawtext=fontfile='{_caminho_filtro(FONTE_HANDLE)}'"
-            f":text='{_texto_drawtext(handle)}':fontcolor=black"
-            f":borderw={borda_txt}:bordercolor=white"
-            f":fontsize={fonte}"
-            f":x=(w-text_w)/2:y={y_handle}"
-            f":alpha='if(lt(t,{FADE}),{HANDLE_OPACIDADE}*t/{FADE},{HANDLE_OPACIDADE})'"
-            f"{enable_branding}"
-            f"[vbrand]"
-        )
-        corrente = "vbrand"
+    rotulo_fixo, rotulo_conta = CREDITO_TEXTOS.get(publico, CREDITO_TEXTOS["brasil"])
+    fonte = round(largura * CREDITO_FONTE_FRAC)
+    margem = round(largura * CREDITO_MARGEM_FRAC)
+    pad = max(6, round(fonte * CREDITO_TARJA_PAD_FRAC))
+    y1 = round(altura * CREDITO_Y_FRAC)
+    y2 = y1 + round(fonte * CREDITO_ENTRELINHA) + 2 * pad
+    base_credito = (
+        f"drawtext=fontfile='{_caminho_filtro(FONTE_CREDITO)}'"
+        f":fontcolor=white:fontsize={fonte}"
+        f":box=1:boxcolor=black@{CREDITO_TARJA}:boxborderw={pad}"
+    )
+    seq = 0
+    for s, (ini, fim) in pares:
+        linhas = [rotulo_fixo]
+        conta = (s.get("conta") or "").strip()
+        if conta:
+            linhas.append(rotulo_conta.format(conta=conta))
+        enable = f":enable='between(t,{ini:.2f},{fim:.2f}){oculta_gfx}'"
+        for texto, y in zip(linhas, (y1, y2)):
+            filtros.append(
+                f"[{corrente}]{base_credito}"
+                f":text='{_texto_drawtext(texto)}'"
+                f":x=w-text_w-{margem}:y={y}"
+                f"{enable}[vcred{seq}]"
+            )
+            corrente = f"vcred{seq}"
+            seq += 1
 
     # Infográficos animados (sequências de PNG RGBA do grafico.py) por cima de
-    # tudo — eles ocupam o lugar do branding, que já foi desligado nas janelas.
+    # tudo — o crédito já foi desligado nas janelas deles.
     for j, g in enumerate(graficos):
         idx_gfx = prox_entrada
         prox_entrada += 1
@@ -442,8 +376,8 @@ def montar_video(
         )
         corrente = f"vgfx{j}"
 
-    # Áudio: narração + woosh em cada transição de imagem + trilha de fundo
-    # opcional. A primeira imagem não tem transição de entrada.
+    # Áudio: narração + woosh em cada transição de clipe + trilha de fundo
+    # opcional. O primeiro clipe não tem transição de entrada.
     mapa_audio = "1:a"
     transicoes = [ini for _, (ini, _) in pares[1:]]
     usar_woosh = WOOSH.is_file() and bool(transicoes)

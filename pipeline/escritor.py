@@ -21,7 +21,7 @@ Duas etapas:
    citando as fontes (contas do X e veículos das notícias do Firecrawl),
    dentro de uma FAIXA dura de palavras (piso e teto derivados de
    VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
-   duração-alvo) e define de 8 a 10 imagens-chave. Ao final, a AUDITORIA
+   duração-alvo). Ao final, a AUDITORIA
    PRÓ-LEIGO (`_auditar_leigo`, chamada própria ao GPT) confere título,
    descrição e narração contra as regras de leigo (nome de nicho, jargão,
    teaser/frase vazia na descrição, âncora ausente) e reprova com UMA
@@ -184,61 +184,6 @@ ESQUEMA_ROTEIRO = {
                     "repete o hook é o reinício do loop, não o texto."
                 ),
             },
-            "imagens": {
-                "type": "array",
-                "minItems": 8,
-                "maxItems": 10,
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "consulta": {
-                            "type": "string",
-                            "description": (
-                                "Consulta de busca de imagem em inglês para "
-                                "encontrar UMA cena real e coerente com este "
-                                "momento da narração. Priorize a foto do "
-                                "próprio fato: pessoas envolvidas EM AÇÃO (no "
-                                "palco, falando, no contexto da notícia — não "
-                                "retrato posado), o evento com público, o "
-                                "produto em uso real, o lugar com movimento. "
-                                "Logo, logomarca ou logotipo é PROIBIDO em "
-                                "qualquer consulta (a marca sozinha não é "
-                                "cena); planilha/documento/slide/gráfico "
-                                "é PROIBIDO salvo quando o artefato É a "
-                                "notícia (memo vazado, carta oficial). "
-                                "REGRAS DURAS: "
-                                "(1) UM único assunto concreto e fotografável "
-                                "por consulta — PROIBIDO consulta composta tipo "
-                                "'X and Y side by side' ou 'logos A e B juntos' "
-                                "(não existe foto assim; busque um por vez). "
-                                "(2) PROIBIDO consulta de conceito abstrato que "
-                                "só retorna banco de imagens (ex.: 'data center "
-                                "server room', 'person using laptop', 'AI "
-                                "automation concept'); ancore sempre em nome "
-                                "próprio + fato real. (3) Seja específico com "
-                                "nomes próprios e o acontecimento. Evite "
-                                "ilustrações genéricas, fotos de banco de "
-                                "imagens (stock) e imagens geradas por IA."
-                            ),
-                        },
-                        "trecho": {
-                            "type": "string",
-                            "description": (
-                                "Trecho copiado LITERALMENTE do texto_video "
-                                "(substring exata, contígua) durante o qual "
-                                "esta imagem deve aparecer na tela."
-                            ),
-                        },
-                    },
-                    "required": ["consulta", "trecho"],
-                },
-                "description": (
-                    "8 a 10 imagens-chave sincronizadas com a narração, "
-                    "distribuídas do início ao fim do roteiro para que NUNCA "
-                    "haja um trecho sem imagem na tela."
-                ),
-            },
         },
         "required": [
             "tema",
@@ -247,7 +192,6 @@ ESQUEMA_ROTEIRO = {
             "titulo",
             "descricao",
             "texto_video",
-            "imagens",
         ],
     },
 }
@@ -417,6 +361,11 @@ Todo vídeo do canal é EXPLICATIVO — análise ou educacional —, então pref
 em empate, a candidata que rende a melhor explicação (um acontecimento com
 causa, mecanismo e consequência claros).
 
+FORMATO DO CANAL: o vídeo é montado SOMENTE com os clipes de vídeo anexados
+aos posts do X da trend (até 3 clipes; nenhuma foto estática). Todas as
+candidatas listadas têm pelo menos 1 post com clipe, mas em empate prefira a
+que tem MAIS clipes e o material em vídeo mais forte (veja "apelo visual").
+
 CRITÉRIO ÚNICO — O QUE A AUDIÊNCIA ESTÁ ASSISTINDO: escolha a trend com a
 maior chance de performar com a audiência DESTE canal, e a régua são os
 NÚMEROS listados, não opinião editorial. Os vídeos recentes com MAIS views e
@@ -563,41 +512,12 @@ FATO — nunca o hook, a implicação única nem o corte final. Se sobrar espaç
 acrescente um detalhe concreto ao FATO (número, nome, cena) — nunca encha
 linguiça.
 
-IMAGENS — defina de 8 a 10 imagens-chave, distribuídas do começo ao fim do
-roteiro (NUNCA pode haver um trecho da narração sem imagem na tela). REGRAS:
-- A PRIMEIRA imagem é a mais importante do vídeo: ela é o primeiro frame que a
-  pessoa vê no feed e decide o "viewed vs swiped" junto com o hook. Reserve
-  para ela a cena real mais forte e chocante da notícia — nunca logo, nunca
-  retrato posado, nunca imagem "de contexto".
-- As imagens serão buscadas na web (fotos REAIS, nada gerado por IA). Em
-  "consulta", escreva a busca em inglês que encontra a CENA mais COERENTE com a
-  notícia daquele momento. Priorize, nesta ordem: (1) a foto do próprio
-  fato/evento acontecendo; (2) a figura pública envolvida EM AÇÃO — no palco,
-  falando, gesticulando, no contexto da notícia (não retrato posado de arquivo);
-  (3) o produto EM USO real; (4) o lugar do acontecimento com gente/movimento.
-  Exemplo (OpenAI lançando o GPT-6): "Sam Altman GPT-6 launch keynote stage",
-  "OpenAI GPT-6 announcement event audience",
-  "OpenAI DevDay San Francisco crowd".
-- LOGO: PROIBIDO. Nenhuma consulta pode pedir logo, logomarca ou logotipo —
-  a marca sozinha não é cena e consultas com essas palavras são descartadas em
-  código (o momento fica sem imagem própria). Quando o momento não tiver cena
-  óbvia, busque a pessoa envolvida em ação, o produto em uso, a sede/prédio
-  com movimento ou o evento — nunca a marca.
-- PROIBIDO consulta que devolve planilha, documento, slide, print de parágrafo
-  de texto ou gráfico — EXCETO quando esse artefato É a própria notícia (a carta
-  oficial, o memo vazado, o e-mail da demissão: aí ele é a prova e vale ouro).
-- Prefira a imagem do acontecimento real em vez de ilustração genérica; evite
-  fotos de banco de imagens (stock) e imagens geradas por IA.
-- UM assunto por consulta. NÃO peça imagem composta ("Claude and ChatGPT logos
-  side by side", "A e B juntos") — isso não existe como foto; busque um de cada
-  vez. NÃO use consulta de conceito abstrato que só devolve stock ("data center
-  server room", "person using laptop", "automation concept"): ancore em nome
-  próprio + fato (ex.: troque "AI outage concept" por "Claude status page outage
-  screenshot").
-- Prefira assuntos visualmente documentados e fáceis de achar em boa resolução.
-- Em "trecho", copie literalmente a parte do texto_video em que a imagem deve
-  aparecer (substring exata do texto_video, sem alterar nada). Distribua as
-  imagens uniformemente ao longo de TODO o texto.
+MATERIAL VISUAL — o vídeo é montado SOMENTE com os clipes de vídeo anexados
+aos posts do X da trend (nada de foto estática nem imagem de banco). Você não
+escolhe os clipes — um editor de cortes casa cada um com a narração depois —
+mas escreva o texto SABENDO disso: descreva cenas que os posts da trend
+documentam em vídeo, e lembre que o primeiro clipe + o hook decidem o "viewed
+vs swiped".
 
 NARRAÇÃO EXPRESSIVA — insira audio tags do ElevenLabs v3 no texto_video:
 palavras em inglês entre colchetes, imediatamente antes do trecho que modificam.
@@ -618,6 +538,7 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"   Resumo: {t['resumo']}\n"
             f"   Macrotema: {t.get('macrotema', '?')}\n"
             f"   Posts coletados sobre o assunto: {t.get('num_posts', '?')}\n"
+            f"   Posts com clipe de vídeo nativo: {t.get('posts_com_video', '?')}\n"
             f"   Imagem mental: {t.get('imagem_mental', '?')}\n"
             f"   Engajamento: {t.get('engajamento', '?')}\n"
             f"   Sentimento: {t.get('sentimento', '?')}\n"
@@ -819,7 +740,9 @@ def selecionar_trend(
     e os campeões de retenção (``youtube.top_retencao``), e o critério é um só
     — a maior chance de performar com a audiência DESTE canal.
 
-    Duas regras duras, APLICADAS aqui e não só pedidas no prompt:
+    Regras duras, APLICADAS aqui e não só pedidas no prompt:
+    0. Candidata sem nenhum post com clipe de vídeo nativo sai da disputa
+       antes de tudo: o formato do canal é montado só com clipes do X.
     1. O mesmo macrotema não emenda mais de MAX_MACROTEMA_SEGUIDOS vídeos
        seguidos. Quando os últimos MAX_MACROTEMA_SEGUIDOS publicados são
        todos do mesmo macrotema, as candidatas dele saem da disputa ANTES da
@@ -837,7 +760,21 @@ def selecionar_trend(
         _macrotemas_recentes(cliente, cfg, videos_recentes) if videos_recentes else []
     )
 
-    candidatas = list(trends)
+    # O formato do canal é montado só com clipes dos posts do X: candidata
+    # sem nenhum post com vídeo nativo não tem material e sai da disputa.
+    candidatas = [t for t in trends if t.get("posts_com_video")]
+    if len(candidatas) < len(trends):
+        print(
+            f"[veto] {len(trends) - len(candidatas)} candidata(s) sem nenhum "
+            f"post com vídeo nativo fora da disputa ({len(candidatas)} de "
+            f"{len(trends)} seguem)."
+        )
+    if not candidatas:
+        raise SystemExit(
+            "Nenhuma candidata de hoje tem post com clipe de vídeo nativo — o "
+            "formato do canal é montado só com clipes do X; execução sem vídeo."
+        )
+
     macro_bloqueado = _macrotema_no_teto(macros_recentes)
     if macro_bloqueado:
         candidatas = [
@@ -1111,10 +1048,7 @@ def gerar_roteiro(
                 "única e o corte final em tensão) até entrar na faixa de "
                 f"{minimo} a {limite} palavras"
             )
-        ) + (
-            ", e ajuste os trechos das imagens para continuarem "
-            "substrings exatas do novo texto_video."
-        )
+        ) + "."
         resposta = cliente.chat.completions.create(
             model=cfg.text_model,
             messages=[
@@ -1155,8 +1089,7 @@ def gerar_roteiro(
             "o fato com a fonte, sem teaser nem frase vazia; jargão ganha "
             "explicação de meia frase ou sai; assunto de nicho ganha âncora "
             "logo após o hook. Mantenha o texto_video na faixa de "
-            f"{minimo} a {limite} palavras faladas e os trechos das imagens "
-            "como substrings exatas do novo texto_video.\nProblemas:\n- "
+            f"{minimo} a {limite} palavras faladas.\nProblemas:\n- "
             + "\n- ".join(problemas)
         )
         resposta = cliente.chat.completions.create(
@@ -1194,5 +1127,4 @@ def gerar_roteiro(
         print(f"[roteiro] Hook: {roteiro['hook']}")
     if roteiro.get("implicacao"):
         print(f"[roteiro] Implicação: {roteiro['implicacao']}")
-    print(f"[roteiro] {len(roteiro['imagens'])} imagens-chave definidas")
     return roteiro

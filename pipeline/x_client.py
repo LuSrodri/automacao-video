@@ -124,8 +124,9 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
                     "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "sort_order": "relevancy",
                     "tweet.fields": "created_at,public_metrics,text",
-                    "expansions": "author_id",
+                    "expansions": "author_id,attachments.media_keys",
                     "user.fields": "username",
+                    "media.fields": "type",
                 },
             )
         except requests.RequestException as erro:
@@ -134,10 +135,21 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
 
         includes = dados.get("includes") or {}
         autores = {u["id"]: u["username"] for u in includes.get("users") or []}
+        # Tipo de cada mídia anexada: o formato do vídeo é montado SÓ com
+        # clipes dos posts, então saber quem tem vídeo nativo orienta a
+        # curadoria e a seleção (mesma chamada, nenhum custo extra).
+        tipo_midia = {
+            m.get("media_key"): m.get("type")
+            for m in includes.get("media") or []
+        }
 
         for post in dados.get("data") or []:
             metricas = post.get("public_metrics") or {}
             usuario = autores.get(post.get("author_id"), "")
+            chaves = (post.get("attachments") or {}).get("media_keys") or []
+            tem_video = any(
+                tipo_midia.get(c) in ("video", "animated_gif") for c in chaves
+            )
             posts.append(
                 {
                     "url": f"https://x.com/{usuario}/status/{post['id']}",
@@ -148,6 +160,7 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
                     "reposts": metricas.get("retweet_count", 0)
                     + metricas.get("quote_count", 0),
                     "respostas": metricas.get("reply_count", 0),
+                    "video": tem_video,
                 }
             )
 
@@ -162,9 +175,10 @@ def _listar_posts(posts: list[dict]) -> str:
     linhas = []
     for p in posts:
         texto = " ".join(p["texto"].split())[:MAX_TEXTO_POST]
+        video = " | COM VÍDEO" if p.get("video") else ""
         linhas.append(
             f"- @{p['usuario']} | {p['data']} UTC | {p['likes']} likes, "
-            f"{p['reposts']} reposts, {p['respostas']} respostas\n"
+            f"{p['reposts']} reposts, {p['respostas']} respostas{video}\n"
             f"  {p['url']}\n"
             f"  \"{texto}\""
         )
@@ -204,7 +218,9 @@ Regras dos campos:
   (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo e por quê.
 - "posts": até 5 URLs escolhidas SOMENTE entre as listadas acima, dos posts
   mais centrais da trend (os que originaram ou melhor documentam o assunto).
-  Nunca invente URL.
+  O vídeo do canal é montado com os CLIPES anexados a esses posts: entre posts
+  igualmente centrais, PRIORIZE os marcados com "COM VÍDEO" — uma trend sem
+  nenhum post com vídeo não vira vídeo do canal. Nunca invente URL.
 - "data": YYYY-MM-DD do acontecimento.\
 """
 
@@ -302,6 +318,7 @@ def coletar_trends(cfg: Config) -> list[dict]:
 
     brutos = _resumir_trends(cfg, posts)
     urls_reais = {p["url"] for p in posts}
+    urls_com_video = {p["url"] for p in posts if p.get("video")}
 
     trends = []
     for t in brutos:
@@ -318,6 +335,10 @@ def coletar_trends(cfg: Config) -> list[dict]:
                 "sentimento": t.get("sentimento", "").strip(),
                 "apelo_visual": t.get("apelo_visual", "").strip(),
                 "posts": urls,
+                # Quantos dos posts escolhidos têm vídeo nativo: o formato do
+                # canal é montado só com clipes do X, então trend sem nenhum
+                # post com vídeo sai da disputa na seleção.
+                "posts_com_video": sum(1 for u in urls if u in urls_com_video),
                 "data": t.get("data", ""),
             }
         )

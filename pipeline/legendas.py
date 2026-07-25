@@ -1,10 +1,12 @@
 """Geração das legendas sincronizadas (formato ASS, queimadas pelo ffmpeg).
 
-As legendas aparecem UMA PALAVRA POR VEZ, sempre em MAIÚSCULAS, com uma leve
-animação de entrada (pop + fade). Quando nenhuma imagem está na tela, a palavra
-fica centralizada no meio; quando há imagem, ela vai para a parte de baixo
-(deixando o centro livre para a imagem). Tipografia Barlow, texto preto com
-borda branca.
+As legendas aparecem UMA PALAVRA POR VEZ, sempre em MAIÚSCULAS, com uma
+animação de "carimbo" editorial (a palavra entra um pouco maior e assenta no
+tamanho final, com fade rápido — sem pop saltitante). Quando nenhum clipe está
+na tela, a palavra fica centralizada no meio; quando há clipe, ela vai para a
+parte de baixo (deixando o centro livre para o clipe). Tipografia Archivo
+Black (manchete de rede social), texto branco com contorno preto grosso e
+sombra suave.
 """
 
 import re
@@ -12,9 +14,10 @@ from pathlib import Path
 
 MIN_EXIBICAO = 0.35  # segundos
 
-# Animação de entrada (sutil): a palavra surge a 82% do tamanho e cresce até
-# 100% em 140 ms, com um fade rápido. São tags de override do próprio ASS.
-ANIM = r"{\fscx82\fscy82\t(0,140,\fscx100\fscy100)\fad(80,40)}"
+# Animação de entrada (carimbo editorial): a palavra surge a 112% do tamanho e
+# ASSENTA em 100% em 100 ms, com um fade rápido — entrada de manchete, sem o
+# pop saltitante que crescia do menor para o maior. Tags de override do ASS.
+ANIM = r"{\fscx112\fscy112\t(0,100,\fscx100\fscy100)\fad(50,30)}"
 
 CABECALHO = """\
 [Script Info]
@@ -26,8 +29,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Centro,Barlow,{tam_centro},&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,1,4,0,5,40,40,0,1
-Style: Inferior,Barlow,{tam_inferior},&H00000000,&H00000000,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,1,4,0,2,40,40,{margem_v},1
+Style: Centro,Archivo Black,{tam_centro},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,5,2,5,40,40,0,1
+Style: Inferior,Archivo Black,{tam_inferior},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,5,2,2,40,40,{margem_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -96,16 +99,21 @@ def _agrupar(palavras: list[dict]) -> list[dict]:
     return eventos
 
 
-# Largura aproximada dos glifos maiúsculos da Barlow, em frações do tamanho da
-# fonte. Serve só para estimar se a palavra cabe na tela; o que não estiver na
-# tabela usa a média.
+# Largura dos glifos maiúsculos da Archivo Black (fonte bem mais larga que a
+# Barlow), em frações do tamanho da fonte — valores MEDIDOS no arquivo .ttf
+# (advance width via Pillow). Serve só para estimar se a palavra cabe na tela;
+# o que não estiver na tabela usa a média das maiúsculas.
 _LARGURA_GLIFO = {
-    "I": 0.32, "J": 0.48, "L": 0.54, "F": 0.56, "T": 0.58, "E": 0.58,
-    "B": 0.62, "P": 0.60, "R": 0.62, "S": 0.60, "Z": 0.58,
-    "M": 0.92, "W": 0.98,
-    "-": 0.40, "'": 0.25, ",": 0.28, ".": 0.28, "!": 0.32, "?": 0.55,
+    "I": 0.39, "J": 0.67, "L": 0.67, "F": 0.67, "T": 0.72, "E": 0.72,
+    "P": 0.72, "S": 0.72, "Z": 0.72,
+    "G": 0.83, "H": 0.83, "K": 0.83, "N": 0.83, "O": 0.83, "Q": 0.83,
+    "U": 0.83,
+    "M": 0.94, "W": 1.00,
+    "0": 0.67, "1": 0.67, "2": 0.67, "3": 0.67, "4": 0.67, "5": 0.67,
+    "6": 0.67, "7": 0.67, "8": 0.67, "9": 0.67,
+    "-": 0.33, "'": 0.28, ",": 0.33, ".": 0.33, "!": 0.33, "?": 0.61,
 }
-_LARGURA_PADRAO = 0.66
+_LARGURA_PADRAO = 0.78
 
 
 def _tamanho_que_cabe(palavra: str, tam_base: int, largura_util: float) -> int:
@@ -147,8 +155,10 @@ def gerar_legendas(
     palavras = _palavras_com_tempos(texto, alinhamento, dur_total)
     eventos = _agrupar(palavras)
 
-    tam_centro = max(56, round(largura * 0.150))
-    tam_inferior = max(40, round(largura * 0.110))
+    # Tamanhos generosos (formato de manchete): a legenda é o elemento de
+    # leitura principal do vídeo — palavra grande segura a atenção no mudo.
+    tam_centro = max(64, round(largura * 0.165))
+    tam_inferior = max(48, round(largura * 0.135))
     corpo = CABECALHO.format(
         largura=largura,
         altura=altura,

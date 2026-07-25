@@ -1,8 +1,8 @@
-"""Planejamento dos cortes: a IA decide quando cada mídia entra e quanto fica.
+"""Planejamento dos cortes: a IA decide quando cada clipe entra e quanto fica.
 
-O modelo recebe a narração e as mídias disponíveis (com descrições — as dos
-posts do X vêm do GPT com visão sobre os arquivos baixados; as da web, da
-consulta do roteirista) e devolve a sequência de cortes. Cada corte é ancorado numa
+O modelo recebe a narração e os clipes de vídeo disponíveis (até 3, todos dos
+posts do X da trend, com descrições do GPT com visão sobre os arquivos
+baixados) e devolve a sequência de cortes. Cada corte é ancorado numa
 CITAÇÃO EXATA do texto da narração — nunca em segundos, que LLM chuta — e a
 citação é convertida em tempo real pelos timestamps por caractere do
 alinhamento do ElevenLabs (já remapeados após o corte de silêncios).
@@ -18,8 +18,10 @@ from openai import OpenAI
 
 from .config import AVISO_DADOS_EXTERNOS, Config
 
-# Mínimo de cortes válidos para aceitar o plano (abaixo disso, fallback)
-MIN_CORTES = 2
+# Mínimo de cortes válidos para aceitar o plano (abaixo disso, fallback). Com
+# até 3 clipes, ficar num único clipe forte o vídeo inteiro é escolha
+# editorial legítima — só o plano VAZIO (resposta inútil) cai no fallback.
+MIN_CORTES = 1
 
 ESQUEMA_CORTES = {
     "name": "plano_de_cortes",
@@ -63,58 +65,45 @@ ESQUEMA_CORTES = {
 INSTRUCOES_CORTES = """\
 Você é o EDITOR DE CORTES de um vídeo vertical curto (YouTube Shorts) narrado.
 
-Você recebe o texto da NARRAÇÃO (com duração total) e as MÍDIAS disponíveis
-(fotos e clipes de vídeo), cada uma com um id e a descrição do que mostra. As
-mídias vêm de duas origens: dos POSTS ORIGINAIS do X sobre o fato (o material
-mais autêntico) e de busca na web.
+Você recebe o texto da NARRAÇÃO (com duração total) e os CLIPES DE VÍDEO
+disponíveis (até 3, todos anexados aos posts originais do X sobre o fato),
+cada um com um id, a duração e a descrição do que mostra. O vídeo é montado
+SOMENTE com esses clipes — não há fotos.
 
-Monte a sequência de cortes: qual mídia aparece, em que ordem e em que momento
-da narração cada uma ENTRA. Cada mídia fica na tela até a próxima entrar (a
-última vai até o fim). Regras:
+Monte a sequência de cortes: qual clipe aparece, em que ordem e em que momento
+da narração cada um ENTRA. Cada clipe fica na tela até o próximo entrar (o
+último vai até o fim; clipe mais curto que a janela repete em loop). Regras:
 
 1. "entra_em" é uma citação EXATA e CURTA (3 a 8 palavras consecutivas) do
    texto da narração, copiada caractere por caractere, com a mesma pontuação e
    acentuação. NÃO parafraseie: a citação é localizada no texto por busca
    literal, e citação que não existir descarta o corte.
 2. O primeiro corte DEVE citar as primeiras palavras da narração — o vídeo
-   nunca começa sem mídia.
-3. CASE mídia e fala: a mídia entra quando a narração fala do que ela mostra.
-   Reserve as mídias dos posts originais para os momentos-chave (gancho e
-   clímax).
-4. RITMO (estime ~2,5 palavras por segundo): nenhuma mídia fica menos de ~1,5s
-   (cortes a menos de 4 palavras um do outro) nem mais de ~8s (~20 palavras).
-   Fotos rendem 2 a 4s. Clipe de vídeo bom merece 4 a 8s — não corte um clipe
-   no meio da ação (a duração de cada clipe está indicada; clipe mais curto que
-   a janela repete em loop).
-5. DINÂMICA COM PROGRESSÃO: durações parecidas hipnotizam — os cortes NÃO podem
-   ser uniformes. Comece com cortes médios (3–4s) apresentando a situação,
-   ACELERE na escalada de fatos (1,5–2,5s por corte) e segure o corte mais
-   longo (5–8s) na revelação/clímax, de preferência com a mídia mais forte
-   (clipe de vídeo ou a foto-prova). DENSIDADE: mire em um corte a cada 2–4s em
-   média — num vídeo de 30–40s, isso significa usar de 8 a 15 mídias. Só fique
-   muito abaixo disso se as mídias disponíveis forem realmente fracas.
-6. HIERARQUIA DE FORÇA: clipe de vídeo > foto contextualizada (pessoas em ação,
-   evento com público, produto em uso) > foto de lugar/retrato > planilha ou
-   documento. LOGO/logomarca/logotipo é PROIBIDO: mídia que mostra só a marca
-   NUNCA entra num corte (omita-a). Mídia fraca (documento, gráfico solto),
-   redundante ou fora do assunto: NÃO use (basta omitir) — EXCETO quando o
-   documento É a prova da notícia (memo vazado, e-mail da demissão): aí ele
-   merece um corte de destaque. Não repita mídia.
+   nunca começa sem clipe na tela. O primeiro clipe decide o "viewed vs
+   swiped": abra com o clipe mais forte que couber no gancho.
+3. CASE clipe e fala: o clipe entra quando a narração fala do que ele mostra.
+   Com poucos clipes, divida a narração em blocos que façam sentido com o
+   conteúdo de cada um — o momento da troca importa mais que a quantidade.
+4. RITMO (estime ~2,5 palavras por segundo): nenhum clipe fica menos de ~3s na
+   tela, e as janelas NÃO precisam ser iguais — clipe forte segura 8 a 15s,
+   clipe de apoio resolve em 3 a 6s. Se possível, troque de clipe perto da
+   virada da narração (fato → implicação) para renovar a atenção.
+5. Clipe fora do assunto, redundante ou que só mostra logomarca: NÃO use
+   (basta omitir — com 1 clipe bom o vídeo inteiro pode ficar nele). Não
+   repita clipe.
 
 Responda somente com o JSON pedido.\
 """
 
 
 def _rotulo(m: dict) -> str:
-    """Linha de apresentação de uma mídia para o modelo."""
+    """Linha de apresentação de um clipe para o modelo."""
     if m.get("dur_s"):
         tipo = f"CLIPE DE VÍDEO de {m['dur_s']:.0f}s"
-    elif m.get("tipo") in ("video", "animated_gif"):
-        tipo = "CLIPE DE VÍDEO"
     else:
-        tipo = "FOTO"
-    origem = "post original do X" if m.get("origem") == "x" else "busca na web"
-    return f"[{tipo}, {origem}] {m.get('descricao', '').strip()}"
+        tipo = "CLIPE DE VÍDEO"
+    conta = f", post de {m['conta']}" if m.get("conta") else ""
+    return f"[{tipo}{conta}] {m.get('descricao', '').strip()}"
 
 
 def _tempo_do_char(alinhamento: dict, texto: str, pos: int, dur_total: float) -> float:
@@ -145,7 +134,7 @@ def planejar_cortes(
     """Planeja os cortes; devolve sobreposições com tempo explícito ou None.
 
     `midias`: [{"caminho": Path, "tipo": str, "descricao": str,
-    "dur_s": float|None, "origem": "x"|"web"}, ...]. O retorno é compatível com
+    "dur_s": float|None, "conta": str}, ...]. O retorno é compatível com
     `montar_video`: [{"caminho", "inicio_s", "inicio_frac", "fim_frac"}, ...].
     """
     if not midias:

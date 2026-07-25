@@ -8,11 +8,11 @@ exata da narração (convertida em tempo pelo alinhamento do ElevenLabs, como no
 planejador de cortes) e renderizado pelo Pillow em frames RGBA transparentes
 que o ffmpeg sobrepõe ao vídeo.
 
-Estética: minimalista e editorial, coerente com o resto do vídeo — Barlow Bold
-preta com stroke branco (as mesmas legendas/handle), emoji colorido com halo
-branco, fonte dos dados citada no rodapé. O painel ocupa o terço superior (no
-lugar do logo/handle do canal, que somem enquanto ele está na tela) e SEMPRE
-surge deslizando da base do vídeo para cima, com easing suave.
+Estética: minimalista e editorial, coerente com o resto do vídeo — Archivo
+Black preta com stroke branco (a mesma tipografia das legendas), emoji
+colorido com halo branco, fonte dos dados citada no rodapé. O painel ocupa o
+terço superior (o crédito de reprodução some enquanto ele está na tela) e
+SEMPRE surge deslizando da base do vídeo para cima, com easing suave.
 
 Etapa opcional: qualquer falha (GPT, citação não encontrada, Pillow/fonte
 ausente) só pula os infográficos — nunca derruba o pipeline.
@@ -28,7 +28,7 @@ from .cortes import _tempo_do_char
 from .edicao import FPS
 from .escritor import _resumo_noticias
 
-FONTE_BARLOW = RAIZ / "fonts" / "Barlow-Bold.ttf"
+FONTE_PAINEL = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 FONTE_EMOJI = Path(r"C:\Windows\Fonts\seguiemj.ttf")
 
 MAX_GRAFICOS = 2
@@ -376,7 +376,7 @@ def _desenhar_contador(painel, g: dict, t: float, largura: int, publico: str,
     )
     sw = max(4, round(largura * 0.008))
     fonte_num = _texto_que_cabe(
-        dr, texto_num, str(FONTE_BARLOW), round(largura * 0.14), round(largura * 0.9)
+        dr, texto_num, str(FONTE_PAINEL), round(largura * 0.155), round(largura * 0.9)
     )
     dr.text(
         (cx, y + round(terco * 0.20)),
@@ -391,7 +391,7 @@ def _desenhar_contador(painel, g: dict, t: float, largura: int, publico: str,
     rotulo = (g.get("rotulo") or "").upper()
     if rotulo:
         fonte_rot = _texto_que_cabe(
-            dr, rotulo, str(FONTE_BARLOW), round(largura * 0.042), round(largura * 0.86)
+            dr, rotulo, str(FONTE_PAINEL), round(largura * 0.050), round(largura * 0.86)
         )
         dr.text(
             (cx, round(terco * 0.72)),
@@ -415,7 +415,7 @@ def _desenhar_barras(painel, g: dict, t: float, largura: int, publico: str,
 
     titulo = (g.get("rotulo") or "").upper()
     fonte_tit = _texto_que_cabe(
-        dr, titulo, str(FONTE_BARLOW), round(largura * 0.040), round(largura * 0.70)
+        dr, titulo, str(FONTE_PAINEL), round(largura * 0.046), round(largura * 0.70)
     )
     larg_tit = dr.textlength(titulo, font=fonte_tit) if titulo else 0
     y_tit = round(terco * 0.12)
@@ -468,7 +468,7 @@ def _desenhar_barras(painel, g: dict, t: float, largura: int, publico: str,
         inteiro = abs(val - round(val)) < 1e-9
         texto_val = _formatar_numero(val * p_num, publico, inteiro)
         fonte_val = _texto_que_cabe(
-            dr, texto_val, str(FONTE_BARLOW), round(largura * 0.034), round(w * 1.5)
+            dr, texto_val, str(FONTE_PAINEL), round(largura * 0.040), round(w * 1.5)
         )
         dr.text(
             (x + w // 2, y_base - h - round(largura * 0.028)),
@@ -483,7 +483,7 @@ def _desenhar_barras(painel, g: dict, t: float, largura: int, publico: str,
         rot = (b.get("rotulo") or "")[:12].upper()
         if rot:
             fonte_rot = _texto_que_cabe(
-                dr, rot, str(FONTE_BARLOW), round(largura * 0.026), round(w * 1.4)
+                dr, rot, str(FONTE_PAINEL), round(largura * 0.030), round(w * 1.4)
             )
             dr.text(
                 (x + w // 2, y_base + round(largura * 0.026)),
@@ -524,7 +524,7 @@ def _renderizar_frames(
             prefixo = "Source" if publico == "usa" else "Fonte"
             texto = f"{prefixo}: {rotulo_fonte}"
             fonte_f = _texto_que_cabe(
-                dr, texto, str(FONTE_BARLOW), round(largura * 0.026),
+                dr, texto, str(FONTE_PAINEL), round(largura * 0.030),
                 round(largura * 0.8),
             )
             dr.text(
@@ -563,8 +563,8 @@ def gerar_graficos(
     Retorno: [{"pattern": str, "inicio_s": float, "dur_s": float}, ...] —
     vazio quando não há número forte ou qualquer etapa falha (opcional).
     """
-    if not FONTE_BARLOW.is_file():
-        print("[grafico] Fonte Barlow ausente; vídeo sem infográficos.")
+    if not FONTE_PAINEL.is_file():
+        print("[grafico] Fonte Archivo Black ausente; vídeo sem infográficos.")
         return []
     try:
         import PIL  # noqa: F401 — dependência opcional (requirements.txt)
