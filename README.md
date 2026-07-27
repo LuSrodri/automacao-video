@@ -87,6 +87,14 @@ crédito de reprodução no canto superior direito — com outra direção edito
   do X) e a **lista de links reais** anexada ao final da descrição do YouTube.
 - **Sem legendas queimadas**: a narração se sustenta sozinha (nenhuma frase
   pode depender de texto na tela).
+- **Capa customizada** (`pipeline/thumbnail.py`): um quadro real do vídeo (2s,
+  já com a sala e a TV) escurecido, com 2 a 5 palavras em Archivo Black na
+  base. O texto vem do GPT com uma regra dura — dizer **o fato**, nunca
+  provocar: "TRUMP PAUSA ATAQUES" e não "VOCÊ NÃO VAI ACREDITAR", porque
+  curiosidade fabricada traz clique e perde a audiência no primeiro segundo.
+  Falha aqui não aborta (cai na capa automática do YouTube), e o upload da
+  capa exige **canal verificado** — sem verificação o YouTube devolve 403 e o
+  log avisa. Só no formato longo: no Short o feed mostra o vídeo rodando.
 - **Sala de estar com TV** (`pipeline/cenario.py`): o clipe não ocupa o quadro
   inteiro — aparece **dentro da TV de uma sala**, desenhada com Pillow (sem
   asset externo nem licença de imagem). É identidade visual só do longo; o
@@ -216,7 +224,12 @@ O que motivou a camada: até então nada filtrava os clipes. O pipeline usava os
 Agora `pipeline/auditoria.py` roda sobre o pool, em duas etapas:
 
 1. **Veto duro, em código** — a mesma chamada de visão que descreve a mídia também a **classifica** (`cena_real`, `reportagem_tv`, `estudio_ou_podcast`, `gravacao_de_tela`, `cartela_ou_manchete`, `logo_ou_marca`) e diz se há **selo de emissora ou veículo de imprensa** na imagem. Sai da disputa: material de telejornal, vinheta de logotipo, qualquer mídia com selo de emissora e qualquer mídia **sem laudo de visão**. É regra fixa de propósito: o problema é recorrente, e julgamento de LLM sobre "isso é jornalismo de terceiro?" oscila de execução para execução.
-2. **Nota de pertinência (1 a 5)** — uma chamada ao GPT compara o que cada mídia **mostra** com o que a narração **diz**. Abaixo de 3 a mídia sai. Tetos: mídia que mostra a **manchete/print de um veículo** em vez do fato, mídia cujo texto na tela **contradiz** a narração e mídia indecifrável não passam de 2. Esta etapa **falha aberta** (aviso no log e todos passam): o veto duro já carrega a regra do canal, e derrubar o vídeo por um erro transitório da OpenAI desperdiçaria tudo que veio antes.
+2. **Nota de pertinência (1 a 5)** — uma chamada ao GPT compara o que cada mídia **mostra** com o que a narração **diz**. Abaixo de 3 a mídia sai. A escala separa três coisas que já foram confundidas e custaram execução:
+   - **3 = imagem real do acontecimento coberto**, mesmo sem dar para identificar o objeto. Um clarão no céu noturno, num vídeo sobre aquela guerra, é registro do conflito — B-roll legítimo, não material "ilegível". Era exatamente isto que vinha sendo reprovado por um teto de indecifrabilidade.
+   - **2 = genérico de arquivo.** O teste: trocando o assunto do vídeo, a imagem continuaria servindo? Se sim, é 2 (paisagem urbana qualquer, sala de servidores qualquer).
+   - **1 = contradiz a narração** — ataque acontecendo enquanto a narração fala em trégua, outro número/pessoa/data no texto da tela. É o pior caso: material irrelevante só não ajuda, material contraditório desmente o próprio vídeo.
+
+   Teto de **cobertura de imprensa** (máx. 2) só pega o que é *só rótulo*: cartela de manchete parada, print de site, chamada de estúdio e nada mais. Telejornal que exibe **imagens do fato** é julgado por essas imagens na escala normal — senão o material que o veto duro passou a admitir no `--long-take` voltaria a morrer aqui, pela nota. Esta etapa **falha aberta** (aviso no log e todos passam): o veto duro já carrega a regra do canal, e derrubar o vídeo por um erro transitório da OpenAI desperdiçaria tudo que veio antes.
 
 A auditoria roda **antes do ElevenLabs**, então reprovar não custa crédito de narração. **Zero clipe aprovado aborta a execução** (piso de 3 no `--long-take`) — a mensagem aponta o `auditoria_clipe.json` da pasta, que lista aprovados e reprovados com nota e motivo. As imagens das cartelas passam pela mesma peneira (`auditoria_imagem.json`).
 

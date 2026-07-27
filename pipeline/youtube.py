@@ -368,12 +368,47 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
         ) from erro
 
 
+def _enviar_thumbnail(token: str, video_id: str, thumbnail: Path) -> None:
+    """Sobe a capa customizada. Falha aqui não derruba nada (só avisa).
+
+    Precisa do canal verificado: sem verificação o YouTube devolve 403 e o
+    vídeo fica com a capa automática — o aviso diz o que fazer.
+    """
+    try:
+        resposta = requests.post(
+            "https://www.googleapis.com/upload/youtube/v3/thumbnails/set",
+            params={"videoId": video_id},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "image/jpeg",
+            },
+            data=thumbnail.read_bytes(),
+            timeout=120,
+        )
+        if resposta.status_code in (200, 201):
+            print("[youtube] Capa customizada aplicada.")
+        elif resposta.status_code == 403:
+            print(
+                "[aviso] YouTube recusou a capa (403): o canal precisa estar "
+                "VERIFICADO para aceitar thumbnail customizada. O vídeo está "
+                "no ar com a capa automática."
+            )
+        else:
+            print(
+                f"[aviso] Capa não aplicada ({resposta.status_code}): "
+                f"{resposta.text[:200]}. O vídeo está no ar."
+            )
+    except requests.RequestException as erro:
+        print(f"[aviso] Capa não aplicada ({erro}). O vídeo está no ar.")
+
+
 def publicar(
     cfg: Config,
     video: Path,
     titulo: str,
     descricao: str,
     tags: list[str] | None = None,
+    thumbnail: Path | None = None,
 ) -> str:
     """Publica o vídeo no YouTube e devolve a URL.
 
@@ -447,6 +482,12 @@ def publicar(
         video_id = envio.json()["id"]
         url = f"https://youtu.be/{video_id}"
         print(f"[youtube] Publicado: {url}")
+
+        # Capa customizada, DEPOIS do upload e fora do try principal de
+        # publicação: o vídeo já está no ar, e falhar aqui só custaria a capa
+        # automática do YouTube — não vale derrubar uma execução inteira.
+        if thumbnail is not None and thumbnail.is_file():
+            _enviar_thumbnail(token, video_id, thumbnail)
         return url
     except Exception as erro:  # noqa: BLE001 — sucesso sem publicar é falha oculta
         raise SystemExit(

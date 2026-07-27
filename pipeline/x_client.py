@@ -245,13 +245,16 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
         print("[aviso] Sem token da X API; busca aberta por clipes pulada.")
         return []
 
-    # A língua acompanha o público: clipe legendado em outra língua na tela
-    # atrapalha mais do que ajuda.
-    idioma = "en" if cfg.publico == "usa" else "pt"
-    query = f"({consulta}) has:videos -is:retweet -is:reply lang:{idioma}"
+    # SEM filtro de língua, de propósito. Tentar `lang:pt` no canal BR zerou a
+    # busca numa execução real: a consulta de assunto que o pipeline gera vem
+    # em INGLÊS mesmo no BR ("Iran US ceasefire talks"), então palavra inglesa
+    # com filtro de português não casa com quase nada. E o filtro é discutível
+    # de todo modo — num clipe o que importa é o que aparece NA TELA, não o
+    # idioma do post, e disso a auditoria de visão já cuida.
+    query = f"({consulta}) has:videos -is:retweet -is:reply"
     inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
 
-    print(f"[midia-x] Busca aberta por clipes sobre: {consulta} ({idioma})")
+    print(f"[midia-x] Busca aberta por clipes sobre: {consulta}")
     posts = _consultar(token, query, inicio, min(max(orcamento, 10), 100))
     posts = [p for p in posts if p.get("video")]
     posts.sort(key=_por_engajamento, reverse=True)

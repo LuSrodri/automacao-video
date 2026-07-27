@@ -89,6 +89,7 @@ from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
 from pipeline.silencio import aparar_silencios
+from pipeline.thumbnail import gerar_thumbnail
 from pipeline.x_client import buscar_posts_com_video, coletar_trends
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
@@ -368,12 +369,22 @@ def main() -> None:
 
     registrar(cfg, video_final, roteiro["titulo"], descricao)
 
+    # Capa customizada (só no longo, onde a thumbnail decide o clique — no
+    # Short o feed mostra o vídeo rodando). Falha aqui não aborta: o YouTube
+    # cai na capa automática e o vídeo vai ao ar do mesmo jeito.
+    capa = None
+    if cfg.formato == "longo":
+        capa = gerar_thumbnail(
+            cfg, video_final, roteiro["titulo"], roteiro["texto_video"], pasta
+        )
+
     url_youtube = publicar_youtube(
         cfg,
         video_final,
         roteiro["titulo"],
         descricao,
         tags=roteiro.get("tags"),
+        thumbnail=capa,
     )
 
     print("\nConcluído!")

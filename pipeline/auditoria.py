@@ -21,6 +21,17 @@ A auditoria roda em duas etapas, sobre um pool maior do que o necessário:
    NOTA_MINIMA sai. É aqui que morre o clipe genérico de arquivo que não tem
    nada a ver com o fato narrado.
 
+   A escala separa três coisas que já foram confundidas e custaram execução:
+   IMAGEM REAL do acontecimento coberto vale 3 mesmo sem dar para identificar
+   o objeto (um clarão no céu, num vídeo sobre aquela guerra, é registro do
+   conflito — não é "ilegível"); GENÉRICO de arquivo vale 2, e o teste é se a
+   imagem serviria igualmente para outra notícia qualquer; e CONTRADIÇÃO vale
+   1, o pior caso — material irrelevante só não ajuda, material que mostra o
+   oposto do que a narração diz desmente o próprio vídeo. O teto de "cobertura
+   de imprensa" só pega o que é SÓ rótulo (cartela parada, chamada de
+   estúdio); telejornal que exibe imagens do fato é julgado por essas imagens,
+   senão o veto derrubado em (1) voltaria pela nota.
+
 A etapa 2 falha aberta (aviso no log e todo mundo passa): o veto duro já
 resolveu a reclamação principal, e derrubar o vídeo inteiro por um erro
 transitório da OpenAI desperdiçaria tudo que foi gasto antes. Já a decisão de
@@ -105,21 +116,39 @@ ESCALA:
     que a narração fala.
 4 = mostra o contexto direto do fato (a mesma empresa, o mesmo país, a mesma
     tecnologia), ainda que em outro momento.
-3 = relacionado de forma reconhecível; serve de apoio sem enganar o espectador.
-2 = genérico ou de arquivo: só decora, poderia ilustrar qualquer outra notícia.
-1 = é outro assunto.
+3 = É IMAGEM REAL DO ACONTECIMENTO QUE O VÍDEO COBRE, ainda que não dê para
+    identificar o objeto exato nem o momento exato. Um clarão no céu noturno,
+    fumaça sobre uma cidade ou um comboio militar, num vídeo sobre AQUELA
+    guerra, são registro real do conflito e servem de apoio — não invente
+    exigência de nitidez ou de legenda que o material não precisa ter.
+2 = genérico ou de arquivo: ilustraria qualquer outra notícia com a mesma
+    facilidade (paisagem urbana qualquer, sala de servidores qualquer,
+    bandeira tremulando). O teste é: trocando o assunto do vídeo, essa imagem
+    continuaria servindo? Se sim, é 2.
+1 = é outro assunto, OU CONTRADIZ a narração.
+
+CONTRADIÇÃO (o pior caso, nota 1): mídia que mostra o oposto do que a narração
+diz — ataque acontecendo enquanto a narração fala em trégua, fila enorme
+enquanto a narração fala em movimento fraco, texto na tela com outro número,
+outra pessoa ou outra data. Isso é pior do que material irrelevante: material
+irrelevante só não ajuda, material contraditório desmente o próprio vídeo.
 
 REGRAS DE TETO (a nota NÃO pode passar disso):
-- Mídia que só mostra a MANCHETE, o print ou a cartela de um veículo de
-  imprensa em vez de mostrar o fato: no máximo 2. O canal mostra o
-  acontecimento, não a cobertura que os outros fizeram dele.
-- Mídia cujo texto na tela contradiz a narração (outro número, outra pessoa,
-  outra data): no máximo 2.
-- Mídia em que não dá para saber o que está sendo mostrado: no máximo 2.
+- Mídia que é SÓ o rótulo da cobertura — cartela de manchete parada, print de
+  site, chamada com o apresentador em estúdio e nada mais: no máximo 2. O
+  canal mostra o acontecimento, não o anúncio que os outros fizeram dele.
+  ATENÇÃO: se dentro do material de telejornal aparecem IMAGENS do
+  acontecimento (a cena, o lugar, a pessoa, o equipamento), julgue por essas
+  imagens na escala normal — o teto acima NÃO se aplica. Material de emissora
+  entra no vídeo marcado como representação visual, então cobertura que mostra
+  o fato é material útil, não um problema a ser punido.
+- Mídia ilegível de verdade — quadro preto, borrão sem forma, imagem em que não
+  se distingue NADA: no máximo 2. Atenção: "não sei precisar que objeto é" NÃO
+  é ilegível. Imagem real do conflito coberto é 3 mesmo sem identificar o
+  objeto; só caia neste teto quando não dá para dizer nem que tipo de cena é.
 
-Seja rigoroso: é melhor o vídeo ficar com menos material do que mostrar na tela
-uma coisa enquanto a narração fala de outra. Dê um veredito para CADA mídia
-recebida, usando o id exato dela. Responda somente com o JSON pedido.\
+Dê um veredito para CADA mídia recebida, usando o id exato dela. Responda
+somente com o JSON pedido.\
 """
 
 
