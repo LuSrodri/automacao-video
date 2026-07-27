@@ -32,8 +32,13 @@ LONGO_DURACAO_PADRAO = 105  # alvo no meio da faixa (LONG_DURACAO no .env)
 LONGO_LARGURA = 1920
 LONGO_ALTURA = 1080
 LONGO_MAX_CLIPES = 8  # clipes do X por vídeo (3 seguram mal 2 minutos de tela)
-LONGO_MAX_POSTS_MIDIA = 10  # posts da trend consultados p/ achar esses clipes
+LONGO_MAX_POSTS_MIDIA = 16  # posts da trend consultados p/ achar esses clipes
 LONGO_NUM_NOTICIAS = 10  # mais notícias = mais material para a análise
+LONGO_MAX_CARTELAS = 4  # cartelas de imagem sobrepostas (dobro de tempo de tela)
+LONGO_MAX_FOTOS = 6  # fotos dos posts baixadas para alimentar as cartelas
+# Piso de clipes APROVADOS na auditoria para o formato longo: 90-120s presos em
+# um ou dois clipes é insustentável, então abaixo disto o vídeo não sai.
+LONGO_MIN_CLIPES_APROVADOS = 3
 
 CONTAS_PADRAO = [
     "elonmusk", "CNNBrasil", "brasilparalelo", "exercitooficial", "SpaceX",
@@ -71,8 +76,14 @@ class Config:
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
     formato: str = "curto"  # "curto" (Shorts 9:16) ou "longo" (--long-take, 16:9)
     max_clipes: int = 3  # clipes de vídeo do X usados na montagem
-    max_posts_midia: int = 5  # posts da trend consultados no lookup de mídias
-    max_urls_trend: int = 5  # URLs de posts que cada trend carrega da coleta
+    max_posts_midia: int = 12  # posts da trend consultados no lookup de mídias
+    max_urls_trend: int = 12  # URLs de posts que cada trend carrega da coleta
+    # Clipes baixados ALÉM do necessário: a auditoria (auditoria.py) reprova
+    # material de telejornal e clipe fora do assunto, e sem folga a reprovação
+    # só teria como resultado abortar o vídeo.
+    pool_extra_clipes: int = 3
+    max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
+    max_cartelas: int = 2  # cartelas de imagem sobrepostas por vídeo
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
     youtube_refresh_token: str = ""
@@ -129,6 +140,11 @@ def carregar_config() -> Config:
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
         num_noticias=int(os.getenv("NUM_NOTICIAS", "6")),
+        max_posts_midia=int(os.getenv("MAX_POSTS_MIDIA", "12")),
+        max_urls_trend=int(os.getenv("MAX_POSTS_MIDIA", "12")),
+        pool_extra_clipes=int(os.getenv("POOL_EXTRA_CLIPES", "3")),
+        max_fotos=int(os.getenv("MAX_FOTOS", "4")),
+        max_cartelas=int(os.getenv("MAX_CARTELAS", "2")),
         youtube_client_id=os.getenv("YOUTUBE_CLIENT_ID", ""),
         youtube_client_secret=os.getenv("YOUTUBE_CLIENT_SECRET", ""),
         youtube_refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN", ""),
@@ -166,6 +182,8 @@ def ativar_formato_longo(cfg: Config) -> Config:
     # A coleta precisa devolver posts suficientes para o lookup achar os clipes.
     cfg.max_urls_trend = cfg.max_posts_midia
     cfg.num_noticias = int(os.getenv("LONG_NUM_NOTICIAS", str(LONGO_NUM_NOTICIAS)))
+    cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
+    cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))
 
     if not LONGO_MIN_S <= cfg.video_duracao <= LONGO_MAX_S:
         raise SystemExit(

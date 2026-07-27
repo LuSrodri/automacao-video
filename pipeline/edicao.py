@@ -9,6 +9,12 @@ limpo entre si (corte editorial, sem deslizes). A narração TTS (sem silêncios
 é a trilha, e o crédito de reprodução ("Reprodução Imagem: X" + "Conta
 @usuario" do post de origem) fica no canto superior direito enquanto o clipe
 daquela conta está na tela.
+
+Por cima disso entram duas camadas de sobreposição, ambas como sequências de
+PNG RGBA já renderizadas: as CARTELAS de imagem dos momentos-chave
+(cartelas.py, no miolo da tela) e os INFOGRÁFICOS animados (grafico.py, no
+terço superior). As janelas das duas nunca coincidem — quem monta as cartelas
+recebe as janelas dos infográficos e desvia delas.
 """
 
 import subprocess
@@ -205,6 +211,7 @@ def montar_video(
     altura: int,
     legendas: Path | None = None,
     graficos: list[dict] | None = None,
+    cartelas: list[dict] | None = None,
     publico: str = "brasil",
     formato: str = "curto",
 ) -> Path:
@@ -222,6 +229,11 @@ def montar_video(
     sobrepostas ao vídeo. Enquanto um infográfico está na tela, o crédito
     some: o infográfico ocupa o terço superior.
 
+    `cartelas`: imagens emolduradas nos momentos-chave (cartelas.py), no mesmo
+    formato dos infográficos. Ficam no miolo da tela e trazem o próprio
+    crédito, então NÃO desligam o crédito de reprodução do topo; entram abaixo
+    dos infográficos na pilha (as janelas nunca coincidem, por construção).
+
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
 
     `formato`: "curto" (Shorts 9:16, com legendas queimadas) ou "longo"
@@ -238,6 +250,7 @@ def montar_video(
 
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
     graficos = graficos or []
+    cartelas = cartelas or []
 
     # Janelas dos infográficos: o crédito desliga nelas (enable do ffmpeg).
     janelas_gfx = [
@@ -372,6 +385,25 @@ def montar_video(
             )
             corrente = f"vcred{seq}"
             seq += 1
+
+    # Cartelas de imagem (cartelas.py): a imagem emoldurada do momento-chave
+    # entra por cima do clipe, no miolo da tela, com o próprio crédito.
+    for j, c in enumerate(cartelas):
+        idx_cart = prox_entrada
+        prox_entrada += 1
+        ini = max(0.0, float(c["inicio_s"]))
+        fim = min(ini + float(c["dur_s"]), duracao)
+        comando += [
+            "-framerate", str(FPS), "-start_number", "1", "-i", c["pattern"],
+        ]
+        filtros.append(
+            f"[{idx_cart}:v]format=rgba,setpts=PTS-STARTPTS+{ini:.2f}/TB[cart{j}]"
+        )
+        filtros.append(
+            f"[{corrente}][cart{j}]overlay=0:0:eof_action=pass"
+            f":enable='between(t,{ini:.2f},{fim:.2f})'[vcart{j}]"
+        )
+        corrente = f"vcart{j}"
 
     # Infográficos animados (sequências de PNG RGBA do grafico.py) por cima de
     # tudo — o crédito já foi desligado nas janelas deles.

@@ -1,19 +1,31 @@
-"""Download e descrição dos clipes de vídeo dos posts da trend.
+"""Download e descrição das mídias dos posts da trend.
 
-O formato do canal é montado SOMENTE com clipes de vídeo dos posts do X (até
-MAX_CLIPES por vídeo; imagem estática é proibida). Download via X API oficial
-v2 em modo pay-per-use (~US$ 0,005 por post/mídia lida): um único GET /2/tweets
-com `expansions=attachments.media_keys,author_id` resolve todos os posts da
-trend de uma vez. Vídeos vêm como variantes MP4, das quais baixamos a de maior
-bitrate; a conta do autor (@usuario) segue junto de cada clipe para o crédito
+O CORPO do vídeo é montado somente com clipes de vídeo dos posts do X (imagem
+estática nunca entra em tela cheia). Download via X API oficial v2 em modo
+pay-per-use (~US$ 0,005 por post/mídia lida): um único GET /2/tweets com
+`expansions=attachments.media_keys,author_id` resolve todos os posts da trend
+de uma vez. Vídeos vêm como variantes MP4, das quais baixamos a de maior
+bitrate; a conta do autor (@usuario) segue junto de cada mídia para o crédito
 de reprodução exibido na tela ("Reprodução Imagem: X / Conta @...").
 
-Descrição via GPT com visão sobre os arquivos baixados: o ffmpeg extrai alguns
-frames de cada clipe. As descrições orientam o planejador de cortes
-(cortes.py) a casar cada clipe com o momento certo da narração.
+Baixamos um POOL maior que o necessário (`max_clipes + pool_extra_clipes`):
+a auditoria (auditoria.py) reprova material de telejornal e clipe que não
+condiz com a narração, e sem folga a reprovação só teria como resultado
+abortar o vídeo.
+
+As FOTOS dos posts também são baixadas (antes eram descartadas no filtro de
+tipo): elas não entram em tela cheia — alimentam as cartelas sobrepostas nos
+momentos-chave (cartelas.py).
+
+Descrição via GPT com visão sobre os arquivos baixados (o ffmpeg extrai alguns
+frames de cada clipe). A descrição vem em JSON estruturado: além do texto que
+orienta o planejador de cortes (cortes.py), traz a CLASSIFICAÇÃO do material
+(cena real, reportagem de TV, gravação de tela...) e se há selo de emissora na
+imagem — os dois sinais em que a auditoria aplica veto duro.
 """
 
 import base64
+import json
 import re
 import subprocess
 import tempfile
@@ -22,18 +34,21 @@ from pathlib import Path
 import requests
 from openai import OpenAI
 
-from .config import Config
+from .config import AVISO_DADOS_EXTERNOS, Config
 from .edicao import duracao_audio
 from .x_client import obter_bearer
 
 TWEETS_ENDPOINT = "https://api.x.com/2/tweets"
 
-# Tetos do formato curto (Shorts). O formato longo (--long-take) sobe os dois
-# via Config (cfg.max_posts_midia / cfg.max_clipes): 2 minutos de tela pedem
-# mais material, e cada post/mídia lida custa ~US$ 0,005.
-MAX_POSTS = 5  # posts consultados por vídeo (cada um custa ~US$ 0,005)
-MAX_CLIPES = 3  # clipes de vídeo baixados por vídeo (os primeiros encontrados)
+# Tetos do formato curto (Shorts). O formato longo (--long-take) sobe todos
+# via Config (cfg.max_posts_midia / cfg.max_clipes / cfg.max_fotos): 2 minutos
+# de tela pedem mais material, e cada post/mídia lida custa ~US$ 0,005.
+MAX_POSTS = 12  # posts consultados por vídeo (cada um custa ~US$ 0,005)
+MAX_CLIPES = 3  # clipes de vídeo USADOS na montagem (o pool baixado é maior)
+POOL_EXTRA = 3  # clipes baixados além do necessário, como folga da auditoria
+MAX_FOTOS = 4  # fotos baixadas para as cartelas sobrepostas
 MAX_VIDEO_BYTES = 60_000_000  # ~60 MB; vídeo maior que isso é descartado
+MAX_FOTO_BYTES = 25_000_000  # ~25 MB; foto maior que isso é descartada
 
 PADRAO_ID_POST = re.compile(r"(?:x|twitter)\.com/[^/]+/status/(\d+)")
 
@@ -54,37 +69,42 @@ def _melhor_variante(variantes: list[dict]) -> str | None:
     return max(mp4s, key=lambda v: v.get("bit_rate") or 0)["url"]
 
 
-def _baixar_video(url: str, destino: Path) -> Path | None:
+def _baixar_arquivo(url: str, destino: Path, teto: int = MAX_VIDEO_BYTES) -> Path | None:
+    """Baixa em streaming com teto de tamanho; None em qualquer falha."""
     try:
         with requests.get(url, timeout=120, stream=True) as resp:
             resp.raise_for_status()
             tamanho = int(resp.headers.get("Content-Length") or 0)
-            if tamanho > MAX_VIDEO_BYTES:
-                print(f"[aviso] Vídeo de {url} grande demais ({tamanho} bytes), pulando")
+            if tamanho > teto:
+                print(f"[aviso] Mídia de {url} grande demais ({tamanho} bytes), pulando")
                 return None
             baixado = 0
             with destino.open("wb") as arquivo:
                 for pedaco in resp.iter_content(chunk_size=1 << 16):
                     baixado += len(pedaco)
-                    if baixado > MAX_VIDEO_BYTES:
-                        print(f"[aviso] Vídeo de {url} passou do teto durante o download")
+                    if baixado > teto:
+                        print(f"[aviso] Mídia de {url} passou do teto durante o download")
                         arquivo.close()
                         destino.unlink(missing_ok=True)
                         return None
                     arquivo.write(pedaco)
         return destino
     except requests.RequestException as erro:
-        print(f"[aviso] Falha ao baixar vídeo {url}: {erro}")
+        print(f"[aviso] Falha ao baixar mídia {url}: {erro}")
         destino.unlink(missing_ok=True)
         return None
 
 
-def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list[dict]:
-    """Baixa os clipes de vídeo dos posts; [{"caminho": Path, "conta": str}, ...].
+def baixar_midias_posts(
+    cfg: Config, urls_posts: list[str], pasta: Path
+) -> tuple[list[dict], list[dict]]:
+    """Baixa as mídias dos posts da trend; devolve (clipes, fotos).
 
-    Só vídeos e GIFs animados (saem como .mp4) — foto é ignorada: o formato do
-    canal proíbe imagem estática. Cada clipe carrega a conta do autor
-    ("conta": "@usuario") para o crédito de reprodução na tela.
+    Cada item é {"caminho": Path, "tipo": str, "conta": "@usuario", ...}. Os
+    CLIPES (vídeo e GIF animado, que sai como .mp4) montam o corpo do vídeo e
+    vêm com folga — `max_clipes + pool_extra_clipes` — porque a auditoria
+    reprova parte deles. As FOTOS não entram em tela cheia: alimentam as
+    cartelas sobrepostas dos momentos-chave (cartelas.py).
 
     Falhas de credencial/API ABORTAM a execução: a trend é escolhida
     justamente por ter clipes nos posts, e pular a etapa entregaria um vídeo
@@ -92,9 +112,11 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
     """
     max_posts = getattr(cfg, "max_posts_midia", MAX_POSTS) or MAX_POSTS
     max_clipes = getattr(cfg, "max_clipes", MAX_CLIPES) or MAX_CLIPES
+    pool = max_clipes + (getattr(cfg, "pool_extra_clipes", POOL_EXTRA) or 0)
+    max_fotos = getattr(cfg, "max_fotos", MAX_FOTOS) or 0
     ids = _ids_dos_posts(urls_posts, max_posts)
     if not ids:
-        return []
+        return [], []
 
     if not (cfg.x_consumer_key and cfg.x_consumer_secret):
         raise SystemExit(
@@ -136,7 +158,7 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
     midias = includes.get("media") or []
     if not midias:
         print("[midia-x] Nenhuma mídia anexada nos posts consultados")
-        return []
+        return [], []
 
     # De qual post veio cada mídia, o texto do post (contexto para a
     # descrição) e a conta do autor (crédito de reprodução na tela).
@@ -152,42 +174,68 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
         for chave in (post.get("attachments") or {}).get("media_keys") or []:
             dono_da_midia.setdefault(chave, post_id)
 
-    clipes = [m for m in midias if m.get("type") in ("video", "animated_gif")]
-    if not clipes:
-        print("[midia-x] Nenhum clipe de vídeo anexado nos posts consultados")
-        return []
+    def _comum(m: dict, caminho: Path) -> dict:
+        post_id = dono_da_midia.get(m.get("media_key", ""), "")
+        return {
+            "caminho": caminho,
+            "trecho": "",
+            "tipo": m.get("type"),
+            "post_id": post_id,
+            "conta": conta_do_post.get(post_id, ""),
+            "texto_post": texto_do_post.get(post_id, ""),
+        }
 
-    baixadas: list[dict] = []
-    for k, m in enumerate(clipes[:max_clipes], 1):
+    brutos = [m for m in midias if m.get("type") in ("video", "animated_gif")]
+    if not brutos:
+        print("[midia-x] Nenhum clipe de vídeo anexado nos posts consultados")
+
+    clipes: list[dict] = []
+    for k, m in enumerate(brutos[:pool], 1):
         url_mp4 = _melhor_variante(m.get("variants") or [])
         if not url_mp4:
             continue
-        caminho = _baixar_video(url_mp4, pasta / f"clipe_x_{k}.mp4")
-        if caminho:
-            try:
-                dur_s = duracao_audio(caminho)  # ffprobe format=duration
-            except (subprocess.CalledProcessError, ValueError, OSError):
-                dur_s = None
-            post_id = dono_da_midia.get(m.get("media_key", ""), "")
-            baixadas.append(
-                {
-                    "caminho": caminho,
-                    "trecho": "",
-                    "tipo": m.get("type"),
-                    "post_id": post_id,
-                    "conta": conta_do_post.get(post_id, ""),
-                    "texto_post": texto_do_post.get(post_id, ""),
-                    "dur_s": dur_s,
-                }
-            )
-            print(
-                f"[midia-x] {caminho.name} ({m.get('type')}, "
-                f"{conta_do_post.get(post_id) or 'conta desconhecida'})"
-            )
+        caminho = _baixar_arquivo(url_mp4, pasta / f"clipe_x_{k}.mp4")
+        if not caminho:
+            continue
+        try:
+            dur_s = duracao_audio(caminho)  # ffprobe format=duration
+        except (subprocess.CalledProcessError, ValueError, OSError):
+            dur_s = None
+        item = _comum(m, caminho) | {"dur_s": dur_s}
+        clipes.append(item)
+        print(
+            f"[midia-x] {caminho.name} ({m.get('type')}, "
+            f"{item['conta'] or 'conta desconhecida'})"
+        )
 
-    if not baixadas:
+    # Fotos: nunca entram em tela cheia (o formato proíbe), só nas cartelas.
+    fotos: list[dict] = []
+    for k, m in enumerate(
+        [m for m in midias if m.get("type") == "photo"][:max_fotos], 1
+    ):
+        url_foto = (m.get("url") or "").strip()
+        if not url_foto:
+            continue
+        sufixo = Path(url_foto.split("?")[0]).suffix.lower() or ".jpg"
+        if sufixo not in (".jpg", ".jpeg", ".png", ".webp"):
+            sufixo = ".jpg"
+        caminho = _baixar_arquivo(
+            url_foto, pasta / f"foto_x_{k}{sufixo}", MAX_FOTO_BYTES
+        )
+        if not caminho:
+            continue
+        item = _comum(m, caminho) | {"dur_s": None, "origem": "x"}
+        fotos.append(item)
+        print(f"[midia-x] {caminho.name} (foto, {item['conta'] or '?'})")
+
+    if not clipes:
         print("[midia-x] Nenhum clipe dos posts pôde ser baixado")
-    return baixadas
+    else:
+        print(
+            f"[midia-x] Pool de {len(clipes)} clipe(s) para {max_clipes} "
+            f"vaga(s) na montagem e {len(fotos)} foto(s) para as cartelas"
+        )
+    return clipes, fotos
 
 
 # ---- Descrição das mídias baixadas (GPT com visão) ----
@@ -195,11 +243,87 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
 LADO_VISAO = 768  # px; lado máximo das imagens enviadas ao GPT (custo de visão)
 FRAMES_VIDEO = 3  # frames extraídos por vídeo (início, meio e fim)
 
+# Classificação do material, base do veto duro da auditoria. O enum é fechado
+# de propósito: a reclamação do canal é sobre um padrão recorrente (material de
+# telejornal), e regra de código não oscila como julgamento de LLM.
+TIPOS_MATERIAL = [
+    "cena_real",  # o fato: pessoas, lugares, equipamentos, produto em uso
+    "reportagem_tv",  # matéria de telejornal: âncora, repórter, tarja, VT
+    "estudio_ou_podcast",  # entrevista/podcast/palestra (não é emissora)
+    "gravacao_de_tela",  # app, site, terminal, demo, gráfico de mercado
+    "cartela_ou_manchete",  # cartela de texto, print de manchete, motion graphics
+    "logo_ou_marca",  # só logotipo/vinheta
+    "outro",
+]
+
+ESQUEMA_DESCRICAO = {
+    "name": "descricao_de_midia",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "descricao": {
+                "type": "string",
+                "description": (
+                    "2 a 4 frases OBJETIVAS: o que aparece (pessoas, produtos, "
+                    "telas, lugares), o que acontece e qualquer texto legível. "
+                    "Vai orientar um editor que NÃO viu a mídia: seja concreto "
+                    "e sem opinião."
+                ),
+            },
+            "tipo_material": {
+                "type": "string",
+                "enum": TIPOS_MATERIAL,
+                "description": (
+                    "Que TIPO de material é. 'reportagem_tv' sempre que houver "
+                    "âncora/repórter em enquadramento de telejornal, tarja de "
+                    "legenda inferior de emissora ou estrutura de VT jornalístico."
+                ),
+            },
+            "selo_de_emissora": {
+                "type": "boolean",
+                "description": (
+                    "true se aparece na imagem logotipo, selo de canto, tarja "
+                    "ou marca d'água de EMISSORA DE TV ou VEÍCULO DE IMPRENSA "
+                    "(CNN, Globo, BBC, Reuters, Fox...). Logotipo de empresa de "
+                    "tecnologia ou de governo NÃO conta."
+                ),
+            },
+            "marca_visivel": {
+                "type": "string",
+                "description": (
+                    "Nome da marca/emissora cujo selo aparece; string vazia se "
+                    "nenhuma."
+                ),
+            },
+            "texto_na_tela": {
+                "type": "string",
+                "description": (
+                    "Texto legível na imagem, transcrito; vazio se não houver."
+                ),
+            },
+        },
+        "required": [
+            "descricao",
+            "tipo_material",
+            "selo_de_emissora",
+            "marca_visivel",
+            "texto_na_tela",
+        ],
+    },
+}
+
 PROMPT_DESCRICAO = """\
-Descreva a mídia em 2 a 4 frases OBJETIVAS: o que aparece (pessoas, produtos,
-telas, lugares), o que acontece e qualquer texto legível na imagem. A descrição
-vai orientar um editor de vídeo que NÃO viu a mídia — seja concreto, sem
-opinião, e responda somente com a descrição.\
+Você analisa uma mídia que pode entrar num vídeo jornalístico. Descreva o que
+ela mostra e CLASSIFIQUE o material segundo o esquema pedido.
+
+A classificação decide se a mídia pode ser usada, então seja literal: se o que
+está na tela é uma matéria de telejornal (âncora ou repórter em enquadramento
+de TV, tarja inferior de emissora, estrutura de VT), o tipo é "reportagem_tv" —
+mesmo que a cena mostrada dentro da matéria seja interessante.
+
+Responda somente com o JSON pedido.\
 """
 
 
@@ -244,17 +368,20 @@ def _imagens_da_midia(m: dict, pasta_tmp: Path) -> list[Path]:
     return frames
 
 
-def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, str]:
-    """Descreve cada mídia baixada com o GPT (visão); {str(caminho): descrição}.
+def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
+    """Descreve e classifica cada mídia baixada com o GPT (visão).
 
-    Etapa opcional: qualquer falha só pula a mídia, nunca derruba o pipeline.
+    Devolve {str(caminho): {"descricao", "tipo_material", "selo_de_emissora",
+    "marca_visivel", "texto_na_tela"}}. Mídia que falhar fica FORA do
+    dicionário — e a auditoria reprova quem não tem laudo, porque usar material
+    não verificado é exatamente o que esta camada existe para evitar.
     """
     if not midias:
         return {}
     cliente = OpenAI(api_key=cfg.openai_api_key)
     print(f"[midia-x] Descrevendo {len(midias)} mídias com o GPT (visão)...")
 
-    descricoes: dict[str, str] = {}
+    descricoes: dict[str, dict] = {}
     with tempfile.TemporaryDirectory() as tmp:
         pasta_tmp = Path(tmp)
         for m in midias:
@@ -270,7 +397,10 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, str]:
                 )
             if m.get("texto_post"):
                 contexto += f"\nTexto do post de origem: \"{m['texto_post']}\""
-            conteudo = [{"type": "text", "text": PROMPT_DESCRICAO + contexto}] + [
+            conteudo = [
+                {"type": "text", "text": AVISO_DADOS_EXTERNOS},
+                {"type": "text", "text": PROMPT_DESCRICAO + contexto},
+            ] + [
                 {"type": "image_url", "image_url": {"url": _data_uri(img)}}
                 for img in imagens
             ]
@@ -278,13 +408,25 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, str]:
                 resposta = cliente.chat.completions.create(
                     model=cfg.text_model,
                     messages=[{"role": "user", "content": conteudo}],
+                    response_format={
+                        "type": "json_schema", "json_schema": ESQUEMA_DESCRICAO
+                    },
                 )
-                descricao = (resposta.choices[0].message.content or "").strip()
+                laudo = json.loads(resposta.choices[0].message.content)
             except Exception as erro:
                 print(f"[aviso] Descrição de {m['caminho'].name} falhou: {erro}")
                 continue
-            if descricao:
-                descricoes[str(m["caminho"])] = descricao
+            if (laudo.get("descricao") or "").strip():
+                descricoes[str(m["caminho"])] = laudo
+                marca = (
+                    f" [selo: {laudo.get('marca_visivel') or 'emissora'}]"
+                    if laudo.get("selo_de_emissora")
+                    else ""
+                )
+                print(
+                    f"[midia-x] {m['caminho'].name}: "
+                    f"{laudo.get('tipo_material', '?')}{marca}"
+                )
 
     print(f"[midia-x] {len(descricoes)} mídias descritas")
     return descricoes

@@ -19,21 +19,31 @@ Fluxo:
 5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
    citando as fontes (contas do X e veículos das notícias), com HOOK -> FATO
    -> IMPLICAÇÃO -> CORTE emendando no hook para rodar em loop.
-6. X API baixa até 3 CLIPES DE VÍDEO dos posts originais da trend (imagem
-   estática é proibida no formato; trend sem post com vídeo nem chega aqui —
-   a seleção já a descarta), com a conta de origem de cada clipe.
-7. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
-8. A IA planeja os cortes: o GPT (visão) descreve os clipes baixados e um
-   "editor de cortes" casa cada clipe com o momento exato da narração
-   (citações do texto -> timestamps do alinhamento).
-9. Infográficos animados: o GPT escolhe até 2 números reais da história e o
-   pipeline renderiza contadores/barras minimalistas (Pillow) que sobem da
-   base do vídeo para o terço superior.
-10. ffmpeg monta: fundo = o próprio clipe borrado (cobertura total, sem
+6. X API baixa um POOL de clipes de vídeo dos posts originais da trend (mais
+   do que os 3 que entram na montagem, como folga para a auditoria), junto das
+   fotos dos posts, que alimentam as cartelas. Imagem estática nunca ocupa a
+   tela; trend sem post com vídeo nem chega aqui — a seleção já a descarta.
+7. AUDITORIA do material visual: o GPT (visão) descreve e CLASSIFICA cada
+   clipe, o veto duro derruba material de telejornal e imagem com selo de
+   emissora, e uma nota de pertinência (1-5) derruba o clipe que não mostra o
+   que a narração diz. Zero clipe aprovado = SystemExit (o formato longo exige
+   um piso maior). Roda antes do TTS para a reprovação não custar créditos.
+8. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
+9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
+   o momento exato da narração (citações do texto -> timestamps do
+   alinhamento).
+10. Infográficos animados: o GPT escolhe até 2 números reais da história e o
+    pipeline renderiza contadores/barras minimalistas (Pillow) que sobem da
+    base do vídeo para o terço superior.
+11. Cartelas de imagem nos momentos-chave: foto do post da trend ou og:image
+    da notícia, auditada igual aos clipes, emoldurada por cima do clipe quando
+    a narração nomeia o que ela mostra (nunca em cima de um infográfico).
+12. ffmpeg monta: fundo = o próprio clipe borrado (cobertura total, sem
     instante vazio) + clipe nítido centrado + crossfade curto + legendas
     grandes (Archivo Black) + crédito de reprodução no canto superior direito
-    ("Reprodução Imagem: X" + conta do post) + infográficos (+ trilha).
-11. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
+    ("Reprodução Imagem: X" + conta do post) + cartelas + infográficos
+    (+ trilha).
+13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução).
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
@@ -53,9 +63,12 @@ import unicodedata
 from datetime import datetime
 
 from pipeline.audio import gerar_narracao
+from pipeline.auditoria import auditar_midias
+from pipeline.cartelas import gerar_cartelas
 from pipeline.classificacao import classificar_trends
 from pipeline.config import (
     LONGO_MAX_S,
+    LONGO_MIN_CLIPES_APROVADOS,
     LONGO_MIN_S,
     ativar_formato_longo,
     carregar_config,
@@ -178,13 +191,34 @@ def main() -> None:
     # O OBJETO da trend vem da própria seleção (selecionar_trend) — é o mesmo
     # que o roteiro usou, então os clipes baixados são sempre da trend certa.
     trend_video = selecao["trend_obj"]
-    clipes = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
+    clipes, fotos = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
     if not clipes:
         raise SystemExit(
             "Nenhum clipe de vídeo baixado dos posts da trend — o formato é "
             "montado só com clipes do X (imagem estática é proibida); "
             "abortando."
         )
+
+    # AUDITORIA do material visual, antes do ElevenLabs: o GPT com visão
+    # descreve e classifica cada clipe do pool, o veto duro derruba material de
+    # telejornal/emissora e a nota de pertinência derruba o clipe que não
+    # mostra o que a narração diz. Rodar aqui (e não depois da narração, como
+    # a descrição das mídias rodava) faz a reprovação custar zero crédito de
+    # TTS.
+    laudos = descrever_midias(cfg, clipes)
+    clipes = auditar_midias(
+        cfg, roteiro["texto_video"], clipes, laudos,
+        limite=cfg.max_clipes, rotulo="clipe", pasta=pasta,
+    )
+    piso = LONGO_MIN_CLIPES_APROVADOS if cfg.formato == "longo" else 1
+    if len(clipes) < piso:
+        raise SystemExit(
+            f"Auditoria aprovou {len(clipes)} clipe(s), abaixo do piso de "
+            f"{piso} para o formato {cfg.formato} — o vídeo sairia mostrando "
+            "material de telejornal ou cena que não condiz com a narração; "
+            f"abortando. O detalhe está em {pasta / 'auditoria_clipe.json'}."
+        )
+
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
     )
@@ -216,18 +250,17 @@ def main() -> None:
     ]
 
     # Planejador de cortes: a IA casa cada clipe com o momento da narração.
-    # O GPT com visão descreve os clipes baixados (descrever o arquivo real
-    # evita casar a narração com a cena errada e melhora a escolha do
-    # primeiro clipe, o que decide o swipe).
-    descricoes = descrever_midias(cfg, clipes)
+    # Os clipes já vêm auditados, com a descrição da visão dentro de cada um —
+    # descrever o arquivo real evita casar a narração com a cena errada e
+    # melhora a escolha do primeiro clipe, o que decide o swipe.
     midias_plano = [
         {
             "caminho": m["caminho"],
             "tipo": m.get("tipo", ""),
             "dur_s": m.get("dur_s"),
             "conta": m.get("conta", ""),
-            "descricao": descricoes.get(
-                str(m["caminho"]), "clipe anexado a um post original da trend"
+            "descricao": (
+                m.get("descricao") or "clipe anexado a um post original da trend"
             ),
         }
         for m in clipes
@@ -274,6 +307,20 @@ def main() -> None:
         cfg, roteiro["texto_video"], noticias, alinhamento, duracao, pasta
     )
 
+    # Cartelas: a imagem do momento-chave (foto do post da trend ou og:image da
+    # notícia) entra emoldurada por cima do clipe. Recebe as janelas dos
+    # infográficos para não haver duas sobreposições ao mesmo tempo.
+    cartelas = gerar_cartelas(
+        cfg,
+        roteiro["texto_video"],
+        fotos,
+        noticias,
+        alinhamento,
+        duracao,
+        pasta,
+        ocupadas=[(g["inicio_s"], g["inicio_s"] + g["dur_s"]) for g in graficos],
+    )
+
     video_final = montar_video(
         narracao,
         sobreposicoes,
@@ -282,6 +329,7 @@ def main() -> None:
         altura,
         legendas=legendas,
         graficos=graficos,
+        cartelas=cartelas,
         publico=cfg.publico,
         formato=cfg.formato,
     )

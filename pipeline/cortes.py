@@ -1,8 +1,12 @@
 """Planejamento dos cortes: a IA decide quando cada clipe entra e quanto fica.
 
-O modelo recebe a narração e os clipes de vídeo disponíveis (até 3, todos dos
-posts do X da trend, com descrições do GPT com visão sobre os arquivos
-baixados) e devolve a sequência de cortes. Cada corte é ancorado numa
+O modelo recebe a narração e os clipes de vídeo disponíveis (os aprovados pela
+auditoria, todos dos posts do X da trend, com as descrições do GPT com visão
+sobre os arquivos baixados) e devolve a sequência de cortes. A regra 5 abaixo
+ainda manda omitir clipe fora do assunto, mas ela virou rede de segurança: o
+descarte de material impróprio é responsabilidade da auditoria (auditoria.py),
+que roda antes e não devolve o clipe reprovado ao fallback. Cada corte é
+ancorado numa
 CITAÇÃO EXATA do texto da narração — nunca em segundos, que LLM chuta — e a
 citação é convertida em tempo real pelos timestamps por caractere do
 alinhamento do ElevenLabs (já remapeados após o corte de silêncios).

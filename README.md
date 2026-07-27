@@ -7,11 +7,13 @@ Pipeline em Python que transforma as trends mais quentes de geopolítica, inteli
 3. **GPT 5.6 Luna** escolhe a trend guiado **somente pela audiência**: recebe os **últimos 100 vídeos publicados no canal selecionado com as métricas reais** (views/likes em tempo real, YouTube Data API) e os **campeões de retenção** (YouTube Analytics), e escolhe a candidata com a maior chance de performar com esse público — repetir o tipo de conteúdo que está performando é bem-vindo. Regras duras, aplicadas em código: **candidata sem nenhum post com clipe de vídeo sai da disputa** (o formato é montado só com clipes do X), **o mesmo macrotema não emenda mais de 4 vídeos seguidos** e a **verificação anti-repetição** — o GPT confere se a escolhida cobriria o **mesmo fato** de um vídeo publicado nas últimas 36h sem desenvolvimento novo; se sim, ela sai da disputa e a seleção refaz (se todas as candidatas caírem em uma das regras, não há vídeo).
 4. **Firecrawl (sources=news)** busca **notícias recentes** sobre a trend escolhida (título, link, resumo e data) para complementar o material com fatos, nomes e números corretos (falha aqui não aborta: o roteiro segue com o resumo e os posts do X).
 5. **GPT 5.6 Luna** escreve o roteiro **explicativo (análise/educacional) em tom adulto**, **sempre citando as fontes** (as contas do X que originaram a trend e os veículos das notícias do Firecrawl): para um adulto leigo (o público real: homens de 25-54) com metade da atenção — frases com **ritmo de fala natural** (8 a 16 palavras, teto 20, alternando curtas de impacto com mais cheias), uma ideia por frase, **vocabulário preciso de telejornal** (sem jargão de nicho nem sigla sem explicação), tom de furo de notícia (nunca infantil), estrutura fixa **HOOK (imagem chocante, 0-2s) → FATO (até a metade, com âncora pró-leigo quando o assunto é de nicho) → IMPLICAÇÃO única (segunda metade) → CORTE em tensão que emenda no hook (loop)**, sem CTA falado. O **título e a descrição são autossuficientes** (teste do leigo: sem nome de nicho, sem cauda de suspense; a descrição entrega o fato com a fonte, não é teaser) e prometem **exatamente** o que o vídeo entrega. Uma **auditoria pró-leigo** (chamada própria ao GPT) confere título, descrição e narração contra essas regras e pede **uma reescrita** quando reprova. O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz.
-6. **X API** baixa até **3 clipes de vídeo** dos posts originais da trend (o MP4 de maior bitrate de cada um), junto com a **conta de origem** de cada clipe — **imagem estática é proibida** no formato, então não há busca de imagens na web.
-7. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere) e o pipeline **corta os silêncios** da narração (remapeando os timestamps para as legendas continuarem sincronizadas), deixando o áudio sem trechos parados.
-8. **Infográficos animados**: o GPT escolhe até **2 números reais** da história (nunca inventados) e o pipeline renderiza (Pillow) **contadores** que sobem do zero e terminam **verdes** — ou descem até o negativo e terminam **vermelhos** — e **barras comparativas** com a barra destacada crescendo mais que as outras. Estilo minimalista e editorial: Archivo Black preta com **stroke branco** (a mesma tipografia das legendas), **emoji colorido com halo branco** e a **fonte do dado citada** no rodapé. O painel ocupa o **terço superior** (o crédito de reprodução some enquanto ele está na tela) e **sempre surge deslizando da base do vídeo** com easing suave.
-9. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é o próprio clipe daquele trecho, ampliado para cobrir a tela e borrado**; por cima entra o **clipe nítido em largura total, centrado** (clipe mais curto que a janela repete em loop). Os clipes **cobrem 100% da narração** (nunca há um instante sem imagem) com **crossfade curto e limpo** entre si. **Legendas** sincronizadas palavra a palavra — grandes, em **Archivo Black** branca com contorno preto, com entrada de "carimbo" editorial — são queimadas no vídeo, e o **crédito de reprodução** ("Reprodução Imagem: X" + "Conta `@usuario`" do post de origem; "Image Credit"/"Account" no modo `-usa`) fica no **canto superior direito** sobre uma tarja preta translúcida, trocando junto com o clipe. A trilha `assets/trilha.mp3` entra em **loop sob a narração** a ~-18 dB (alavanca de retenção; a faixa incluída é "Tension Documentary" de AtlasAudio, licença Pixabay — uso comercial livre, sem atribuição; troque o arquivo para mudar a trilha, ou apague-o para vídeo sem música). A cauda após a narração é de **0,15s** — curta de propósito, para o CORTE emendar no hook quando o Short reinicia (loop).
-10. O `.mp4` final vai para `output/`, é registrado em `videos.txt` e publicado automaticamente no **YouTube** (Data API v3). Roda sempre, independente da flag `-usa` (o horário de publicação é o do cronjob que dispara a execução).
+6. **X API** baixa um **pool de clipes de vídeo** dos posts originais da trend (o MP4 de maior bitrate de cada um) — mais do que os 3 que entram na montagem, como folga para a auditoria — junto com a **conta de origem** de cada clipe e as **fotos dos posts**, que alimentam as cartelas. **Imagem estática nunca ocupa a tela**, então não há busca de imagens na web.
+7. **Auditoria do material visual** (`pipeline/auditoria.py`): o **GPT com visão** descreve e **classifica** cada clipe do pool (cena real, reportagem de TV, gravação de tela, cartela, logo…) e diz se há **selo de emissora ou veículo de imprensa** na imagem. Em cima disso: **veto duro em código** — material de telejornal, vinheta de logotipo e qualquer mídia com selo de emissora saem da disputa, assim como mídia que não recebeu laudo — e uma **nota de pertinência de 1 a 5** dada pelo GPT, que mede só uma coisa: o quanto aquilo que a mídia **mostra** é o que a narração **diz** (abaixo de 3 sai; material que mostra a manchete de um veículo em vez do fato tem teto 2). **Zero clipe aprovado aborta a execução** (o formato longo exige um piso de 3). Roda **antes do ElevenLabs**, para a reprovação não custar créditos de narração, e deixa o rastro em `auditoria_clipe.json`.
+8. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere) e o pipeline **corta os silêncios** da narração (remapeando os timestamps para as legendas continuarem sincronizadas), deixando o áudio sem trechos parados.
+9. **Infográficos animados**: o GPT escolhe até **2 números reais** da história (nunca inventados) e o pipeline renderiza (Pillow) **contadores** que sobem do zero e terminam **verdes** — ou descem até o negativo e terminam **vermelhos** — e **barras comparativas** com a barra destacada crescendo mais que as outras. Estilo minimalista e editorial: Archivo Black preta com **stroke branco** (a mesma tipografia das legendas), **emoji colorido com halo branco** e a **fonte do dado citada** no rodapé. O painel ocupa o **terço superior** (o crédito de reprodução some enquanto ele está na tela) e **sempre surge deslizando da base do vídeo** com easing suave.
+10. **Cartelas de imagem nos momentos-chave** (`pipeline/cartelas.py`): a **foto do post da trend** (que o pipeline já lia e descartava) ou a **og:image de uma das notícias** entra **emoldurada por cima do clipe** por ~3,6s, no instante em que a narração **nomeia** o que ela mostra — a pessoa citada, o lugar atingido, o documento assinado. Cartão branco com cantos arredondados, sombra e o **crédito próprio** no rodapé (`Reprodução: X / @conta` ou o domínio do veículo; `Image Credit` no `-usa`), entrando com escala 92%→100% e fade. As imagens passam pela **mesma auditoria dos clipes** (visão + veto duro + nota), o gancho fica limpo (nada entra nos 3 primeiros segundos) e nenhuma cartela cai em cima de um infográfico.
+11. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é o próprio clipe daquele trecho, ampliado para cobrir a tela e borrado**; por cima entra o **clipe nítido em largura total, centrado** (clipe mais curto que a janela repete em loop). Os clipes **cobrem 100% da narração** (nunca há um instante sem imagem) com **crossfade curto e limpo** entre si. **Legendas** sincronizadas palavra a palavra — grandes, em **Archivo Black** branca com contorno preto, com entrada de "carimbo" editorial — são queimadas no vídeo, e o **crédito de reprodução** ("Reprodução Imagem: X" + "Conta `@usuario`" do post de origem; "Image Credit"/"Account" no modo `-usa`) fica no **canto superior direito** sobre uma tarja preta translúcida, trocando junto com o clipe. A trilha `assets/trilha.mp3` entra em **loop sob a narração** a ~-18 dB (alavanca de retenção; a faixa incluída é "Tension Documentary" de AtlasAudio, licença Pixabay — uso comercial livre, sem atribuição; troque o arquivo para mudar a trilha, ou apague-o para vídeo sem música). A cauda após a narração é de **0,15s** — curta de propósito, para o CORTE emendar no hook quando o Short reinicia (loop).
+12. O `.mp4` final vai para `output/`, é registrado em `videos.txt` e publicado automaticamente no **YouTube** (Data API v3). Roda sempre, independente da flag `-usa` (o horário de publicação é o do cronjob que dispara a execução).
 
 ## Pré-requisitos
 
@@ -85,10 +87,13 @@ crédito de reprodução no canto superior direito — com outra direção edito
   do X) e a **lista de links reais** anexada ao final da descrição do YouTube.
 - **Sem legendas queimadas**: a narração se sustenta sozinha (nenhuma frase
   pode depender de texto na tela).
-- **Material**: até **8 clipes** de vídeo do X (consultando até 10 posts da
-  trend), trocando a cada 8-20s; clipe vertical aparece como faixa central
-  sobre o próprio clipe borrado. Até **4 infográficos** animados, espalhados
-  pela narração.
+- **Material**: até **8 clipes** de vídeo do X (consultando até 16 posts da
+  trend, e baixando 11 para a auditoria escolher 8), trocando a cada 8-20s;
+  clipe vertical aparece como faixa central sobre o próprio clipe borrado. Até
+  **4 infográficos** animados e **4 cartelas** de imagem, espalhados pela
+  narração. A auditoria exige um **piso de 3 clipes aprovados** — 90 a 120
+  segundos presos em um ou dois clipes é insustentável, então abaixo disso o
+  vídeo não sai.
 - **Regras duras próprias**: candidatas com pelo menos 2 posts com clipe têm
   preferência, e o teto de macrotema e o veto a vídeo repetido (janela de 72h)
   comparam **só com os vídeos longos** já publicados — a rajada de Shorts do
@@ -115,11 +120,17 @@ sair fora de 90-120s.
 | `VIDEO_DURACAO` | `32` | Duração-alvo da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%, então 32s de alvo ≈ vídeo final de ~29s, a faixa que melhor retém) |
 | `VIDEO_LARGURA` | `1080` | Largura do vídeo |
 | `VIDEO_ALTURA` | `1920` | Altura do vídeo |
+| `MAX_POSTS_MIDIA` | `12` | Posts da trend consultados no lookup de mídias (a X API cobra por post lido) |
+| `POOL_EXTRA_CLIPES` | `3` | Clipes baixados além dos que entram na montagem, como folga da auditoria |
+| `MAX_FOTOS` | `4` | Fotos dos posts baixadas para as cartelas (`0` desliga) |
+| `MAX_CARTELAS` | `2` | Cartelas de imagem sobrepostas nos momentos-chave (`0` desliga) |
 | `LONG_DURACAO` | `105` | Só com `--long-take`: duração-alvo da narração (aceita 90 a 120) |
 | `LONG_LARGURA` / `LONG_ALTURA` | `1920` / `1080` | Só com `--long-take`: resolução 16:9 |
 | `LONG_MAX_CLIPES` | `8` | Só com `--long-take`: clipes do X usados na montagem |
-| `LONG_MAX_POSTS_MIDIA` | `10` | Só com `--long-take`: posts da trend consultados para achar os clipes |
+| `LONG_MAX_POSTS_MIDIA` | `16` | Só com `--long-take`: posts da trend consultados para achar os clipes |
 | `LONG_NUM_NOTICIAS` | `10` | Só com `--long-take`: notícias que embasam a análise |
+| `LONG_MAX_CARTELAS` | `4` | Só com `--long-take`: cartelas de imagem sobrepostas |
+| `LONG_MAX_FOTOS` | `6` | Só com `--long-take`: fotos dos posts baixadas para as cartelas |
 | `YOUTUBE_CLIENT_ID` | — | Client ID OAuth (Google Cloud, tipo "Desktop app") |
 | `YOUTUBE_CLIENT_SECRET` | — | Client secret OAuth |
 | `YOUTUBE_REFRESH_TOKEN` | — | Canal português; preenchido por `--auth-youtube` |
@@ -176,19 +187,39 @@ O painel entra **sempre deslizando da base do vídeo até o terço superior** (e
 
 ## Como funcionam os clipes e os cortes
 
-O pipeline baixa até **3 clipes de vídeo** dos posts originais da trend (**8 no `--long-take`**; X API, MP4 de maior bitrate) e o **GPT com visão** descreve cada um a partir de frames extraídos pelo ffmpeg. Um "editor de cortes" (GPT) decide então **quando cada clipe entra**, ancorando cada corte numa **citação exata da narração** (convertida em tempo pelos timestamps do ElevenLabs) — o primeiro clipe abre o gancho, e clipe mais curto que a janela repete em **loop**. Na tela, cada clipe carrega o próprio **crédito de reprodução** no canto superior direito ("Reprodução Imagem: X" + "Conta `@usuario`" do post de onde ele veio). O plano fica em `cortes.json`; se ele falhar, os clipes são distribuídos uniformemente pela narração.
+O pipeline baixa um **pool** de clipes de vídeo dos posts originais da trend (X API, MP4 de maior bitrate): **3 + `POOL_EXTRA_CLIPES`** entram na disputa por 3 vagas na montagem (**8 vagas no `--long-take`**). O **GPT com visão** descreve e classifica cada um a partir de frames extraídos pelo ffmpeg, a **auditoria** derruba o que não presta (veja abaixo) e um "editor de cortes" (GPT) decide **quando cada clipe aprovado entra**, ancorando cada corte numa **citação exata da narração** (convertida em tempo pelos timestamps do ElevenLabs) — o primeiro clipe abre o gancho, e clipe mais curto que a janela repete em **loop**. Na tela, cada clipe carrega o próprio **crédito de reprodução** no canto superior direito ("Reprodução Imagem: X" + "Conta `@usuario`" do post de onde ele veio). O plano fica em `cortes.json`; se ele falhar, os clipes aprovados são distribuídos uniformemente pela narração, **na ordem da nota da auditoria** (o melhor abre o vídeo).
+
+## Como funciona a auditoria do material visual
+
+O que motivou a camada: até então nada filtrava os clipes. O pipeline usava os **primeiros** que a X API devolvesse, e o planejador de cortes até era instruído a omitir clipe fora do assunto — mas quando ele omitia, o plano era reprovado e o fallback usava **todos** os clipes baixados de volta. O caminho do descarte levava ao uso, e vídeo de telejornal ou cena sem relação com a narração entrava.
+
+Agora `pipeline/auditoria.py` roda sobre o pool, em duas etapas:
+
+1. **Veto duro, em código** — a mesma chamada de visão que descreve a mídia também a **classifica** (`cena_real`, `reportagem_tv`, `estudio_ou_podcast`, `gravacao_de_tela`, `cartela_ou_manchete`, `logo_ou_marca`) e diz se há **selo de emissora ou veículo de imprensa** na imagem. Sai da disputa: material de telejornal, vinheta de logotipo, qualquer mídia com selo de emissora e qualquer mídia **sem laudo de visão**. É regra fixa de propósito: o problema é recorrente, e julgamento de LLM sobre "isso é jornalismo de terceiro?" oscila de execução para execução.
+2. **Nota de pertinência (1 a 5)** — uma chamada ao GPT compara o que cada mídia **mostra** com o que a narração **diz**. Abaixo de 3 a mídia sai. Tetos: mídia que mostra a **manchete/print de um veículo** em vez do fato, mídia cujo texto na tela **contradiz** a narração e mídia indecifrável não passam de 2. Esta etapa **falha aberta** (aviso no log e todos passam): o veto duro já carrega a regra do canal, e derrubar o vídeo por um erro transitório da OpenAI desperdiçaria tudo que veio antes.
+
+A auditoria roda **antes do ElevenLabs**, então reprovar não custa crédito de narração. **Zero clipe aprovado aborta a execução** (piso de 3 no `--long-take`) — a mensagem aponta o `auditoria_clipe.json` da pasta, que lista aprovados e reprovados com nota e motivo. As imagens das cartelas passam pela mesma peneira (`auditoria_imagem.json`).
+
+## Como funcionam as cartelas de imagem
+
+Um segundo tipo de sobreposição, ao lado dos infográficos: nos **momentos-chave** — quando a narração **nomeia** a pessoa, o lugar, o documento ou o produto — uma imagem entra **emoldurada por cima do clipe** por ~3,6s. O corpo do vídeo continua sendo só clipe de vídeo do X; imagem estática nunca ocupa a tela sozinha.
+
+- **De onde vêm** — as **fotos dos posts da trend** (que o pipeline já lia da X API e descartava no filtro de tipo: são o material mais barato, vêm no mesmo lookup e estão no assunto por construção) e a **og:image das notícias** já buscadas no Firecrawl, creditadas pelo domínio do veículo. Nenhuma chamada nova de API, e nada de busca de imagem em banco.
+- **Como aparecem** — cartão branco com cantos arredondados e sombra, **crédito próprio no rodapé** (`Reprodução: X / @conta` ou `Reprodução: reuters.com`; `Image Credit` no `-usa`), entrando com escala 92%→100% e fade. Centralizado acima da faixa das legendas no vertical, no meio da tela no 16:9.
+- **Onde não aparecem** — nos **3 primeiros segundos** (o gancho fica com o clipe limpo) e em cima de um infográfico (as janelas nunca coincidem).
+- **Quantas** — até `MAX_CARTELAS` (2; 4 no `--long-take`), escolhidas pelo GPT entre as imagens aprovadas na auditoria, com o momento ancorado numa **citação exata da narração**. O plano fica em `cartelas.json`. `MAX_CARTELAS=0` desliga a feature; qualquer falha só deixa o vídeo sem cartelas.
 
 ## Custo estimado por vídeo
 
 | Etapa | Custo |
 | --- | --- |
 | Coleta de posts (X API pay-per-use, ~US$ 0,005/post, teto `X_MAX_POSTS`) | ~US$ 1,00 com o padrão de 200 posts |
-| Clipes dos posts da trend (X API, até 5 posts) | ~US$ 0,03 (~US$ 0,09 com `--long-take`, até 10 posts + 8 mídias) |
+| Mídias dos posts da trend (X API, até 12 posts + pool de 6 clipes e 4 fotos) | ~US$ 0,11 (~US$ 0,17 com `--long-take`: 16 posts, 11 clipes, 6 fotos) |
 | Busca de notícias (Firecrawl Search) | ~2 créditos por consulta |
-| GPT 5.6 Luna (sumarização das trends + seleção + roteiro + visão dos clipes) | < US$ 0,04 (~US$ 0,08 com `--long-take`: mais clipes descritos com visão) |
+| GPT 5.6 Luna (sumarização + seleção + roteiro + visão e auditoria das mídias) | ~US$ 0,08 (~US$ 0,14 com `--long-take`: mais mídias no pool) |
 | ElevenLabs (~1.000 caracteres por narração de 60s) | ~1.000 créditos do plano (~1.700 no `--long-take`) |
 
-O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para equilibrar cobertura e preço. O custo fixo segue sendo o plano da ElevenLabs: o gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana.
+O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para equilibrar cobertura e preço. A auditoria e as cartelas somam ~US$ 0,10 por vídeo (pool maior de mídias na X API + uma chamada de visão por mídia do pool + a chamada da nota de pertinência): para cortar isso, baixe `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` — mas lembre que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam a parte das cartelas sem mexer na auditoria dos clipes. O custo fixo segue sendo o plano da ElevenLabs: o gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana.
 
 **Atenção ao ligar o `--long-take` num cron diário**: cada vídeo longo consome ~1.700 créditos de TTS, ou seja ~51k créditos/mês com uma execução por dia — sozinho já estoura o Starter. Some a isso a leitura de posts do X, que é cobrada por execução (~US$ 1,00 com `X_MAX_POSTS=200`): um cron de vídeo longo por dia custa ~US$ 30/mês só de X API. Se o longo rodar em horário próximo ao de um Short, considere baixar `X_MAX_POSTS` na execução longa.
 
@@ -198,6 +229,7 @@ O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para eq
 - **Quer mudar as contas acompanhadas** — edite `CONTAS_PADRAO` em `pipeline/config.py`, ou preencha `X_ACCOUNTS` no `.env` para substituir a lista sem mexer no código.
 - **Erro/429 na busca de notícias** — confira a `FIRECRAWL_API_KEY` e o saldo de créditos no [dashboard do Firecrawl](https://firecrawl.dev) (falha aqui não aborta: o roteiro segue sem as notícias).
 - **Execução abortou sem clipe** — a trend escolhida precisa ter post com vídeo nativo; a seleção já filtra, mas o download ainda pode falhar (post apagado, vídeo acima de 60 MB). Rodar de novo escolhe outra trend se a conversa mudou.
+- **Execução abortou na auditoria** (`Auditoria aprovou 0 clipe(s)`) — todo o material da trend era de telejornal, tinha selo de emissora ou não mostrava o que a narração diz. Abrir o `auditoria_clipe.json` da pasta do vídeo mostra o motivo de cada reprovação. Se estiver reprovando demais, o caminho é **aumentar o pool** (`MAX_POSTS_MIDIA`, `POOL_EXTRA_CLIPES`), não afrouxar a regra — a alternativa é o vídeo voltar a mostrar material que não condiz com a narração.
 - **HTTP 401 na ElevenLabs** — chave errada no `.env`; **422** — texto/parâmetros inválidos (a mensagem detalha).
 - **`ffmpeg não encontrado no PATH`** — instale o ffmpeg e reabra o terminal.
 - **Refresh token do YouTube expira em ~7 dias** — a tela de consentimento OAuth está em modo **Testing**. Publique-a (**OAuth consent screen > Publish app**) para o refresh token virar de longa duração, e rode `--auth-youtube` de novo.
