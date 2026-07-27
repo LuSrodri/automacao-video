@@ -99,6 +99,15 @@ crédito de reprodução no canto superior direito — com outra direção edito
   comparam **só com os vídeos longos** já publicados — a rajada de Shorts do
   dia não bloqueia o longo, e um Short sobre o mesmo fato não conta como
   repetição.
+- **Janela de coleta maior (`JANELA_HORAS=48` nos crons longos)**: o gargalo do
+  formato não é a edição, é achar **um acontecimento com vários posts de vídeo
+  nativo**. Video de um fato específico é raro — a maior parte dos posts sobre
+  ele é texto. Com a janela de 4h dos Shorts, execuções reais achavam trends com
+  0, 1 ou 2 clipes e abortavam no piso de 3. Alargar para 48h **não custa mais
+  na X API** (o teto de leitura é o `X_MAX_POSTS`), só troca *quais* posts
+  entram: os mais relevantes de dois dias em vez de os de quatro horas. Case a
+  janela com a **cadência do cron** — 4h para quem roda de 4 em 4 horas, 48h
+  para quem roda segunda/quarta/sexta.
 
 A duração final segue a narração: o roteirista escreve dentro de uma faixa
 dura de palavras (~216 a 266 faladas) e o pipeline avisa no log se o áudio
@@ -110,7 +119,7 @@ sair fora de 90-120s.
 | --- | --- | --- |
 | `X_ACCOUNTS` | vazio | Opcional: usa somente estas contas no lugar da lista fixa `CONTAS_PADRAO` (`pipeline/config.py`) |
 | `X_MAX_POSTS` | `200` | Teto de posts lidos por execução (a X API cobra por post lido) |
-| `JANELA_HORAS` | `24` | Idade máxima dos posts coletados |
+| `JANELA_HORAS` | `24` | Idade máxima dos posts coletados. Alargar **não** custa mais na X API (o teto é o `X_MAX_POSTS`; a janela só decide de que intervalo saem esses posts). Case com a **cadência do cron**, não com o formato: em produção os Shorts rodam com `4` (de 4 em 4 horas) e os crons `--long-take` com `48` — ver a nota abaixo |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
 | `NUM_NOTICIAS` | `6` | Quantas notícias (Firecrawl news) buscar para enriquecer a trend |
 | `TEXT_MODEL` | `gpt-5.6-luna` | Modelo do roteiro, da sumarização das trends e da visão |
