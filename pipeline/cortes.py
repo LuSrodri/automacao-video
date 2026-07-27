@@ -95,6 +95,40 @@ da narração cada um ENTRA. Cada clipe fica na tela até o próximo entrar (o
 Responda somente com o JSON pedido.\
 """
 
+INSTRUCOES_CORTES_LONGO = """\
+Você é o EDITOR DE CORTES de um vídeo de ANÁLISE em 16:9, de cerca de
+{duracao} segundos, narrado e SEM legendas na tela.
+
+Você recebe o texto da NARRAÇÃO (com duração total) e os CLIPES DE VÍDEO
+disponíveis (até {max_clipes}, todos anexados aos posts originais do X sobre o
+fato), cada um com um id, a duração e a descrição do que mostra. O vídeo é
+montado SOMENTE com esses clipes — não há fotos nem imagens de banco.
+
+Monte a sequência de cortes: qual clipe aparece, em que ordem e em que momento
+da narração cada um ENTRA. Cada clipe fica na tela até o próximo entrar (o
+último vai até o fim; clipe mais curto que a janela repete em loop). Regras:
+
+1. "entra_em" é uma citação EXATA e CURTA (3 a 8 palavras consecutivas) do
+   texto da narração, copiada caractere por caractere, com a mesma pontuação e
+   acentuação. NÃO parafraseie: a citação é localizada por busca literal, e
+   citação que não existir descarta o corte.
+2. O primeiro corte DEVE citar as primeiras palavras da narração — o vídeo
+   nunca começa sem clipe na tela. Abra com o clipe mais forte que couber no
+   gancho.
+3. USE TODOS OS CLIPES QUE PRESTAREM: dois minutos parados no mesmo clipe
+   cansam. Mire em trocar a cada 8 a 20 segundos e distribua os cortes ao
+   longo de toda a narração — o vídeo não pode ter todos os cortes no começo e
+   um clipe único segurando a segunda metade.
+4. CASE clipe e fala: o clipe entra quando a narração fala do que ele mostra.
+   Troque de clipe nas viradas de assunto da narração (o fato → a leitura
+   geopolítica → a tecnologia → o dinheiro → o efeito no emprego): a troca
+   marca o novo bloco e renova a atenção.
+5. Clipe fora do assunto, redundante ou que só mostra logomarca: NÃO use
+   (basta omitir). Não repita clipe.
+
+Responda somente com o JSON pedido.\
+"""
+
 
 def _rotulo(m: dict) -> str:
     """Linha de apresentação de um clipe para o modelo."""
@@ -150,13 +184,21 @@ def planejar_cortes(
         f"MÍDIAS DISPONÍVEIS:\n{listagem}"
     )
 
+    instrucoes = (
+        INSTRUCOES_CORTES_LONGO.format(
+            duracao=round(dur_total), max_clipes=cfg.max_clipes
+        )
+        if cfg.formato == "longo"
+        else INSTRUCOES_CORTES
+    )
+
     cliente = OpenAI(api_key=cfg.openai_api_key)
     print(f"[cortes] Planejando os cortes de {len(midias)} mídias...")
     try:
         resposta = cliente.chat.completions.create(
             model=cfg.text_model,
             messages=[
-                {"role": "system", "content": INSTRUCOES_CORTES},
+                {"role": "system", "content": instrucoes},
                 {"role": "user", "content": conteudo},
             ],
             response_format={"type": "json_schema", "json_schema": ESQUEMA_CORTES},

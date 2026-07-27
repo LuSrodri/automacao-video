@@ -21,6 +21,20 @@ AVISO_DADOS_EXTERNOS = (
 
 # Contas fixas do X que alimentam a coleta (geopolítica, inteligência, IA e
 # tech). X_ACCOUNTS no .env, quando preenchido, substitui esta lista.
+# --- Formato LONGO (flag --long-take) ---------------------------------------
+# Vídeo de análise educacional em 16:9, de 90 a 120 segundos, para os dois
+# canais (combina com -usa). Convive com o formato curto (Shorts 9:16) no mesmo
+# código: o que muda é a resolução, a duração-alvo, a quantidade de clipes, a
+# ausência de legendas queimadas e os prompts (seleção, roteiro, cortes).
+LONGO_MIN_S = 90  # piso duro pedido para o formato
+LONGO_MAX_S = 120  # teto duro pedido para o formato
+LONGO_DURACAO_PADRAO = 105  # alvo no meio da faixa (LONG_DURACAO no .env)
+LONGO_LARGURA = 1920
+LONGO_ALTURA = 1080
+LONGO_MAX_CLIPES = 8  # clipes do X por vídeo (3 seguram mal 2 minutos de tela)
+LONGO_MAX_POSTS_MIDIA = 10  # posts da trend consultados p/ achar esses clipes
+LONGO_NUM_NOTICIAS = 10  # mais notícias = mais material para a análise
+
 CONTAS_PADRAO = [
     "elonmusk", "CNNBrasil", "brasilparalelo", "exercitooficial", "SpaceX",
     "revistaoeste", "EmbaixadaEUA", "OpenAI", "sama", "huggingface",
@@ -55,6 +69,10 @@ class Config:
     num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
     num_noticias: int = 6  # quantas notícias buscar (Firecrawl news) p/ enriquecer
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
+    formato: str = "curto"  # "curto" (Shorts 9:16) ou "longo" (--long-take, 16:9)
+    max_clipes: int = 3  # clipes de vídeo do X usados na montagem
+    max_posts_midia: int = 5  # posts da trend consultados no lookup de mídias
+    max_urls_trend: int = 5  # URLs de posts que cada trend carrega da coleta
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
     youtube_refresh_token: str = ""
@@ -125,4 +143,38 @@ def carregar_config() -> Config:
         raise SystemExit("VIDEO_DURACAO deve estar entre 15 e 180 segundos.")
 
     cfg.output_dir.mkdir(exist_ok=True)
+    return cfg
+
+
+def ativar_formato_longo(cfg: Config) -> Config:
+    """Reconfigura o Config para o formato LONGO (flag --long-take).
+
+    Chamado depois de ``carregar_config`` para não interferir no formato curto:
+    troca resolução (16:9), duração-alvo (faixa dura de LONGO_MIN_S a
+    LONGO_MAX_S), quantidade de clipes/posts e o volume de notícias. Cada valor
+    tem um env var próprio (LONG_*) para o cron do Render poder ajustar sem
+    mexer nas variáveis do formato curto, que continuam valendo lá.
+    """
+    cfg.formato = "longo"
+    cfg.video_largura = int(os.getenv("LONG_LARGURA", str(LONGO_LARGURA)))
+    cfg.video_altura = int(os.getenv("LONG_ALTURA", str(LONGO_ALTURA)))
+    cfg.video_duracao = int(os.getenv("LONG_DURACAO", str(LONGO_DURACAO_PADRAO)))
+    cfg.max_clipes = int(os.getenv("LONG_MAX_CLIPES", str(LONGO_MAX_CLIPES)))
+    cfg.max_posts_midia = int(
+        os.getenv("LONG_MAX_POSTS_MIDIA", str(LONGO_MAX_POSTS_MIDIA))
+    )
+    # A coleta precisa devolver posts suficientes para o lookup achar os clipes.
+    cfg.max_urls_trend = cfg.max_posts_midia
+    cfg.num_noticias = int(os.getenv("LONG_NUM_NOTICIAS", str(LONGO_NUM_NOTICIAS)))
+
+    if not LONGO_MIN_S <= cfg.video_duracao <= LONGO_MAX_S:
+        raise SystemExit(
+            f"LONG_DURACAO deve estar entre {LONGO_MIN_S} e {LONGO_MAX_S} "
+            f"segundos (recebido: {cfg.video_duracao})."
+        )
+    if cfg.video_largura <= cfg.video_altura:
+        raise SystemExit(
+            "O formato longo é 16:9 — LONG_LARGURA precisa ser maior que "
+            f"LONG_ALTURA (recebido: {cfg.video_largura}x{cfg.video_altura})."
+        )
     return cfg

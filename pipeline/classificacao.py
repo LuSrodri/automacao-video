@@ -48,8 +48,7 @@ MACROTEMAS_DESCRICAO = """\
 """
 
 INSTRUCOES_CLASSIFICACAO = """\
-Você anota notícias candidatas a vídeo curto (YouTube Shorts) de um canal de
-notícias quentes (geopolítica, inteligência, IA, tecnologia, negócios e o que
+Você anota notícias candidatas a vídeo de um canal de notícias quentes (geopolítica, inteligência, IA, tecnologia, negócios e o que
 mais estiver dominando a conversa).
 
 Para CADA notícia, preencha:

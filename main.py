@@ -35,6 +35,15 @@ Fluxo:
     ("Reprodução Imagem: X" + conta do post) + infográficos (+ trilha).
 11. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução).
+
+Formatos (o mesmo fluxo acima, com parâmetros diferentes):
+- padrão: Short vertical 1080x1920 de ~35s, com legendas queimadas.
+- `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 90 a 120 segundos,
+  SEM legendas, para os dois canais (combina com `-usa`). O roteiro explica um
+  acontecimento contemporâneo cruzando geopolítica, tecnologia/IA, negócios e
+  mercado de trabalho, e o payload é o que aquilo muda para quem procura
+  emprego ou está em transição de carreira. Usa até 8 clipes do X, até 4
+  infográficos, e a descrição sai com a lista de fontes reais.
 """
 
 import argparse
@@ -45,7 +54,12 @@ from datetime import datetime
 
 from pipeline.audio import gerar_narracao
 from pipeline.classificacao import classificar_trends
-from pipeline.config import carregar_config
+from pipeline.config import (
+    LONGO_MAX_S,
+    LONGO_MIN_S,
+    ativar_formato_longo,
+    carregar_config,
+)
 from pipeline.cortes import planejar_cortes
 from pipeline.edicao import (
     RESPIRO_FINAL,
@@ -72,12 +86,38 @@ def _slug(texto: str, limite: int = 40) -> str:
     return texto[:limite].rstrip("-") or "video"
 
 
+def _com_fontes(
+    descricao: str, trend: dict, noticias: list[dict], publico: str
+) -> str:
+    """Anexa à descrição os links reais que embasaram a análise (formato longo).
+
+    Só URLs que o pipeline realmente coletou (posts do X da trend escolhida e
+    notícias do Firecrawl) — nada gerado pelo modelo.
+    """
+    urls = list(dict.fromkeys(
+        [u for u in (trend.get("posts") or []) if u]
+        + [n.get("url", "") for n in noticias if n.get("url")]
+    ))[:10]
+    if not urls:
+        return descricao
+    titulo = "Sources:" if publico == "usa" else "Fontes:"
+    return descricao + "\n\n" + titulo + "\n" + "\n".join(f"- {u}" for u in urls)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gera o vídeo de notícias do dia.")
     parser.add_argument(
         "-usa",
         action="store_true",
         help="Conteúdo 100%% dedicado ao público americano (tudo em inglês)",
+    )
+    parser.add_argument(
+        "--long-take",
+        action="store_true",
+        help=(
+            "Vídeo LONGO de análise: 16:9, de 90 a 120 segundos, sem legendas "
+            "(combina com -usa)"
+        ),
     )
     parser.add_argument(
         "--auth-youtube",
@@ -100,6 +140,14 @@ def main() -> None:
         cfg.publico = "usa"
         print("[config] Modo USA: conteúdo em inglês para o público americano")
 
+    if args.long_take:
+        ativar_formato_longo(cfg)
+        print(
+            f"[config] Formato LONGO: {cfg.video_largura}x{cfg.video_altura} "
+            f"(16:9), alvo de {cfg.video_duracao}s (faixa {LONGO_MIN_S}-"
+            f"{LONGO_MAX_S}s), até {cfg.max_clipes} clipes, sem legendas"
+        )
+
     # Leituras do canal PRIMEIRO (fail-fast): se as credenciais do YouTube
     # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
     # e sem os recentes (com as métricas) a seleção pela audiência é cega.
@@ -117,7 +165,11 @@ def main() -> None:
         videos_recentes=recentes, campeoes=campeoes,
     )
 
-    pasta = cfg.output_dir / f"{datetime.now():%Y-%m-%d}_{_slug(roteiro['titulo'])}"
+    marca = "_longo" if cfg.formato == "longo" else ""
+    pasta = (
+        cfg.output_dir
+        / f"{datetime.now():%Y-%m-%d}{marca}_{_slug(roteiro['titulo'])}"
+    )
     pasta.mkdir(parents=True, exist_ok=True)
     (pasta / "roteiro.json").write_text(
         json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -140,6 +192,16 @@ def main() -> None:
 
     largura, altura = cfg.video_largura, cfg.video_altura
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
+
+    # A duração final é a da narração: no formato longo ela precisa cair na
+    # faixa pedida (90-120s). A faixa de palavras do roteirista já mira nisso;
+    # este aviso existe porque o ritmo do TTS varia de narração para narração.
+    if cfg.formato == "longo" and not LONGO_MIN_S <= duracao <= LONGO_MAX_S:
+        print(
+            f"[aviso] Narração de {duracao:.1f}s fora da faixa do formato "
+            f"longo ({LONGO_MIN_S}-{LONGO_MAX_S}s); o vídeo segue, mas vale "
+            "ajustar LONG_DURACAO se isso virar rotina."
+        )
 
     # Posicionamento automático (reserva): clipes espalhados uniformemente,
     # com o primeiro abrindo o gancho.
@@ -192,15 +254,19 @@ def main() -> None:
             encoding="utf-8",
         )
 
-    legendas = gerar_legendas(
-        roteiro["texto_video"],
-        alinhamento,
-        duracao,
-        largura,
-        altura,
-        pasta / "legendas.ass",
-        intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
-    )
+    # Formato longo é SEM legendas queimadas (pedido do usuário): a narração
+    # se sustenta sozinha e a tela fica limpa para o clipe.
+    legendas = None
+    if cfg.formato != "longo":
+        legendas = gerar_legendas(
+            roteiro["texto_video"],
+            alinhamento,
+            duracao,
+            largura,
+            altura,
+            pasta / "legendas.ass",
+            intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
+        )
 
     # Infográficos animados: contadores/barras com os números reais da
     # história, no terço superior, subindo da base.
@@ -217,15 +283,23 @@ def main() -> None:
         legendas=legendas,
         graficos=graficos,
         publico=cfg.publico,
+        formato=cfg.formato,
     )
 
-    registrar(cfg, video_final, roteiro["titulo"], roteiro["descricao"])
+    # No formato longo a descrição leva as fontes reais (posts do X e veículos
+    # das notícias que embasaram a análise): o vídeo é educacional e cita as
+    # fontes na narração — quem quiser conferir precisa dos links.
+    descricao = roteiro["descricao"]
+    if cfg.formato == "longo":
+        descricao = _com_fontes(descricao, trend_video, noticias, cfg.publico)
+
+    registrar(cfg, video_final, roteiro["titulo"], descricao)
 
     url_youtube = publicar_youtube(
         cfg,
         video_final,
         roteiro["titulo"],
-        roteiro["descricao"],
+        descricao,
         tags=roteiro.get("tags"),
     )
 

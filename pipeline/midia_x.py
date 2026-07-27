@@ -28,6 +28,9 @@ from .x_client import obter_bearer
 
 TWEETS_ENDPOINT = "https://api.x.com/2/tweets"
 
+# Tetos do formato curto (Shorts). O formato longo (--long-take) sobe os dois
+# via Config (cfg.max_posts_midia / cfg.max_clipes): 2 minutos de tela pedem
+# mais material, e cada post/mídia lida custa ~US$ 0,005.
 MAX_POSTS = 5  # posts consultados por vídeo (cada um custa ~US$ 0,005)
 MAX_CLIPES = 3  # clipes de vídeo baixados por vídeo (os primeiros encontrados)
 MAX_VIDEO_BYTES = 60_000_000  # ~60 MB; vídeo maior que isso é descartado
@@ -35,9 +38,9 @@ MAX_VIDEO_BYTES = 60_000_000  # ~60 MB; vídeo maior que isso é descartado
 PADRAO_ID_POST = re.compile(r"(?:x|twitter)\.com/[^/]+/status/(\d+)")
 
 
-def _ids_dos_posts(urls: list[str]) -> list[str]:
+def _ids_dos_posts(urls: list[str], max_posts: int = MAX_POSTS) -> list[str]:
     ids = [m.group(1) for u in urls if (m := PADRAO_ID_POST.search(u))]
-    return list(dict.fromkeys(ids))[:MAX_POSTS]
+    return list(dict.fromkeys(ids))[:max_posts]
 
 
 def _melhor_variante(variantes: list[dict]) -> str | None:
@@ -87,7 +90,9 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
     justamente por ter clipes nos posts, e pular a etapa entregaria um vídeo
     sem material nenhum.
     """
-    ids = _ids_dos_posts(urls_posts)
+    max_posts = getattr(cfg, "max_posts_midia", MAX_POSTS) or MAX_POSTS
+    max_clipes = getattr(cfg, "max_clipes", MAX_CLIPES) or MAX_CLIPES
+    ids = _ids_dos_posts(urls_posts, max_posts)
     if not ids:
         return []
 
@@ -153,7 +158,7 @@ def baixar_midias_posts(cfg: Config, urls_posts: list[str], pasta: Path) -> list
         return []
 
     baixadas: list[dict] = []
-    for k, m in enumerate(clipes[:MAX_CLIPES], 1):
+    for k, m in enumerate(clipes[:max_clipes], 1):
         url_mp4 = _melhor_variante(m.get("variants") or [])
         if not url_mp4:
             continue

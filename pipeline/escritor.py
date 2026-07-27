@@ -27,6 +27,18 @@ Duas etapas:
    teaser/frase vazia na descrição, âncora ausente) e reprova com UMA
    reescrita — as regras só no prompt vazavam ("Kimi K3", "GPUs" em título;
    "veja o que mudou" em descrição).
+
+FORMATO LONGO (`--long-take`, cfg.formato == "longo"): as duas etapas trocam
+de prompt e de esquema, mantendo a mesma mecânica. A seleção passa a exigir
+pauta que renda análise das quatro óticas (geopolítica, tecnologia/IA,
+negócios, mercado de trabalho) com payload para quem procura emprego, e
+prefere trends com mais posts com clipe; o roteiro segue a estrutura em cinco
+blocos (abertura, o que aconteceu, as quatro óticas, o que muda para quem
+trabalha, síntese + o que observar), sem loop e sem CTA, dentro da faixa dura
+de 90 a 120 segundos; e a auditoria ganha regras próprias (fontes nominais,
+payload de carreira, as quatro óticas, nada dependendo de texto na tela). As
+regras duras (teto de macrotema, veto a repetição) comparam só com os vídeos
+LONGOS já publicados — Short e análise são conteúdos diferentes.
 """
 
 import json
@@ -37,7 +49,7 @@ from urllib.parse import urlparse
 from openai import OpenAI
 
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
-from .config import AVISO_DADOS_EXTERNOS, Config
+from .config import AVISO_DADOS_EXTERNOS, LONGO_MAX_S, LONGO_MIN_S, Config
 
 # Ritmo real médio da narração do ElevenLabs (medido nas narrações do canal:
 # ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
@@ -57,6 +69,20 @@ MAX_MACROTEMA_SEGUIDOS = 4
 # + folga), então a candidata só passa se o resumo dela tiver fato novo. Mais
 # antigo que isso, qualquer desenvolvimento já é naturalmente novo.
 JANELA_REPETICAO_HORAS = 36
+# No formato longo a janela é maior: o cron dispara menos vezes por dia e
+# refazer a MESMA análise no dia seguinte é pior do que refazer uma manchete.
+JANELA_REPETICAO_HORAS_LONGO = 72
+# Formato LONGO: a faixa de palavras sai da FAIXA DURA de duração do formato
+# (90 a 120s), não de VIDEO_DURACAO. A margem existe porque o ritmo real do TTS
+# varia ~10% de narração para narração — sem ela o vídeo estoura a faixa
+# pedida por três ou quatro segundos de fala.
+MARGEM_LONGO_S = 4
+# Duração (s) a partir da qual um vídeo já publicado no canal conta como
+# LONGO. As regras duras do formato longo (teto de macrotema e veto a vídeo
+# repetido) olham só para os vídeos longos: senão a rajada de Shorts do dia
+# bloquearia todo vídeo longo, e a análise de um fato que virou Short há três
+# horas é conteúdo novo — outro formato, outra profundidade, outro público.
+DURACAO_MINIMA_LONGO = 75
 
 ESQUEMA_SELECAO = {
     "name": "selecao_trend",
@@ -196,6 +222,114 @@ ESQUEMA_ROTEIRO = {
     },
 }
 
+ESQUEMA_ROTEIRO_LONGO = {
+    "name": "roteiro_video_longo",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "tema": {
+                "type": "string",
+                "description": "O acontecimento contemporâneo analisado no vídeo.",
+            },
+            "hook": {
+                "type": "string",
+                "description": (
+                    "A frase de abertura (0-5s): o fato concreto mais forte JÁ "
+                    "amarrado ao bolso/emprego de quem assiste. Máximo 14 "
+                    "palavras, sem preâmbulo, sem data, sem nome de "
+                    "instituição na primeira posição. A primeira frase de "
+                    "texto_video DEVE ser exatamente esta (copiada palavra por "
+                    "palavra, antes de qualquer audio tag)."
+                ),
+            },
+            "tese": {
+                "type": "string",
+                "description": (
+                    "Em uma frase: a leitura que costura as quatro óticas "
+                    "(geopolítica, tecnologia/IA, mercado de trabalho e "
+                    "negócios) sobre este acontecimento. É o fio condutor do "
+                    "vídeo inteiro — decida antes de escrever a narração."
+                ),
+            },
+            "impacto_carreira": {
+                "type": "string",
+                "description": (
+                    "O payload central do vídeo, em 1 a 2 frases: o que este "
+                    "acontecimento muda CONCRETAMENTE para quem procura "
+                    "emprego ou está em transição de carreira — que setor, que "
+                    "tipo de vaga, que habilidade, que prazo. Nada de conselho "
+                    "genérico de coach ('se reinvente', 'esteja preparado')."
+                ),
+            },
+            "o_que_observar": {
+                "type": "string",
+                "description": (
+                    "O próximo marco concreto a acompanhar (decisão, balanço, "
+                    "data, número que sai em breve) — fecha o vídeo sem CTA."
+                ),
+            },
+            "titulo": {
+                "type": "string",
+                "description": (
+                    "Título do vídeo, no idioma definido nas instruções, até 90 "
+                    "caracteres. Direto e factual: ator + ação concreta, com "
+                    "pelo menos uma coisa palpável (número, pessoa, dinheiro, "
+                    "lugar) e, quando couber sem ficar artificial, o ângulo de "
+                    "trabalho/carreira. TESTE DO LEIGO: entendível por quem "
+                    "NUNCA ouviu falar da empresa ou do modelo — nome de nicho "
+                    "(modelo de IA, lab, startup, sigla) fica FORA do título: "
+                    "traduza para o efeito concreto em gente, dinheiro ou "
+                    "ação. PROIBIDO cauda de suspense ('— e o detalhe muda "
+                    "tudo', 'here's why it matters', 'e agora?'). O título "
+                    "promete EXATAMENTE o que o vídeo entrega."
+                ),
+            },
+            "descricao": {
+                "type": "string",
+                "description": (
+                    "Descrição do vídeo no idioma definido nas instruções, "
+                    "2 a 4 frases em um único parágrafo, com hashtags "
+                    "relevantes no final. É o RESUMO DO PAYLOAD, não teaser: "
+                    "entrega o fato central concreto (número, nome, ação) com "
+                    "a fonte nominal, a leitura que une as quatro óticas e o "
+                    "impacto prático no mercado de trabalho. Mesmo TESTE DO "
+                    "LEIGO do título. PROIBIDO: cauda de suspense, CTA ('veja "
+                    "o que mudou', 'saiba mais') e frase de analista vazia."
+                ),
+            },
+            "texto_video": {
+                "type": "string",
+                "description": (
+                    "Texto/roteiro narrado do vídeo, no idioma definido nas "
+                    "instruções, seguindo a ESTRUTURA EM BLOCOS das "
+                    "instruções (ABERTURA → O QUE ACONTECEU → AS QUATRO "
+                    "ÓTICAS → O QUE ISSO MUDA PARA QUEM TRABALHA → SÍNTESE E "
+                    "O QUE OBSERVAR). Ritmo de fala natural (frases de 8 a 18 "
+                    "palavras, teto 22), vocabulário preciso de telejornal, "
+                    "tom adulto de analista que respeita o espectador. Toda "
+                    "afirmação central atribuída nominalmente à fonte "
+                    "(veículo de notícias ou conta do X), somente fontes das "
+                    "listas recebidas. O vídeo NÃO tem legendas nem texto na "
+                    "tela: a narração precisa se sustentar sozinha, sem "
+                    "'como você vê aqui' nem referência a imagem."
+                ),
+            },
+        },
+        "required": [
+            "tema",
+            "hook",
+            "tese",
+            "impacto_carreira",
+            "o_que_observar",
+            "titulo",
+            "descricao",
+            "texto_video",
+        ],
+    },
+}
+
 ESQUEMA_REPETICAO = {
     "name": "verificacao_video_repetido",
     "strict": True,
@@ -312,6 +446,54 @@ invente problema: o que segue as regras passa, e "aprovado" = true com zero
 problemas.\
 """
 
+INSTRUCOES_AUDITORIA_LEIGO_LONGO = """\
+Você é o auditor de um canal de vídeos de ANÁLISE de 90 a 120 segundos, feitos
+para um adulto leigo que está procurando emprego ou em transição de carreira.
+Você recebe o título, a descrição e a narração de um vídeo e verifica as
+regras abaixo. O espectador conhece Trump, Google, Irã, iPhone, Elon Musk; ele
+NÃO conhece Grok, Kimi K3, Anthropic, CENTCOM, GPU.
+
+CALIBRAGEM (vale para as três partes):
+- Nome próprio UNIVERSALMENTE conhecido é permitido em qualquer quantidade —
+  nunca é problema. O que reprova é nome de NICHO (modelo de IA, lab, startup,
+  app pouco conhecido, sigla militar/técnica) sem tradução.
+- Termos do dia a dia NÃO são jargão: inteligência artificial, IA/AI, app,
+  chip, robô, e tudo que se ouve num telejornal (bilhões, míssil, sanção,
+  falência, demissão em massa, tarifa).
+- As hashtags no final da descrição não entram na auditoria.
+- Audio tags entre colchetes não entram na auditoria.
+
+TÍTULO:
+1. Teste do leigo: entendível por quem nunca ouviu falar da empresa/modelo.
+   Nome de nicho ou jargão técnico REPROVA — deve virar o efeito concreto.
+2. Sem cauda de suspense ("— e o detalhe muda tudo", "here's why it matters").
+DESCRIÇÃO:
+3. Entrega o fato central concreto com a fonte nominal e o impacto prático —
+   não é teaser. REPROVA: CTA/suspense e frase de analista vazia ("virou um
+   teste sobre confiança", "a saída segue em aberto").
+4. Mesmo teste do leigo do título.
+NARRAÇÃO:
+5. Nome de nicho ou sigla sem tradução de meia frase na PRIMEIRA vez que
+   aparece REPROVA. Mais de três nomes de nicho no vídeo inteiro REPROVA
+   (veículo ou conta do X citado como FONTE não conta).
+6. Pelo menos DUAS fontes nominais (veículo ou conta do X) ao longo da
+   narração; "segundo fontes" sem nome REPROVA.
+7. PAYLOAD DE CARREIRA: o vídeo precisa dizer, com fato concreto, o que o
+   acontecimento muda para quem procura emprego ou muda de área (setor,
+   função, habilidade, prazo, número). Conselho de coach ("se reinvente",
+   "esteja preparado", "invista em você") e futurologia sem base REPROVAM.
+8. AS QUATRO ÓTICAS: geopolítica, tecnologia/IA, negócios e mercado de
+   trabalho precisam aparecer, costuradas por causa e efeito. Ótica ausente
+   ou lista de tópicos soltos REPROVA.
+9. Nenhuma frase pode depender de texto na tela ("como você vê aqui", "no
+   gráfico") — o vídeo não tem legendas.
+10. Fechamento: síntese + próximo marco a observar. CTA falado, pedido de
+   inscrição ou despedida REPROVAM.
+
+Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
+problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\
+"""
+
 ESQUEMA_MACROTEMAS_RECENTES = {
     "name": "macrotemas_videos_recentes",
     "strict": True,
@@ -382,6 +564,48 @@ seguidos do mesmo macrotema).
 já publicado, sem nenhum fato novo. Cobertura contínua do mesmo assunto com
 desenvolvimento novo (novo ataque, nova declaração, novo número) é bem-vinda —
 é exatamente o que a audiência está acompanhando.
+
+Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
+nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
+longa e cheia de detalhes zera os resultados — seja enxuto.
+Responda somente com o JSON pedido.\
+"""
+
+INSTRUCOES_SELECAO_LONGO = """\
+Você é editor de um canal de vídeos de ANÁLISE (formato longo, 16:9, cerca de
+{duracao} segundos) sobre os grandes acontecimentos contemporâneos.
+
+Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema e
+imagem mental), os vídeos CAMPEÕES DE RETENÇÃO do canal e os últimos vídeos
+publicados COM as métricas reais de audiência (views e likes). Atenção: essas
+métricas são dos vídeos CURTOS do canal — use-as como régua do que este
+público responde (tema, tensão, promessa), não como molde de formato.
+
+O QUE O VÍDEO LONGO É: uma análise educacional que explica um acontecimento
+atual cruzando QUATRO ÓTICAS — geopolítica, tecnologia e IA, mercado de
+trabalho e negócios — e entrega valor prático para o espectador principal:
+o adulto que está PROCURANDO EMPREGO ou EM TRANSIÇÃO DE CARREIRA e quer
+entender para onde o mundo (e o trabalho dele) está indo.
+
+CRITÉRIOS, nesta ordem:
+1. RENDE ANÁLISE DAS QUATRO ÓTICAS: o acontecimento tem causa, mecanismo e
+   consequência claros e toca — mesmo que indiretamente — dinheiro, empresas,
+   poder entre países e trabalho. Fato isolado e sem desdobramento (uma treta
+   de rede social, um vídeo curioso) NÃO vira vídeo longo, por mais quente que
+   esteja.
+2. PAYLOAD DE CARREIRA: dá para dizer, com fato e não com achismo, o que isso
+   muda para quem procura emprego ou está mudando de área (setor que contrata
+   ou corta, habilidade que passa a valer, prazo). Prefira acontecimentos com
+   números de dinheiro, investimento, vagas, contratos ou regulação.
+3. AUDIÊNCIA: entre as candidatas que passam em 1 e 2, escolha a que mais se
+   parece com o que o público DESTE canal assiste, segundo os números
+   listados. Repetir o tipo de assunto que performa é bem-vindo.
+4. MATERIAL EM VÍDEO: o vídeo é montado SOMENTE com os clipes anexados aos
+   posts do X da trend (até {max_clipes} clipes, nenhuma foto estática). Em
+   empate, vence a candidata com MAIS posts com clipe.
+
+Não escolha uma candidata que renderia uma análise IDÊNTICA a um vídeo longo
+já publicado, sem nenhum fato novo.
 
 Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
 nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
@@ -530,6 +754,142 @@ Responda somente com o JSON pedido.\
 """
 
 
+INSTRUCOES_ROTEIRO_LONGO = """\
+Você é roteirista de vídeos de ANÁLISE (formato longo, 16:9, {duracao}
+segundos) que explicam os grandes acontecimentos contemporâneos cruzando
+quatro óticas: GEOPOLÍTICA, TECNOLOGIA E IA, MERCADO DE TRABALHO e NEGÓCIOS.
+{foco}
+
+Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
+X que originaram a trend e NOTÍCIAS recentes sobre ela. Use as notícias para
+acertar fatos, nomes, empresas, datas e números — não invente nada. Fato que
+não está no material recebido não entra no vídeo.
+
+ESPECTADOR — A REGRA QUE MANDA EM TODAS AS OUTRAS: um adulto leigo (25 a 54
+anos, sem formação técnica) que está PROCURANDO EMPREGO ou EM TRANSIÇÃO DE
+CARREIRA. Ele não assiste por curiosidade: ele quer entender para onde o
+mundo está indo porque a vida profissional dele depende disso. Todo bloco do
+vídeo precisa render alguma coisa para essa pessoa — informação que ela usa
+para decidir onde investir tempo, para que setor olhar, o que está morrendo e
+o que está nascendo.
+
+VALOR ACIMA DE TUDO: densidade de informação REAL. Cada frase carrega um fato,
+um número, um nome ou uma relação de causa e efeito. Enrolação, frase de
+efeito e generalidade são o defeito mais grave possível neste formato — em
+{duracao} segundos o espectador perdoa densidade, nunca vazio.
+
+SEM LEGENDAS E SEM TEXTO NA TELA: a narração precisa se sustentar sozinha.
+PROIBIDO "como você vê aqui", "na imagem", "no gráfico", ou qualquer frase que
+dependa de algo escrito na tela.
+
+FONTES — OBRIGATÓRIO citar nominalmente: cada afirmação central é atribuída a
+quem a publicou — o veículo ("segundo a Reuters", "o Financial Times revelou")
+ou a conta do X ("no post de @sentdefender"). Cite SOMENTE fontes das listas
+recebidas, pelo menos DUAS ao longo do vídeo, embutidas na frase — nunca em
+bloco de créditos. "Segundo fontes", sem nome, continua proibido. Nome de
+veículo ou de conta citado como fonte não conta como nome próprio de nicho.
+
+TOM: analista adulto e afiado — jornalismo econômico de bom nível, não
+palestra motivacional e não aula. Autoridade seca, sem entusiasmo fofo, sem
+moral da história, sem "nós" professoral. O espectador é leigo, não é burro:
+escrever simples é remover barreiras (jargão, sigla, contexto obscuro), nunca
+rebaixar o texto.
+
+FRASES: ritmo de fala natural — mire em 8 a 18 palavras por frase, teto de 22.
+Alterne frases curtas de impacto com frases cheias que carregam o fato. Uma
+ideia central por frase. (Audio tags entre colchetes não contam como palavras.)
+
+VOCABULÁRIO: preciso e adulto. Tudo que se ouve num telejornal está liberado
+(bilhões, sanção, demissão em massa, monopólio, tarifa, recessão). Nome de
+nicho (modelo de IA, lab, startup, sigla técnica ou militar) é permitido — no
+máximo TRÊS no vídeo inteiro — mas SEMPRE traduzido em meia frase na primeira
+vez que aparece ("a empresa por trás do ChatGPT", "o imposto que encarece o
+produto importado"). Sem a tradução, não use o nome.
+
+ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
+(PROIBIDO "neste vídeo vamos ver três pontos"):
+1. ABERTURA (0-8s): o HOOK (campo hook, primeira frase do texto, palavra por
+   palavra) — o fato concreto mais forte já amarrado ao bolso ou ao emprego de
+   quem assiste — seguido de UMA frase que promete o que o espectador leva do
+   vídeo. Nada de contexto histórico, data ou nome de instituição na abertura.
+2. O QUE ACONTECEU (~20s): o acontecimento em ordem "coisa concreta primeiro,
+   detalhe depois", com número real, quem fez, quando, e a FONTE nominal. Se o
+   assunto central for de nicho, a primeira frase deste bloco ancora em algo
+   que o leigo conhece.
+3. AS QUATRO ÓTICAS (~40s, o corpo do vídeo): explique o acontecimento por
+   GEOPOLÍTICA (quem ganha e quem perde poder), TECNOLOGIA E IA (o que a
+   tecnologia tem a ver com isso, o que ela permite ou destrói), NEGÓCIOS
+   (dinheiro, empresas, investimento, quem paga a conta) e MERCADO DE TRABALHO
+   (o que acontece com as vagas). Duas a quatro frases por ótica, ENCADEADAS
+   por causa e efeito ("por isso", "o efeito disso", "e aí entra o dinheiro")
+   — nunca uma lista de tópicos soltos. Cada ótica carrega pelo menos um dado
+   concreto do material recebido. A ordem interna pode mudar se a lógica do
+   fato pedir, mas as quatro precisam estar lá, costuradas pela sua TESE.
+4. O QUE ISSO MUDA PARA QUEM TRABALHA (~25s): o payload. Concreto e
+   verificável: que setor contrata ou corta, que tipo de função entra na
+   linha de tiro, que habilidade passa a valer, em que prazo, com que número.
+   PROIBIDO conselho de coach ("se reinvente", "esteja preparado", "invista em
+   você") e futurologia sem base no material recebido.
+5. SÍNTESE E O QUE OBSERVAR (últimos ~10s): uma frase que amarra a tese e uma
+   que aponta o PRÓXIMO MARCO concreto a acompanhar (decisão, balanço, data,
+   número que sai em breve). Sem CTA, sem pedido de inscrição, sem despedida,
+   sem moral da história.
+
+RETENÇÃO: a cada ~25 segundos abra um mini-gancho que puxa para o bloco
+seguinte ("o número que interessa não é esse", "e é aqui que isso encosta no
+seu emprego"). O vídeo não roda em loop: ele fecha — mas fecha entregando,
+nunca com suspense vazio.
+
+PROIBIDO NO TEXTO:
+- Frases de analista vazias: "no cenário geopolítico", "especialistas
+  afirmam", "o mercado reagiu", "só o tempo dirá".
+- Número com mais de 2 dígitos significativos: "2 bilhões", "150 mil", "quase
+  30%" — nunca "2,37 bilhões", "148.532" ou "29,7%".
+- Opinião militante, torcida política e previsão inventada. Cenário só entra
+  se estiver no material recebido e for apresentado como cenário.
+
+PAYLOAD OBRIGATÓRIO: o roteiro entrega o fato, as quatro leituras e uma
+consequência prática para o trabalho — tudo ancorado no material recebido.
+
+TÍTULO — medido nos números do canal: título autossuficiente rende o dobro de
+views do título com nome de nicho. Regras: (1) ator + ação concreta, com uma
+coisa palpável (número, pessoa, dinheiro, lugar) e, quando couber com
+naturalidade, o ângulo de trabalho/carreira; (2) TESTE DO LEIGO: entendível
+por quem nunca ouviu falar da empresa/modelo — nome de nicho vira o efeito
+concreto; (3) PROIBIDO cauda de suspense ("— e o detalhe muda tudo", "here's
+why it matters", "e agora?").
+
+DESCRIÇÃO — resumo do payload, não teaser: 2 a 4 frases que entregam o fato
+central (com número/nome concreto e a fonte nominal), a leitura que une as
+quatro óticas e o impacto prático no mercado de trabalho, seguidas das
+hashtags. Mesmo teste do leigo do título. PROIBIDO CTA, cauda de suspense e
+frase de analista vazia.
+
+DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
+{palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
+colchetes não contam). Os DOIS limites são DUROS — o formato do canal é de 90
+a 120 segundos. Se faltar espaço, corte detalhe secundário do bloco 2 ou 3 —
+nunca o hook, o bloco 4 (o payload de carreira) nem o fechamento. Se sobrar
+espaço, acrescente dado concreto do material recebido (número, nome, cena),
+nunca encha linguiça.
+
+MATERIAL VISUAL — o vídeo é montado SOMENTE com os clipes de vídeo anexados
+aos posts do X da trend (até {max_clipes} clipes, nada de foto estática nem
+imagem de banco). Você não escolhe os clipes — um editor de cortes casa cada um
+com a narração depois — mas escreva sabendo disso: fale de cenas que os posts
+documentam em vídeo, e lembre que o primeiro clipe + o hook decidem quem fica.
+
+NARRAÇÃO EXPRESSIVA — insira audio tags do ElevenLabs v3 no texto_video:
+palavras em inglês entre colchetes, imediatamente antes do trecho que
+modificam. Exemplos: [serious], [curious], [emphatic], [short pause],
+[thoughtful], [surprised]. Use de 15 a 25 tags ao longo do texto, variando
+conforme o conteúdo (elas não são faladas). A pontuação também guia a entrega:
+reticências para suspense, MAIÚSCULAS para ênfase pontual.
+
+Responda somente com o JSON pedido.\
+"""
+
+
 def _resumo_trends(trends: list[dict]) -> str:
     linhas = []
     for i, t in enumerate(trends, 1):
@@ -649,6 +1009,21 @@ def _recentes_na_janela(
     return dentro
 
 
+def _somente_longos(videos_recentes: list[dict] | None) -> list[dict]:
+    """Os vídeos publicados que são do formato LONGO (>= DURACAO_MINIMA_LONGO).
+
+    As regras duras do formato longo comparam com os vídeos longos do canal, e
+    não com a rajada de Shorts do dia: um Short de 30s sobre um fato e uma
+    análise de 2 minutos sobre o mesmo fato são conteúdos diferentes. Vídeo sem
+    duração conhecida fica de fora (o canal só passa a ter longos agora).
+    """
+    return [
+        v
+        for v in videos_recentes or []
+        if (v.get("duracao_s") or 0) >= DURACAO_MINIMA_LONGO
+    ]
+
+
 def _candidata_por_nome(candidatas: list[dict], nome: str) -> dict:
     """A trend escolhida pela seleção (por nome, com folga p/ paráfrase)."""
     alvo = nome.strip().lower()
@@ -663,7 +1038,11 @@ def _candidata_por_nome(candidatas: list[dict], nome: str) -> dict:
 
 
 def _video_repetido(
-    cliente: OpenAI, cfg: Config, trend: dict, recentes: list[dict]
+    cliente: OpenAI,
+    cfg: Config,
+    trend: dict,
+    recentes: list[dict],
+    janela_horas: int = JANELA_REPETICAO_HORAS,
 ) -> str | None:
     """Título do vídeo já publicado que a trend repetiria, ou None.
 
@@ -684,7 +1063,7 @@ def _video_repetido(
         AVISO_DADOS_EXTERNOS + "\n\n"
         f"PAUTA CANDIDATA: {trend.get('trend', '')}\n"
         f"Resumo: {trend.get('resumo', '')}\n\n"
-        f"VÍDEOS PUBLICADOS NAS ÚLTIMAS {JANELA_REPETICAO_HORAS} HORAS:\n"
+        f"VÍDEOS PUBLICADOS NAS ÚLTIMAS {janela_horas} HORAS:\n"
         + "\n".join(linhas)
     )
     try:
@@ -756,9 +1135,31 @@ def selecionar_trend(
     uma execução sem vídeo do que canal monotemático ou vídeo clonado.
     """
     cliente = OpenAI(api_key=cfg.openai_api_key)
+    longo = cfg.formato == "longo"
     macros_recentes = (
         _macrotemas_recentes(cliente, cfg, videos_recentes) if videos_recentes else []
     )
+
+    # As regras duras (teto de macrotema e veto a vídeo repetido) do formato
+    # longo comparam só com os vídeos LONGOS do canal; o prompt continua
+    # recebendo a lista inteira, que é a régua de audiência.
+    if longo:
+        indices = [
+            i
+            for i, v in enumerate(videos_recentes or [])
+            if (v.get("duracao_s") or 0) >= DURACAO_MINIMA_LONGO
+        ]
+        recentes_regras = [(videos_recentes or [])[i] for i in indices]
+        macros_regras = [
+            macros_recentes[i] for i in indices if i < len(macros_recentes)
+        ]
+        print(
+            f"[longo] {len(recentes_regras)} vídeo(s) longo(s) já publicados "
+            "servem de base para o teto de macrotema e o veto a repetição."
+        )
+    else:
+        recentes_regras = list(videos_recentes or [])
+        macros_regras = macros_recentes
 
     # O formato do canal é montado só com clipes dos posts do X: candidata
     # sem nenhum post com vídeo nativo não tem material e sai da disputa.
@@ -775,7 +1176,26 @@ def selecionar_trend(
             "formato do canal é montado só com clipes do X; execução sem vídeo."
         )
 
-    macro_bloqueado = _macrotema_no_teto(macros_recentes)
+    # No formato longo um único clipe teria que segurar dois minutos de tela:
+    # preferimos as candidatas com pelo menos dois posts com clipe, mas sem
+    # zerar a disputa quando o dia inteiro só tem trends de um clipe.
+    if longo:
+        com_material = [t for t in candidatas if (t.get("posts_com_video") or 0) >= 2]
+        if com_material:
+            if len(com_material) < len(candidatas):
+                print(
+                    f"[longo] {len(candidatas) - len(com_material)} candidata(s) "
+                    "com um só post com clipe fora da disputa (2 minutos de "
+                    f"tela pedem mais material; {len(com_material)} seguem)."
+                )
+            candidatas = com_material
+        else:
+            print(
+                "[aviso] Nenhuma candidata de hoje tem 2+ posts com clipe; "
+                "seguindo com as de clipe único (o clipe vai repetir bastante)."
+            )
+
+    macro_bloqueado = _macrotema_no_teto(macros_regras)
     if macro_bloqueado:
         candidatas = [
             t for t in candidatas
@@ -795,7 +1215,17 @@ def selecionar_trend(
                 "monotemático."
             )
 
-    recentes_janela = _recentes_na_janela(videos_recentes, JANELA_REPETICAO_HORAS)
+    janela_repeticao = (
+        JANELA_REPETICAO_HORAS_LONGO if longo else JANELA_REPETICAO_HORAS
+    )
+    recentes_janela = _recentes_na_janela(recentes_regras, janela_repeticao)
+    instrucoes_selecao = (
+        INSTRUCOES_SELECAO_LONGO.format(
+            duracao=cfg.video_duracao, max_clipes=cfg.max_clipes
+        )
+        if longo
+        else INSTRUCOES_SELECAO
+    )
     while True:
         conteudo = (
             AVISO_DADOS_EXTERNOS
@@ -807,7 +1237,7 @@ def selecionar_trend(
         resposta = cliente.chat.completions.create(
             model=cfg.text_model,
             messages=[
-                {"role": "system", "content": INSTRUCOES_SELECAO},
+                {"role": "system", "content": instrucoes_selecao},
                 {"role": "user", "content": conteudo},
             ],
             response_format={"type": "json_schema", "json_schema": ESQUEMA_SELECAO},
@@ -815,7 +1245,9 @@ def selecionar_trend(
         selecao = json.loads(resposta.choices[0].message.content)
 
         escolhida = _candidata_por_nome(candidatas, selecao["trend"])
-        repetido = _video_repetido(cliente, cfg, escolhida, recentes_janela)
+        repetido = _video_repetido(
+            cliente, cfg, escolhida, recentes_janela, janela_repeticao
+        )
         if not repetido:
             break
         candidatas = [t for t in candidatas if t is not escolhida]
@@ -827,7 +1259,7 @@ def selecionar_trend(
         if not candidatas:
             raise SystemExit(
                 "Todas as candidatas de hoje repetiriam vídeos publicados nas "
-                f"últimas {JANELA_REPETICAO_HORAS}h — execução sem vídeo "
+                f"últimas {janela_repeticao}h — execução sem vídeo "
                 "(melhor do que publicar clone)."
             )
 
@@ -871,7 +1303,9 @@ def _contar_palavras(texto: str) -> int:
 
 
 def _resumo_estilo(
-    videos_recentes: list[dict] | None, campeoes: list[dict] | None
+    videos_recentes: list[dict] | None,
+    campeoes: list[dict] | None,
+    formato: str = "curto",
 ) -> str:
     """Referência de estilo para o ROTEIRISTA: o que a audiência responde.
 
@@ -893,6 +1327,11 @@ def _resumo_estilo(
         "como performaram. Calibre o TIPO de título, hook e promessa pelo que "
         "funciona; NUNCA copie um título nem repita o assunto deles:"
     ]
+    if formato == "longo":
+        partes.append(
+            "(São vídeos CURTOS do canal: servem de régua do que este público "
+            "clica, não de molde para a profundidade do vídeo longo.)"
+        )
     if top:
         partes.append("Títulos com MAIS views:")
         partes += [f"- {v.get('titulo', '')} ({v['views']} views)" for v in top]
@@ -909,6 +1348,23 @@ def _resumo_estilo(
             for c in campeoes
         ]
     return "\n".join(partes)
+
+
+def _faixa_palavras(cfg: Config) -> tuple[int, int]:
+    """Piso e teto de palavras faladas do roteiro, conforme o formato.
+
+    No formato curto a faixa sai de VIDEO_DURACAO (teto pela duração-alvo,
+    piso em FRACAO_MINIMA dela). No formato longo ela sai da FAIXA DURA do
+    próprio formato (90 a 120s), com MARGEM_LONGO_S de folga em cada ponta
+    para absorver a variação de ritmo do TTS.
+    """
+    if cfg.formato == "longo":
+        return (
+            int((LONGO_MIN_S + MARGEM_LONGO_S) * PALAVRAS_POR_SEGUNDO),
+            int((LONGO_MAX_S - MARGEM_LONGO_S) * PALAVRAS_POR_SEGUNDO),
+        )
+    limite = int(cfg.video_duracao * PALAVRAS_POR_SEGUNDO)
+    return int(limite * FRACAO_MINIMA), limite
 
 
 def _aparar_hook_final(roteiro: dict) -> None:
@@ -950,10 +1406,15 @@ def _auditar_leigo(cliente: OpenAI, cfg: Config, roteiro: dict) -> list[str]:
         f"DESCRIÇÃO: {roteiro.get('descricao', '')}\n\n"
         f"NARRAÇÃO:\n{roteiro.get('texto_video', '')}"
     )
+    instrucoes = (
+        INSTRUCOES_AUDITORIA_LEIGO_LONGO
+        if cfg.formato == "longo"
+        else INSTRUCOES_AUDITORIA_LEIGO
+    )
     resposta = cliente.chat.completions.create(
         model=cfg.text_model,
         messages=[
-            {"role": "system", "content": INSTRUCOES_AUDITORIA_LEIGO},
+            {"role": "system", "content": instrucoes},
             {"role": "user", "content": conteudo},
         ],
         response_format={
@@ -995,17 +1456,25 @@ def gerar_roteiro(
         + _fontes_x(trend_escolhida.get("posts") or [])
         + "\n\nNOTÍCIAS RECENTES SOBRE A TREND (o veículo entre colchetes é a "
         "fonte citável):\n" + _resumo_noticias(noticias)
-        + _resumo_estilo(videos_recentes, campeoes)
+        + _resumo_estilo(videos_recentes, campeoes, cfg.formato)
     )
 
-    limite = int(cfg.video_duracao * PALAVRAS_POR_SEGUNDO)
-    minimo = int(limite * FRACAO_MINIMA)
-    instrucoes = INSTRUCOES_ROTEIRO.format(
-        foco=FOCO_USA if cfg.publico == "usa" else FOCO_BRASIL,
-        duracao=cfg.video_duracao,
-        palavras=limite,
-        palavras_min=minimo,
-    )
+    longo = cfg.formato == "longo"
+    minimo, limite = _faixa_palavras(cfg)
+    # No formato longo o teto já vem com margem embutida (a faixa de 90-120s é
+    # dura), então não há folga extra sobre ele.
+    folga = 1.0 if longo else FOLGA_PALAVRAS
+    esquema = ESQUEMA_ROTEIRO_LONGO if longo else ESQUEMA_ROTEIRO
+    modelo_instrucoes = INSTRUCOES_ROTEIRO_LONGO if longo else INSTRUCOES_ROTEIRO
+    formatacao = {
+        "foco": FOCO_USA if cfg.publico == "usa" else FOCO_BRASIL,
+        "duracao": cfg.video_duracao,
+        "palavras": limite,
+        "palavras_min": minimo,
+    }
+    if longo:
+        formatacao["max_clipes"] = cfg.max_clipes
+    instrucoes = modelo_instrucoes.format(**formatacao)
 
     resposta = cliente.chat.completions.create(
         model=cfg.text_model,
@@ -1013,7 +1482,7 @@ def gerar_roteiro(
             {"role": "system", "content": instrucoes},
             {"role": "user", "content": conteudo},
         ],
-        response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},
+        response_format={"type": "json_schema", "json_schema": esquema},
     )
 
     roteiro = json.loads(resposta.choices[0].message.content)
@@ -1023,30 +1492,44 @@ def gerar_roteiro(
     # retenção; vídeo curto demais sai com metade da duração-alvo e o YouTube
     # distribui menos. Fora da faixa, UMA nova tentativa pedindo ajuste.
     palavras = _contar_palavras(roteiro["texto_video"])
-    if palavras > limite * FOLGA_PALAVRAS or palavras < minimo:
-        estourou = palavras > limite * FOLGA_PALAVRAS
+    if palavras > limite * folga or palavras < minimo:
+        estourou = palavras > limite * folga
         print(
             f"[roteiro] texto_video com {palavras} palavras faladas "
             f"(faixa {minimo}-{limite}); pedindo versão "
             f"{'mais curta' if estourou else 'mais completa'}..."
         )
+        preservar = (
+            "mantenha o hook, as quatro óticas, o payload de carreira e o "
+            "fechamento com o que observar"
+            if longo
+            else "mantenha o hook, a implicação única e o corte final em tensão"
+        )
+        cortar = (
+            "cortando detalhe secundário dos blocos O QUE ACONTECEU e AS "
+            "QUATRO ÓTICAS"
+            if longo
+            else "cortando detalhes do FATO"
+        )
+        acrescentar = (
+            "acrescentando dado CONCRETO do material recebido (número, nome, "
+            "empresa, prazo) às quatro óticas"
+            if longo
+            else "acrescentando detalhes CONCRETOS ao FATO (número, nome, cena)"
+        )
         pedido = (
             (
                 f"O texto_video ficou com {palavras} palavras faladas; "
                 f"o máximo é {limite}. Reescreva o JSON completo "
-                "cortando detalhes do FATO (mantenha o hook, a "
-                "implicação única e o corte final em tensão) até caber "
-                "no limite"
+                f"{cortar} ({preservar}) até caber no limite"
             )
             if estourou
             else (
                 f"O texto_video ficou com {palavras} palavras faladas; "
                 f"o mínimo é {minimo} (a narração precisa preencher "
                 f"{cfg.video_duracao} segundos). Reescreva o JSON completo "
-                "acrescentando detalhes CONCRETOS ao FATO (número, nome, "
-                "cena — sem encher linguiça; mantenha o hook, a implicação "
-                "única e o corte final em tensão) até entrar na faixa de "
-                f"{minimo} a {limite} palavras"
+                f"{acrescentar} — sem encher linguiça; {preservar} — até "
+                f"entrar na faixa de {minimo} a {limite} palavras"
             )
         ) + "."
         resposta = cliente.chat.completions.create(
@@ -1057,7 +1540,7 @@ def gerar_roteiro(
                 {"role": "assistant", "content": resposta.choices[0].message.content},
                 {"role": "user", "content": pedido},
             ],
-            response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},
+            response_format={"type": "json_schema", "json_schema": esquema},
         )
         ajustado = json.loads(resposta.choices[0].message.content)
         _aparar_hook_final(ajustado)
@@ -1068,7 +1551,7 @@ def gerar_roteiro(
         # para o outro lado (ex.: de 120 palavras acima do teto para 50,
         # abaixo do piso).
         def _dist_faixa(n: int) -> int:
-            return max(minimo - n, n - int(limite * FOLGA_PALAVRAS), 0)
+            return max(minimo - n, n - int(limite * folga), 0)
 
         if _dist_faixa(ajustadas) < _dist_faixa(palavras):
             roteiro = ajustado
@@ -1083,12 +1566,19 @@ def gerar_roteiro(
         for p in problemas:
             print(f"  - {p}")
         pedido = (
-            "A auditoria pró-leigo reprovou o roteiro pelos problemas "
-            "listados abaixo. Reescreva o JSON completo corrigindo TODOS "
-            "eles: nome de nicho vira o efeito concreto; a descrição entrega "
-            "o fato com a fonte, sem teaser nem frase vazia; jargão ganha "
-            "explicação de meia frase ou sai; assunto de nicho ganha âncora "
-            "logo após o hook. Mantenha o texto_video na faixa de "
+            "A auditoria reprovou o roteiro pelos problemas listados abaixo. "
+            "Reescreva o JSON completo corrigindo TODOS eles: nome de nicho "
+            "vira o efeito concreto ou ganha tradução de meia frase; a "
+            "descrição entrega o fato com a fonte, sem teaser nem frase "
+            "vazia; jargão ganha explicação de meia frase ou sai"
+            + (
+                "; as quatro óticas e o payload de carreira concreto precisam "
+                "estar no texto, e o vídeo fecha com o próximo marco a "
+                "observar, sem CTA. "
+                if longo
+                else "; assunto de nicho ganha âncora logo após o hook. "
+            )
+            + "Mantenha o texto_video na faixa de "
             f"{minimo} a {limite} palavras faladas.\nProblemas:\n- "
             + "\n- ".join(problemas)
         )
@@ -1103,7 +1593,7 @@ def gerar_roteiro(
                 },
                 {"role": "user", "content": pedido},
             ],
-            response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},
+            response_format={"type": "json_schema", "json_schema": esquema},
         )
         corrigido = json.loads(resposta.choices[0].message.content)
         _aparar_hook_final(corrigido)
@@ -1127,4 +1617,10 @@ def gerar_roteiro(
         print(f"[roteiro] Hook: {roteiro['hook']}")
     if roteiro.get("implicacao"):
         print(f"[roteiro] Implicação: {roteiro['implicacao']}")
+    if roteiro.get("tese"):
+        print(f"[roteiro] Tese: {roteiro['tese']}")
+    if roteiro.get("impacto_carreira"):
+        print(f"[roteiro] Impacto na carreira: {roteiro['impacto_carreira']}")
+    if roteiro.get("o_que_observar"):
+        print(f"[roteiro] O que observar: {roteiro['o_que_observar']}")
     return roteiro

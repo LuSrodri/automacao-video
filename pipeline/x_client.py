@@ -186,7 +186,7 @@ def _listar_posts(posts: list[dict]) -> str:
 
 
 INSTRUCOES_RESUMO = """\
-Você é curador de um canal de vídeos curtos sobre geopolítica, inteligência
+Você é curador de um canal de vídeos sobre geopolítica, inteligência
 (espionagem, defesa, OSINT), inteligência artificial e tecnologia. O canal
 trata cada pauta em formato EXPLICATIVO — análise ou educacional: o vídeo
 explica o que aconteceu e por que importa.
@@ -216,11 +216,12 @@ Regras dos campos:
   euforia, ceticismo, fascínio...) e por quê — o que está movendo a conversa.
 - "apelo_visual": uma frase sobre o quanto o assunto rende boas imagens reais
   (pessoas conhecidas, produtos, eventos, lugares) — alto/médio/baixo e por quê.
-- "posts": até 5 URLs escolhidas SOMENTE entre as listadas acima, dos posts
-  mais centrais da trend (os que originaram ou melhor documentam o assunto).
-  O vídeo do canal é montado com os CLIPES anexados a esses posts: entre posts
-  igualmente centrais, PRIORIZE os marcados com "COM VÍDEO" — uma trend sem
-  nenhum post com vídeo não vira vídeo do canal. Nunca invente URL.
+- "posts": até {max_urls} URLs escolhidas SOMENTE entre as listadas acima, dos
+  posts mais centrais da trend (os que originaram ou melhor documentam o
+  assunto). O vídeo do canal é montado com os CLIPES anexados a esses posts:
+  entre posts igualmente centrais, PRIORIZE os marcados com "COM VÍDEO" — uma
+  trend sem nenhum post com vídeo não vira vídeo do canal, e quanto mais posts
+  com vídeo, melhor. Nunca invente URL.
 - "data": YYYY-MM-DD do acontecimento.\
 """
 
@@ -275,7 +276,10 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
         else ""
     )
     instrucoes = INSTRUCOES_RESUMO.format(
-        horas=cfg.janela_horas, n=cfg.num_trends, foco_usa=foco_usa
+        horas=cfg.janela_horas,
+        n=cfg.num_trends,
+        foco_usa=foco_usa,
+        max_urls=cfg.max_urls_trend,
     )
 
     resposta = cliente.chat.completions.create(

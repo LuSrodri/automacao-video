@@ -1,7 +1,8 @@
 """Infográficos animados sobrepostos ao vídeo (contadores e barras).
 
 O GPT decide, a partir dos números REAIS da narração e das notícias, até 2
-infográficos por vídeo: um CONTADOR (número que sobe do zero e termina verde,
+infográficos por vídeo (4 no formato longo, que tem o dobro de tempo de tela e
+vive de argumentar com números): um CONTADOR (número que sobe do zero e termina verde,
 ou desce e termina negativo e vermelho) ou BARRAS comparativas (a barra
 destacada cresce mais que as outras). Cada infográfico é ancorado numa citação
 exata da narração (convertida em tempo pelo alinhamento do ElevenLabs, como no
@@ -32,6 +33,9 @@ FONTE_PAINEL = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 FONTE_EMOJI = Path(r"C:\Windows\Fonts\seguiemj.ttf")
 
 MAX_GRAFICOS = 2
+# No formato longo (90-120s) cabem mais dados na tela sem virar poluição: o
+# vídeo é uma análise, e o número é o que sustenta o argumento.
+MAX_GRAFICOS_LONGO = 4
 DUR_GRAFICO = 4.8  # s; duração-alvo de cada infográfico na tela
 DUR_MINIMA = 2.8  # s; janela menor que isto não dá tempo da animação respirar
 GAP_GRAFICOS = 0.8  # s; respiro mínimo entre dois infográficos
@@ -202,10 +206,10 @@ deve estar em INGLÊS AMERICANO, sem nenhuma palavra em português (ex.: sufixos
 """
 
 INSTRUCOES_GRAFICOS = """\
-Você é o editor de infográficos de um canal de vídeos curtos (YouTube Shorts)
-de notícias. Você recebe a NARRAÇÃO de um vídeo e as NOTÍCIAS que a embasaram,
-e decide até {maximo} infográficos animados minimalistas para reforçar os
-NÚMEROS centrais da história na tela.
+Você é o editor de infográficos de um canal de vídeos de notícias. Você recebe
+a NARRAÇÃO de um vídeo{contexto} e as NOTÍCIAS que a embasaram, e decide até
+{maximo} infográficos animados minimalistas para reforçar os NÚMEROS centrais
+da história na tela.
 
 {idioma}
 
@@ -227,12 +231,18 @@ REGRAS:
    do número.
 7. "fonte" cita nominalmente o veículo/conta de onde o número veio, somente
    das listas recebidas.
-Responda somente com o JSON pedido.\
+{extra}Responda somente com o JSON pedido.\
+"""
+
+EXTRA_LONGO = """\
+8. ESPALHE os infográficos pela narração inteira (um por bloco de argumento,
+   nunca dois no mesmo trecho): o vídeo tem dois minutos e o número tem que
+   aparecer quando a narração o defende, do começo ao fim.
 """
 
 
 def _planejar(
-    cfg: Config, texto_video: str, noticias: list[dict]
+    cfg: Config, texto_video: str, noticias: list[dict], maximo: int
 ) -> list[dict]:
     cliente = OpenAI(api_key=cfg.openai_api_key)
     conteudo = (
@@ -246,8 +256,14 @@ def _planejar(
             {
                 "role": "system",
                 "content": INSTRUCOES_GRAFICOS.format(
-                    maximo=MAX_GRAFICOS,
+                    maximo=maximo,
                     idioma=IDIOMA_USA if cfg.publico == "usa" else IDIOMA_BRASIL,
+                    contexto=(
+                        " de análise (16:9, cerca de 2 minutos, sem legendas)"
+                        if cfg.formato == "longo"
+                        else " curto (YouTube Shorts)"
+                    ),
+                    extra=EXTRA_LONGO if cfg.formato == "longo" else "",
                 ),
             },
             {"role": "user", "content": conteudo},
@@ -353,8 +369,14 @@ def _desenhar_contador(painel, g: dict, t: float, largura: int, publico: str,
     from PIL import ImageDraw
 
     dr = ImageDraw.Draw(painel)
+    # Tudo escala pela ALTURA DO PAINEL (o terço superior), não pela largura do
+    # vídeo: no vertical dá exatamente o mesmo desenho de sempre (1080 de
+    # largura = 640 de painel), e no 16:9 impede que os 1920 de largura
+    # transformem o número num bloco maior que o próprio painel.
+    esc = painel.height
     terco = painel.height
     cx = largura // 2
+    larg_util = round(min(largura * 0.9, esc * 1.55))
 
     valor = float(g["valor"])
     inteiro = abs(valor - round(valor)) < 1e-9
@@ -374,9 +396,9 @@ def _desenhar_contador(painel, g: dict, t: float, largura: int, publico: str,
         f"{_formatar_numero(atual, publico, inteiro)}"
         f"{g.get('sufixo', '')}"
     )
-    sw = max(4, round(largura * 0.008))
+    sw = max(4, round(esc * 0.0135))
     fonte_num = _texto_que_cabe(
-        dr, texto_num, str(FONTE_PAINEL), round(largura * 0.155), round(largura * 0.9)
+        dr, texto_num, str(FONTE_PAINEL), round(esc * 0.2615625), larg_util
     )
     dr.text(
         (cx, y + round(terco * 0.20)),
@@ -391,7 +413,11 @@ def _desenhar_contador(painel, g: dict, t: float, largura: int, publico: str,
     rotulo = (g.get("rotulo") or "").upper()
     if rotulo:
         fonte_rot = _texto_que_cabe(
-            dr, rotulo, str(FONTE_PAINEL), round(largura * 0.050), round(largura * 0.86)
+            dr,
+            rotulo,
+            str(FONTE_PAINEL),
+            round(esc * 0.084375),
+            round(min(largura * 0.86, esc * 1.48)),
         )
         dr.text(
             (cx, round(terco * 0.72)),
@@ -409,13 +435,19 @@ def _desenhar_barras(painel, g: dict, t: float, largura: int, publico: str,
     from PIL import ImageDraw
 
     dr = ImageDraw.Draw(painel)
+    # Mesma escala do contador: a altura do painel manda no desenho inteiro.
+    esc = painel.height
     terco = painel.height
     cx = largura // 2
-    sw = max(3, round(largura * 0.005))
+    sw = max(3, round(esc * 0.0084375))
 
     titulo = (g.get("rotulo") or "").upper()
     fonte_tit = _texto_que_cabe(
-        dr, titulo, str(FONTE_PAINEL), round(largura * 0.046), round(largura * 0.70)
+        dr,
+        titulo,
+        str(FONTE_PAINEL),
+        round(esc * 0.077625),
+        round(min(largura * 0.70, esc * 1.19)),
     )
     larg_tit = dr.textlength(titulo, font=fonte_tit) if titulo else 0
     y_tit = round(terco * 0.12)
@@ -441,7 +473,7 @@ def _desenhar_barras(painel, g: dict, t: float, largura: int, publico: str,
     maximo = max(abs(float(b["valor"])) for b in barras) or 1.0
     y_base = round(terco * 0.76)
     y_topo = round(terco * 0.28)
-    w = min(round(largura * 0.16), round(largura * 0.66 / n))
+    w = min(round(esc * 0.27), round(min(largura, esc * 2.4) * 0.66 / n))
     gap = round(w * 0.45)
     x0 = cx - (n * w + (n - 1) * gap) // 2
     cor_destaque = _cor_alvo(g["cor"] if g["cor"] != "neutro" else "verde")
@@ -468,10 +500,10 @@ def _desenhar_barras(painel, g: dict, t: float, largura: int, publico: str,
         inteiro = abs(val - round(val)) < 1e-9
         texto_val = _formatar_numero(val * p_num, publico, inteiro)
         fonte_val = _texto_que_cabe(
-            dr, texto_val, str(FONTE_PAINEL), round(largura * 0.040), round(w * 1.5)
+            dr, texto_val, str(FONTE_PAINEL), round(esc * 0.0675), round(w * 1.5)
         )
         dr.text(
-            (x + w // 2, y_base - h - round(largura * 0.028)),
+            (x + w // 2, y_base - h - round(esc * 0.04725)),
             texto_val,
             font=fonte_val,
             fill=cor + (255,),
@@ -483,10 +515,10 @@ def _desenhar_barras(painel, g: dict, t: float, largura: int, publico: str,
         rot = (b.get("rotulo") or "")[:12].upper()
         if rot:
             fonte_rot = _texto_que_cabe(
-                dr, rot, str(FONTE_PAINEL), round(largura * 0.030), round(w * 1.4)
+                dr, rot, str(FONTE_PAINEL), round(esc * 0.050625), round(w * 1.4)
             )
             dr.text(
-                (x + w // 2, y_base + round(largura * 0.026)),
+                (x + w // 2, y_base + round(esc * 0.043875)),
                 rot,
                 font=fonte_rot,
                 fill=PRETO + (255,),
@@ -503,7 +535,11 @@ def _renderizar_frames(
     from PIL import Image, ImageDraw
 
     destino.mkdir(parents=True, exist_ok=True)
-    terco = altura // 3
+    # Altura do painel (e escala de todo o desenho): o terço superior no
+    # vertical. No 16:9 o terço fica baixo demais para a largura da tela e o
+    # painel some no meio de 1920px — 40% da altura devolve presença sem
+    # invadir a metade de baixo, onde o clipe é mais interessante.
+    terco = altura // 3 if altura > largura else round(altura * 0.40)
     y_final = round(altura * 0.04)
     nframes = max(1, round(dur * FPS))
     emoji_altura = round(
@@ -524,8 +560,8 @@ def _renderizar_frames(
             prefixo = "Source" if publico == "usa" else "Fonte"
             texto = f"{prefixo}: {rotulo_fonte}"
             fonte_f = _texto_que_cabe(
-                dr, texto, str(FONTE_PAINEL), round(largura * 0.030),
-                round(largura * 0.8),
+                dr, texto, str(FONTE_PAINEL), round(terco * 0.050625),
+                round(min(largura * 0.8, terco * 1.35)),
             )
             dr.text(
                 (largura // 2, round(terco * 0.92)),
@@ -572,8 +608,9 @@ def gerar_graficos(
         print("[grafico] Pillow não instalado; vídeo sem infográficos.")
         return []
 
+    maximo = MAX_GRAFICOS_LONGO if cfg.formato == "longo" else MAX_GRAFICOS
     try:
-        plano = _planejar(cfg, texto_video, noticias)
+        plano = _planejar(cfg, texto_video, noticias, maximo)
     except Exception as erro:  # noqa: BLE001 — infográfico nunca derruba o vídeo
         print(f"[aviso] Planejamento de infográficos falhou ({erro}); seguindo sem.")
         return []
@@ -583,7 +620,7 @@ def gerar_graficos(
 
     texto_baixo = texto_video.lower()
     candidatos: list[tuple[float, float, dict]] = []
-    for g in plano[:MAX_GRAFICOS]:
+    for g in plano[:maximo]:
         if g["tipo"] == "barras":
             barras = [
                 b for b in (g.get("barras") or [])

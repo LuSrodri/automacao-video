@@ -20,6 +20,9 @@ from .config import RAIZ
 FPS = 30
 MIN_EXIBICAO = 3.0  # segundos mínimos de exibição de cada clipe
 MAX_EXIBICAO = 15.0  # segundos máximos de exibição de cada clipe (só aviso)
+# No formato longo (16:9, 90-120s) o clipe segura janelas maiores: com 8
+# clipes em 2 minutos a média já é ~15s, e o aviso só interessa acima disso.
+MAX_EXIBICAO_LONGO = 25.0
 CROSSFADE = 0.3  # duração do crossfade entre clipes consecutivos
 # Respiro entre o fim da narração e o fim do vídeo. Curto de propósito: o
 # CORTE do roteiro emenda no hook do reinício (loop), e uma cauda longa de
@@ -50,7 +53,10 @@ CREDITO_TEXTOS = {
     "brasil": ("Reprodução Imagem: X", "Conta {conta}"),
     "usa": ("Image Credit: X", "Account {conta}"),
 }
-CREDITO_FONTE_FRAC = 0.026  # tamanho da fonte como fração da largura do vídeo
+# O tamanho da fonte é fração do LADO MENOR do vídeo: no formato vertical o
+# lado menor é a largura (nada muda), e no 16:9 ele impede que o crédito saia
+# gigante por causa dos 1920 de largura.
+CREDITO_FONTE_FRAC = 0.026  # tamanho da fonte como fração do lado menor
 CREDITO_MARGEM_FRAC = 0.030  # distância da borda direita (fração da largura)
 CREDITO_Y_FRAC = 0.045  # distância do topo como fração da altura
 CREDITO_ENTRELINHA = 1.55  # distância entre as duas linhas (fração da fonte)
@@ -200,6 +206,7 @@ def montar_video(
     legendas: Path | None = None,
     graficos: list[dict] | None = None,
     publico: str = "brasil",
+    formato: str = "curto",
 ) -> Path:
     """Monta o vídeo final: clipes do X com fundo borrado do próprio clipe.
 
@@ -216,6 +223,10 @@ def montar_video(
     some: o infográfico ocupa o terço superior.
 
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
+
+    `formato`: "curto" (Shorts 9:16, com legendas queimadas) ou "longo"
+    (--long-take: 16:9, 90-120s, sem legendas) — muda só a tolerância de
+    tempo de cada clipe na tela; o resto da montagem é o mesmo.
     """
     _exigir_ffmpeg()
     if not FONTE_CREDITO.is_file():
@@ -247,11 +258,12 @@ def montar_video(
     janelas = _calcular_janelas(sobreposicoes, duracao)
     pares = list(zip(sobreposicoes, janelas))
     n = len(pares)
+    max_exibicao = MAX_EXIBICAO_LONGO if formato == "longo" else MAX_EXIBICAO
     for s, (ini, fim) in pares:
-        if fim - ini > MAX_EXIBICAO + 0.01:
+        if fim - ini > max_exibicao + 0.01:
             print(
                 f"[edicao] aviso: clipe fica {fim - ini:.1f}s na tela "
-                f"(acima do alvo de {MAX_EXIBICAO:.0f}s)"
+                f"(acima do alvo de {max_exibicao:.0f}s)"
             )
 
     # Base preta (entrada 0); narração é a entrada 1. Com cobertura total, a
@@ -296,11 +308,14 @@ def montar_video(
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
         )
 
-        # Frente: o clipe nítido em largura total, centrado. Sem zoom nem
+        # Frente: o clipe nítido no maior tamanho que CABE na tela, centrado
+        # (no vertical isso é a largura total, como sempre foi; no 16:9 é a
+        # altura, e o clipe vertical do X vira uma faixa central sobre o fundo
+        # borrado em vez de estourar para fora do quadro). Sem zoom nem
         # deslize — o clipe já tem movimento próprio; a transição editorial é
         # um crossfade curto e limpo.
         filtros.append(
-            f"[in_fg{i}]scale={largura}:-2,"
+            f"[in_fg{i}]scale={largura}:{altura}:force_original_aspect_ratio=decrease,"
             f"format=rgba,{fade_in}{fade_out}"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
         )
@@ -331,7 +346,7 @@ def montar_video(
     # woosh, trilha).
     prox_entrada = 2 + n
     rotulo_fixo, rotulo_conta = CREDITO_TEXTOS.get(publico, CREDITO_TEXTOS["brasil"])
-    fonte = round(largura * CREDITO_FONTE_FRAC)
+    fonte = round(min(largura, altura) * CREDITO_FONTE_FRAC)
     margem = round(largura * CREDITO_MARGEM_FRAC)
     pad = max(6, round(fonte * CREDITO_TARJA_PAD_FRAC))
     y1 = round(altura * CREDITO_Y_FRAC)

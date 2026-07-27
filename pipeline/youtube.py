@@ -15,6 +15,7 @@ A publicação roda sempre, independente da flag ``-usa``.
 import http.server
 import json
 import os
+import re
 import secrets
 import threading
 import urllib.parse
@@ -105,6 +106,17 @@ def _renovar_access_token(cfg: Config, refresh_token: str | None = None) -> str:
     return resp.json()["access_token"]
 
 
+def _duracao_iso(texto: str) -> int:
+    """Segundos de uma duração ISO 8601 da Data API ('PT1M42S'); 0 se ilegível."""
+    m = re.fullmatch(
+        r"P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", (texto or "").strip()
+    )
+    if not m:
+        return 0
+    dias, horas, minutos, segundos = (int(g or 0) for g in m.groups())
+    return ((dias * 24 + horas) * 60 + minutos) * 60 + segundos
+
+
 def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
     """Últimos `n` vídeos publicados no canal selecionado (BR ou USA).
 
@@ -114,7 +126,8 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
     teto por chamada da API). Cada item traz ``titulo``, ``descricao``,
     ``data`` (YYYY-MM-DDTHH:MM, UTC — a hora alimenta a verificação de vídeo
     repetido: com 3-4 execuções/dia, saber que o último vídeo saiu há poucas
-    horas é o que importa), ``views`` e ``likes`` — as contagens vêm da Data
+    horas é o que importa), ``views``, ``likes`` e ``duracao_s`` (segundos —
+    separa os Shorts dos vídeos do formato longo) — as contagens vêm da Data
     API (tempo real) e não da Analytics (que atrasa 2-3 dias e zeraria os
     vídeos mais novos, justamente os mais informativos). A lista é a régua da
     seleção guiada pela audiência e do teto de macrotemas seguidos, então
@@ -180,7 +193,10 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
                 continue
             detalhes = requests.get(
                 VIDEOS_URL,
-                params={"part": "statistics", "id": lote},
+                # contentDetails vem junto (mesma chamada) pela DURAÇÃO: é ela
+                # que separa os Shorts dos vídeos longos na hora de aplicar as
+                # regras duras do formato longo em escritor.py.
+                params={"part": "statistics,contentDetails", "id": lote},
                 headers=headers,
                 timeout=60,
             )
@@ -190,7 +206,12 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
                 )
             estatisticas.update(
                 {
-                    item["id"]: item.get("statistics", {})
+                    item["id"]: {
+                        **item.get("statistics", {}),
+                        "duracao_s": _duracao_iso(
+                            item.get("contentDetails", {}).get("duration", "")
+                        ),
+                    }
                     for item in detalhes.json().get("items", [])
                 }
             )
@@ -208,6 +229,7 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
                     "data": snippet.get("publishedAt", "")[:16],
                     "views": int(st.get("viewCount") or 0),
                     "likes": int(st.get("likeCount") or 0),
+                    "duracao_s": st.get("duracao_s") or 0,
                 }
             )
         print(f"[youtube] {len(videos)} vídeos recentes do canal carregados.")
