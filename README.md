@@ -87,6 +87,11 @@ crédito de reprodução no canto superior direito — com outra direção edito
   do X) e a **lista de links reais** anexada ao final da descrição do YouTube.
 - **Sem legendas queimadas**: a narração se sustenta sozinha (nenhuma frase
   pode depender de texto na tela).
+- **Sala de estar com TV** (`pipeline/cenario.py`): o clipe não ocupa o quadro
+  inteiro — aparece **dentro da TV de uma sala**, desenhada com Pillow (sem
+  asset externo nem licença de imagem). É identidade visual só do longo; o
+  Short segue em tela cheia. A tela ocupa `TELA_FRAC_LARGURA` (0.76) da
+  largura — subir aproxima o clipe do tamanho de antes e some com a sala.
 - **Material**: até **8 clipes** de vídeo do X (consultando até 16 posts da
   trend, e baixando 11 para a auditoria escolher 8), trocando a cada 8-20s;
   clipe vertical aparece como faixa central sobre o próprio clipe borrado. Até
@@ -94,8 +99,12 @@ crédito de reprodução no canto superior direito — com outra direção edito
   narração. A auditoria exige um **piso de 3 clipes aprovados** — 90 a 120
   segundos presos em um ou dois clipes é insustentável, então abaixo disso o
   vídeo não sai.
-- **Regras duras próprias**: candidatas com pelo menos 2 posts com clipe têm
-  preferência, e o teto de macrotema e o veto a vídeo repetido (janela de 72h)
+- **Regras duras próprias**: candidata precisa de **4 posts com clipe** para
+  disputar (`LONGO_MIN_POSTS_VIDEO`, derivado do piso de 3 da auditoria mais
+  uma folga, já que a auditoria reprova parte do material) — sem ninguém no
+  portão a execução aborta ali, antes de gastar roteiro e narração, porque
+  seguir com material insuficiente é gastar para falhar adiante. E o teto de
+  macrotema e o veto a vídeo repetido (janela de 72h)
   comparam **só com os vídeos longos** já publicados — a rajada de Shorts do
   dia não bloqueia o longo, e um Short sobre o mesmo fato não conta como
   repetição.
@@ -119,6 +128,8 @@ sair fora de 90-120s.
 | --- | --- | --- |
 | `X_ACCOUNTS` | vazio | Opcional: usa somente estas contas no lugar da lista fixa `CONTAS_PADRAO` (`pipeline/config.py`) |
 | `X_MAX_POSTS` | `200` | Teto de posts lidos por execução (a X API cobra por post lido) |
+| `X_MAX_POSTS_VIDEO` | `60` | Leituras extras de uma varredura `has:videos` sobre as **mesmas** contas — a coleta normal ordena por relevância e não prefere vídeo, então o post com clipe perdia vaga para texto. Nenhuma fonte nova; `0` desliga |
+| `X_MAX_POSTS_BUSCA` | `30` (só `--long-take`) | Busca **aberta** por clipes do assunto, fora das contas do canal. Fontes **não curadas** — a auditoria é a única guarda, e ela julga pertinência, não veracidade; `0` desliga |
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados. Alargar **não** custa mais na X API (o teto é o `X_MAX_POSTS`; a janela só decide de que intervalo saem esses posts). Case com a **cadência do cron**, não com o formato: em produção os Shorts rodam com `4` (de 4 em 4 horas) e os crons `--long-take` com `48` — ver a nota abaixo |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
 | `NUM_NOTICIAS` | `6` | Quantas notícias (Firecrawl news) buscar para enriquecer a trend |

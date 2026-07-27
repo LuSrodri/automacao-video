@@ -49,7 +49,13 @@ from urllib.parse import urlparse
 from openai import OpenAI
 
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
-from .config import AVISO_DADOS_EXTERNOS, LONGO_MAX_S, LONGO_MIN_S, Config
+from .config import (
+    AVISO_DADOS_EXTERNOS,
+    LONGO_MAX_S,
+    LONGO_MIN_POSTS_VIDEO,
+    LONGO_MIN_S,
+    Config,
+)
 
 # Ritmo real médio da narração do ElevenLabs (medido nas narrações do canal:
 # ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
@@ -1121,7 +1127,11 @@ def selecionar_trend(
 
     Regras duras, APLICADAS aqui e não só pedidas no prompt:
     0. Candidata sem nenhum post com clipe de vídeo nativo sai da disputa
-       antes de tudo: o formato do canal é montado só com clipes do X.
+       antes de tudo: o formato do canal é montado só com clipes do X. No
+       formato longo o corte é mais alto (LONGO_MIN_POSTS_VIDEO, derivado do
+       piso da auditoria): candidata que não tem material para o piso não
+       disputa, porque escolhê-la só gastaria roteiro e narração para abortar
+       na auditoria — e ainda tiraria a vaga de uma candidata bem servida.
     1. O mesmo macrotema não emenda mais de MAX_MACROTEMA_SEGUIDOS vídeos
        seguidos. Quando os últimos MAX_MACROTEMA_SEGUIDOS publicados são
        todos do mesmo macrotema, as candidatas dele saem da disputa ANTES da
@@ -1176,24 +1186,36 @@ def selecionar_trend(
             "formato do canal é montado só com clipes do X; execução sem vídeo."
         )
 
-    # No formato longo um único clipe teria que segurar dois minutos de tela:
-    # preferimos as candidatas com pelo menos dois posts com clipe, mas sem
-    # zerar a disputa quando o dia inteiro só tem trends de um clipe.
+    # No formato longo, candidata sem material para o piso da auditoria não
+    # entra na disputa. O portão é DERIVADO do piso (LONGO_MIN_POSTS_VIDEO):
+    # antes ele era um 2 solto contra um piso de 3, e o que acontecia era pior
+    # do que parece — a candidata de 2 clipes não só falhava, ela TIRAVA A VAGA
+    # de uma candidata mais bem servida, e só descobria isso depois de gastar
+    # roteiro, notícias e visão. Sem ninguém no portão a execução aborta aqui,
+    # barato: seguir com material insuficiente é gastar para falhar adiante.
     if longo:
-        com_material = [t for t in candidatas if (t.get("posts_com_video") or 0) >= 2]
-        if com_material:
-            if len(com_material) < len(candidatas):
-                print(
-                    f"[longo] {len(candidatas) - len(com_material)} candidata(s) "
-                    "com um só post com clipe fora da disputa (2 minutos de "
-                    f"tela pedem mais material; {len(com_material)} seguem)."
-                )
-            candidatas = com_material
-        else:
+        com_material = [
+            t for t in candidatas
+            if (t.get("posts_com_video") or 0) >= LONGO_MIN_POSTS_VIDEO
+        ]
+        if len(com_material) < len(candidatas):
             print(
-                "[aviso] Nenhuma candidata de hoje tem 2+ posts com clipe; "
-                "seguindo com as de clipe único (o clipe vai repetir bastante)."
+                f"[longo] {len(candidatas) - len(com_material)} candidata(s) "
+                f"com menos de {LONGO_MIN_POSTS_VIDEO} posts com clipe fora da "
+                f"disputa (o formato precisa de material para o piso da "
+                f"auditoria; {len(com_material)} seguem)."
             )
+        if not com_material:
+            raise SystemExit(
+                "Nenhuma candidata de hoje tem os "
+                f"{LONGO_MIN_POSTS_VIDEO} posts com clipe que o formato longo "
+                "precisa para chegar ao piso da auditoria — o vídeo não teria "
+                "material para 90-120s de tela; abortando antes de gastar "
+                "roteiro e narração. Se isso virar rotina, as alavancas são "
+                "alargar JANELA_HORAS, subir X_MAX_POSTS ou revisar as contas "
+                "acompanhadas."
+            )
+        candidatas = com_material
 
     macro_bloqueado = _macrotema_no_teto(macros_regras)
     if macro_bloqueado:

@@ -39,6 +39,14 @@ LONGO_MAX_FOTOS = 6  # fotos dos posts baixadas para alimentar as cartelas
 # Piso de clipes APROVADOS na auditoria para o formato longo: 90-120s presos em
 # um ou dois clipes é insustentável, então abaixo disto o vídeo não sai.
 LONGO_MIN_CLIPES_APROVADOS = 3
+# Posts com vídeo que uma candidata precisa ter para DISPUTAR o formato longo.
+# DERIVADO do piso acima de propósito: quando os dois eram independentes (o
+# portão em 2, o piso em 3), uma candidata de 2 clipes passava na seleção e
+# abortava na auditoria sem chance nenhuma — o fracasso já estava selado na
+# escolha, depois de gastar roteiro, notícias e visão. A folga de 1 existe
+# porque a auditoria reprova parte do material (clipe fora do assunto), então
+# material igual ao piso raramente sobrevive inteiro.
+LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 
 CONTAS_PADRAO = [
     "elonmusk", "CNNBrasil", "brasilparalelo", "exercitooficial", "SpaceX",
@@ -63,6 +71,15 @@ class Config:
     x_consumer_key: str  # X API oficial: coleta dos posts + mídias
     x_consumer_secret: str
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
+    # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
+    # coleta normal ordena por relevância e não prefere vídeo, então o post com
+    # clipe — o único material que o formato consegue usar — perdia vaga para
+    # texto. Nenhuma fonte nova entra por aqui; 0 desliga a varredura.
+    x_max_posts_video: int = 60
+    # Busca ABERTA por clipes do assunto, fora das contas do canal. Só o
+    # formato longo usa: é ele que precisa de vários clipes do mesmo fato, e
+    # as fontes aqui não são curadas — a auditoria vira a única guarda.
+    x_max_posts_busca: int = 30
     video_largura: int = 1080
     video_altura: int = 1920
     text_model: str = "gpt-5.6-luna"
@@ -140,6 +157,12 @@ def carregar_config() -> Config:
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
         num_noticias=int(os.getenv("NUM_NOTICIAS", "6")),
+        # Ambos ZERADOS no curto: leitura da X API é paga por post, os Shorts
+        # rodam 12x por dia somados e NÃO travam por falta de clipe (precisam
+        # de 3, não de 8). Quem precisa é o longo, e ativar_formato_longo sobe
+        # os dois. Para ligar no curto, basta o .env.
+        x_max_posts_video=int(os.getenv("X_MAX_POSTS_VIDEO", "0")),
+        x_max_posts_busca=int(os.getenv("X_MAX_POSTS_BUSCA", "0")),
         max_posts_midia=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         max_urls_trend=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         pool_extra_clipes=int(os.getenv("POOL_EXTRA_CLIPES", "3")),
@@ -181,6 +204,12 @@ def ativar_formato_longo(cfg: Config) -> Config:
     )
     # A coleta precisa devolver posts suficientes para o lookup achar os clipes.
     cfg.max_urls_trend = cfg.max_posts_midia
+    # Varredura de vídeo e busca aberta: só o longo precisa de vários clipes do
+    # MESMO fato, e é ele que trava por falta deles. Ligar isto nos Shorts
+    # custaria leitura paga 12x por dia para resolver um problema que eles não
+    # têm.
+    cfg.x_max_posts_video = int(os.getenv("X_MAX_POSTS_VIDEO", "60"))
+    cfg.x_max_posts_busca = int(os.getenv("X_MAX_POSTS_BUSCA", "30"))
     cfg.num_noticias = int(os.getenv("LONG_NUM_NOTICIAS", str(LONGO_NUM_NOTICIAS)))
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
     cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))

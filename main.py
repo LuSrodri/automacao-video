@@ -89,7 +89,7 @@ from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
 from pipeline.silencio import aparar_silencios
-from pipeline.x_client import coletar_trends
+from pipeline.x_client import buscar_posts_com_video, coletar_trends
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
 from pipeline.youtube import top_retencao, ultimos_publicados
@@ -193,6 +193,23 @@ def main() -> None:
     # O OBJETO da trend vem da própria seleção (selecionar_trend) — é o mesmo
     # que o roteiro usou, então os clipes baixados são sempre da trend certa.
     trend_video = selecao["trend_obj"]
+
+    # Busca ABERTA por clipes do assunto (só no formato longo): as 50 contas do
+    # canal raramente têm vários clipes do MESMO fato, que é o que 90-120s de
+    # tela pedem. Entra depois da seleção porque buscar para cada candidata
+    # custaria uma consulta por candidata — em troca, a busca não socorre uma
+    # candidata que já tenha sido barrada no portão da seleção.
+    extras = buscar_posts_com_video(cfg, selecao.get("consulta_noticias", ""))
+    if extras:
+        urls = trend_video.get("posts") or []
+        # `posts` vem com os posts de vídeo na frente (x_client), e o lookup de
+        # mídias corta a lista no teto — então os achados entram logo depois
+        # deles, antes dos posts só de texto, senão seriam cortados fora.
+        n_video = trend_video.get("posts_com_video") or 0
+        novos = [u for u in extras if u not in urls]
+        trend_video["posts"] = urls[:n_video] + novos + urls[n_video:]
+        trend_video["posts_com_video"] = n_video + len(novos)
+
     clipes, fotos = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
     if not clipes:
         raise SystemExit(

@@ -15,17 +15,26 @@ formato longo admite — ver auditoria.py) entra dessaturado e com etiqueta no
 rodapé esquerdo, para não se confundir com material próprio do canal. A marca
 é por clipe: os demais da mesma montagem seguem coloridos e sem etiqueta.
 
+No FORMATO LONGO o clipe não ocupa o quadro inteiro: ele aparece dentro da TV
+de uma sala de estar (cenario.py), identidade visual só desse formato. A área
+útil do clipe passa a ser o retângulo da TELA — o fundo borrado preenche a
+tela quando o clipe é vertical, e o PNG da sala entra por cima recortando o
+clipe na moldura. Crédito, etiquetas e sobreposições ficam SOBRE a sala.
+
 Por cima disso entram duas camadas de sobreposição, ambas como sequências de
 PNG RGBA já renderizadas: as CARTELAS de imagem dos momentos-chave
 (cartelas.py, no miolo da tela) e os INFOGRÁFICOS animados (grafico.py, no
 terço superior). As janelas das duas nunca coincidem — quem monta as cartelas
-recebe as janelas dos infográficos e desvia delas.
+recebe as janelas dos infográficos e desvia delas. Enquanto uma cartela está
+na tela, tudo que está atrás dela sai de foco (CARTELA_BLUR_SIGMA), para a
+imagem do momento-chave não disputar atenção com o clipe em movimento.
 """
 
 import subprocess
 import shutil
 from pathlib import Path
 
+from .cenario import gerar_cenario_tv
 from .config import RAIZ
 
 FPS = 30
@@ -87,6 +96,11 @@ REPR_TEXTOS = {
 REPR_FONTE_FRAC = 0.024  # fração do lado menor (mesma lógica do crédito)
 REPR_MARGEM_FRAC = 0.030  # distância da borda esquerda (fração da largura)
 REPR_Y_FRAC = 0.912  # distância do topo como fração da altura (rodapé)
+
+# Desfoque aplicado ao que está ATRÁS de uma cartela, enquanto ela está na
+# tela: tira o clipe em movimento da disputa pela atenção enquanto a imagem do
+# momento-chave é lida. Vale só no intervalo de cada cartela.
+CARTELA_BLUR_SIGMA = 14
 
 
 def _exigir_ffmpeg() -> None:
@@ -275,6 +289,16 @@ def montar_video(
     graficos = graficos or []
     cartelas = cartelas or []
 
+    # Cenário de sala com TV: identidade visual do formato longo. O clipe passa
+    # a ser escalado para o retângulo da TELA e o PNG da sala entra por cima,
+    # opaco em tudo menos no buraco da tela. O Short segue em tela cheia.
+    cenario = None
+    tela_x, tela_y, tela_l, tela_a = 0, 0, largura, altura
+    if formato == "longo":
+        cenario, (tela_x, tela_y, tela_l, tela_a) = gerar_cenario_tv(
+            largura, altura, destino.parent / "cenario_tv.png"
+        )
+
     # Janelas dos infográficos: o crédito desliga nelas (enable do ffmpeg).
     janelas_gfx = [
         (g["inicio_s"], min(g["inicio_s"] + g["dur_s"], duracao)) for g in graficos
@@ -340,10 +364,12 @@ def montar_video(
         # a frente deixaria um halo colorido em volta do clipe em P&B.
         dessat = f"eq=saturation={REPR_SATURACAO}," if s.get("representacao") else ""
 
-        # Fundo: o próprio clipe cobrindo a tela toda, borrado e levemente escuro.
+        # Fundo: o próprio clipe cobrindo a área útil, borrado e levemente
+        # escuro. No formato longo a área útil é a TELA da TV, não o quadro —
+        # é o que mantém a tela sempre preenchida quando o clipe é vertical.
         filtros.append(
-            f"[in_bg{i}]scale={largura}:{altura}:force_original_aspect_ratio=increase,"
-            f"crop={largura}:{altura},gblur=sigma={BLUR_SIGMA},"
+            f"[in_bg{i}]scale={tela_l}:{tela_a}:force_original_aspect_ratio=increase,"
+            f"crop={tela_l}:{tela_a},gblur=sigma={BLUR_SIGMA},"
             f"eq=brightness={ESCURECER},{dessat}"
             f"{fade_in}{fade_out}"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
@@ -356,21 +382,54 @@ def montar_video(
         # deslize — o clipe já tem movimento próprio; a transição editorial é
         # um crossfade curto e limpo.
         filtros.append(
-            f"[in_fg{i}]scale={largura}:{altura}:force_original_aspect_ratio=decrease,"
+            f"[in_fg{i}]scale={tela_l}:{tela_a}:force_original_aspect_ratio=decrease,"
             f"format=rgba,{dessat}{fade_in}{fade_out}"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
         )
 
-        # Sobrepõe fundo e depois a frente, ambos ativos na janela (+ crossfade).
+        # Sobrepõe fundo e depois a frente, ambos ativos na janela (+ crossfade),
+        # ancorados no canto da área útil (a tela da TV, no formato longo).
         filtros.append(
-            f"[{corrente}][bg{i}]overlay=0:0:eof_action=pass"
+            f"[{corrente}][bg{i}]overlay={tela_x}:{tela_y}:eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[b{i}]"
         )
         filtros.append(
-            f"[b{i}][fg{i}]overlay=(W-w)/2:(H-h)/2:eof_action=pass"
+            f"[b{i}][fg{i}]overlay={tela_x}+({tela_l}-w)/2:{tela_y}+({tela_a}-h)/2"
+            f":eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[f{i}]"
         )
         corrente = f"f{i}"
+
+    # A sala entra por cima dos clipes: opaca em tudo menos no buraco da tela,
+    # ela é que recorta o clipe na moldura da TV. Vem ANTES do crédito, das
+    # legendas e das sobreposições — esses ficam sobre a sala, não dentro dela.
+    prox_entrada = 2 + n
+    if cenario is not None:
+        comando += [
+            "-loop", "1", "-framerate", str(FPS), "-t", f"{duracao:.2f}",
+            "-i", str(cenario),
+        ]
+        filtros.append(f"[{prox_entrada}:v]format=rgba[sala]")
+        filtros.append(
+            f"[{corrente}][sala]overlay=0:0:eof_action=repeat[vsala]"
+        )
+        corrente = "vsala"
+        prox_entrada += 1
+
+    # Borrão sob as cartelas: enquanto a imagem do momento-chave está na tela,
+    # o que está atrás dela sai de foco, para a cartela não disputar atenção
+    # com o clipe em movimento. Só o intervalo de cada cartela é afetado.
+    if cartelas:
+        janelas_cart = "+".join(
+            f"between(t,{max(0.0, float(c['inicio_s'])):.2f},"
+            f"{min(float(c['inicio_s']) + float(c['dur_s']), duracao):.2f})"
+            for c in cartelas
+        )
+        filtros.append(
+            f"[{corrente}]gblur=sigma={CARTELA_BLUR_SIGMA}"
+            f":enable='{janelas_cart}'[vcartblur]"
+        )
+        corrente = "vcartblur"
 
     if legendas is not None:
         fontes = RAIZ / "fonts"
@@ -382,10 +441,9 @@ def montar_video(
 
     # Crédito de reprodução no canto superior direito (sobre as legendas):
     # linha 1 fixa e linha 2 com a conta do post de origem do clipe que está
-    # na tela — cada clipe liga o seu crédito na sua janela. `prox_entrada`
-    # numera as entradas extras do ffmpeg daqui em diante (infográficos,
-    # woosh, trilha).
-    prox_entrada = 2 + n
+    # na tela — cada clipe liga o seu crédito na sua janela. `prox_entrada` já
+    # vem numerando as entradas extras do ffmpeg (cenário, infográficos, woosh,
+    # trilha) desde a sobreposição da sala.
     rotulo_fixo, rotulo_conta = CREDITO_TEXTOS.get(publico, CREDITO_TEXTOS["brasil"])
     fonte = round(min(largura, altura) * CREDITO_FONTE_FRAC)
     margem = round(largura * CREDITO_MARGEM_FRAC)

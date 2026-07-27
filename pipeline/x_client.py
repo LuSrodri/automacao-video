@@ -93,8 +93,82 @@ def _rotacionar_lotes(lotes: list[str], max_lotes: int) -> list[str]:
     return escolhidos
 
 
+def _consultar(
+    token: str, query: str, inicio: datetime, max_results: int
+) -> list[dict]:
+    """Uma consulta à busca do X, já normalizada em posts do pipeline.
+
+    Devolve lista vazia quando a chamada falha: um lote perdido não justifica
+    derrubar a coleta inteira (quem chama avisa no log).
+    """
+    try:
+        dados = _get(
+            token,
+            SEARCH_ENDPOINT,
+            {
+                "query": query,
+                "max_results": max_results,
+                "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "sort_order": "relevancy",
+                "tweet.fields": "created_at,public_metrics,text",
+                "expansions": "author_id,attachments.media_keys",
+                "user.fields": "username",
+                "media.fields": "type",
+            },
+        )
+    except requests.RequestException as erro:
+        print(f"[aviso] X API: consulta de posts falhou ({erro}); lote pulado")
+        return []
+
+    includes = dados.get("includes") or {}
+    autores = {u["id"]: u["username"] for u in includes.get("users") or []}
+    # Tipo de cada mídia anexada: o formato do vídeo é montado SÓ com clipes
+    # dos posts, então saber quem tem vídeo nativo orienta a curadoria e a
+    # seleção (mesma chamada, nenhum custo extra).
+    tipo_midia = {
+        m.get("media_key"): m.get("type") for m in includes.get("media") or []
+    }
+
+    posts = []
+    for post in dados.get("data") or []:
+        metricas = post.get("public_metrics") or {}
+        usuario = autores.get(post.get("author_id"), "")
+        chaves = (post.get("attachments") or {}).get("media_keys") or []
+        tem_video = any(
+            tipo_midia.get(c) in ("video", "animated_gif") for c in chaves
+        )
+        posts.append(
+            {
+                "url": f"https://x.com/{usuario}/status/{post['id']}",
+                "usuario": usuario,
+                "texto": post.get("text", ""),
+                "data": (post.get("created_at") or "")[:16].replace("T", " "),
+                "likes": metricas.get("like_count", 0),
+                "reposts": metricas.get("retweet_count", 0)
+                + metricas.get("quote_count", 0),
+                "respostas": metricas.get("reply_count", 0),
+                "video": tem_video,
+            }
+        )
+    return posts
+
+
+def _por_engajamento(post: dict) -> int:
+    return post["likes"] + 3 * post["reposts"] + post["respostas"]
+
+
 def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
-    """Posts das contas na janela, limitados a cfg.x_max_posts (leitura é paga)."""
+    """Posts das contas na janela, limitados a cfg.x_max_posts (leitura é paga).
+
+    Duas passadas sobre os mesmos lotes de contas. A primeira é a coleta
+    normal, por relevância. A segunda repete as consultas com `has:videos` e
+    existe porque a primeira NÃO prefere vídeo: post com clipe disputa as vagas
+    do teto em pé de igualdade com texto, e as contas do canal postam muito
+    mais texto — o material que o formato precisa era o que mais perdia vaga.
+    A varredura é o mesmo conjunto de contas (nenhuma fonte nova entra por
+    aqui), custa `x_max_posts_video` leituras a mais e pode ser desligada com
+    X_MAX_POSTS_VIDEO=0.
+    """
     inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
     lotes = _lotes_de_query(contas)
 
@@ -114,61 +188,79 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
 
     posts: list[dict] = []
     for query in lotes:
-        try:
-            dados = _get(
-                token,
-                SEARCH_ENDPOINT,
-                {
-                    "query": query,
-                    "max_results": por_lote,
-                    "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "sort_order": "relevancy",
-                    "tweet.fields": "created_at,public_metrics,text",
-                    "expansions": "author_id,attachments.media_keys",
-                    "user.fields": "username",
-                    "media.fields": "type",
-                },
-            )
-        except requests.RequestException as erro:
-            print(f"[aviso] X API: consulta de posts falhou ({erro}); lote pulado")
-            continue
+        posts += _consultar(token, query, inicio, por_lote)
 
-        includes = dados.get("includes") or {}
-        autores = {u["id"]: u["username"] for u in includes.get("users") or []}
-        # Tipo de cada mídia anexada: o formato do vídeo é montado SÓ com
-        # clipes dos posts, então saber quem tem vídeo nativo orienta a
-        # curadoria e a seleção (mesma chamada, nenhum custo extra).
-        tipo_midia = {
-            m.get("media_key"): m.get("type")
-            for m in includes.get("media") or []
-        }
+    posts.sort(key=_por_engajamento, reverse=True)
+    posts = posts[: cfg.x_max_posts]
 
-        for post in dados.get("data") or []:
-            metricas = post.get("public_metrics") or {}
-            usuario = autores.get(post.get("author_id"), "")
-            chaves = (post.get("attachments") or {}).get("media_keys") or []
-            tem_video = any(
-                tipo_midia.get(c) in ("video", "animated_gif") for c in chaves
+    orcamento_video = getattr(cfg, "x_max_posts_video", 0) or 0
+    if orcamento_video:
+        por_lote_video = min(max(orcamento_video // len(lotes), 10), 100)
+        vistos = {p["url"] for p in posts}
+        novos: list[dict] = []
+        for query in lotes:
+            # `has:videos` cobre vídeo nativo e GIF animado, que é exatamente o
+            # que o pipeline consegue baixar e montar.
+            for post in _consultar(
+                token, f"{query} has:videos", inicio, por_lote_video
+            ):
+                if post["url"] not in vistos:
+                    vistos.add(post["url"])
+                    novos.append(post)
+        novos.sort(key=_por_engajamento, reverse=True)
+        novos = novos[:orcamento_video]
+        if novos:
+            print(
+                f"[x] Varredura has:videos trouxe {len(novos)} post(s) com "
+                "clipe que a coleta por relevância havia deixado de fora."
             )
-            posts.append(
-                {
-                    "url": f"https://x.com/{usuario}/status/{post['id']}",
-                    "usuario": usuario,
-                    "texto": post.get("text", ""),
-                    "data": (post.get("created_at") or "")[:16].replace("T", " "),
-                    "likes": metricas.get("like_count", 0),
-                    "reposts": metricas.get("retweet_count", 0)
-                    + metricas.get("quote_count", 0),
-                    "respostas": metricas.get("reply_count", 0),
-                    "video": tem_video,
-                }
-            )
+        posts += novos
 
-    # Mais engajados primeiro; corta no teto configurado
-    posts.sort(
-        key=lambda p: p["likes"] + 3 * p["reposts"] + p["respostas"], reverse=True
+    return posts
+
+
+def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
+    """URLs de posts com clipe sobre o assunto, de QUALQUER conta do X.
+
+    A coleta e a varredura `has:videos` só enxergam as contas do canal, então o
+    material fica limitado ao que essas 50 contas publicaram sobre ESTE fato —
+    que é o gargalo real do formato longo (vídeo não falta no X; falta vídeo
+    concentrado num mesmo acontecimento). Esta busca é aberta.
+
+    Em troca, as fontes NÃO são curadas: entra conta desconhecida, telejornal
+    reempacotado e, eventualmente, material enganoso. Quem filtra depois é a
+    auditoria de visão, que julga PERTINÊNCIA, não veracidade — por isso o
+    orçamento aqui é modesto de propósito, e X_MAX_POSTS_BUSCA=0 desliga.
+
+    Falha da API não aborta: devolve lista vazia e a execução segue com o
+    material das contas do canal.
+    """
+    orcamento = getattr(cfg, "x_max_posts_busca", 0) or 0
+    consulta = (consulta or "").strip()
+    if not (orcamento and consulta):
+        return []
+
+    token = obter_bearer(cfg)
+    if token is None:
+        print("[aviso] Sem token da X API; busca aberta por clipes pulada.")
+        return []
+
+    # A língua acompanha o público: clipe legendado em outra língua na tela
+    # atrapalha mais do que ajuda.
+    idioma = "en" if cfg.publico == "usa" else "pt"
+    query = f"({consulta}) has:videos -is:retweet -is:reply lang:{idioma}"
+    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
+
+    print(f"[midia-x] Busca aberta por clipes sobre: {consulta} ({idioma})")
+    posts = _consultar(token, query, inicio, min(max(orcamento, 10), 100))
+    posts = [p for p in posts if p.get("video")]
+    posts.sort(key=_por_engajamento, reverse=True)
+    posts = posts[:orcamento]
+    print(
+        f"[midia-x] Busca aberta achou {len(posts)} post(s) com clipe fora das "
+        "contas do canal (fontes não curadas; a auditoria decide o que entra)."
     )
-    return posts[: cfg.x_max_posts]
+    return [p["url"] for p in posts]
 
 
 def _listar_posts(posts: list[dict]) -> str:
@@ -335,7 +427,15 @@ def coletar_trends(cfg: Config) -> list[dict]:
             f"Nenhum post encontrado nas últimas {cfg.janela_horas}h. "
             "Aumente JANELA_HORAS no .env ou revise as contas."
         )
-    print(f"[x] {len(posts)} posts coletados; resumindo as trends com o GPT...")
+    # Quantos posts trazem clipe é O número que decide se o formato longo tem
+    # material: o vídeo é montado só com clipes, e eles precisam estar
+    # concentrados num mesmo acontecimento. Sem esta linha, a escassez só
+    # aparecia lá na frente, como "pool de 2 clipes".
+    com_video = sum(1 for p in posts if p.get("video"))
+    print(
+        f"[x] {len(posts)} posts coletados ({com_video} com clipe de vídeo "
+        "nativo); resumindo as trends com o GPT..."
+    )
 
     brutos = _resumir_trends(cfg, posts)
     urls_reais = {p["url"] for p in posts}
