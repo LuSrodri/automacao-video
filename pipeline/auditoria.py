@@ -14,6 +14,8 @@ A auditoria roda em duas etapas, sobre um pool maior do que o necessário:
    é recorrente, e julgamento de LLM sobre "isso é jornalismo de terceiro?"
    oscila de execução para execução. Mídia sem laudo de visão também sai —
    material não verificado é justamente o que esta camada existe para barrar.
+   NO FORMATO LONGO o telejornal é exceção: em vez de vetado, entra MARCADO
+   como representação visual (ver TIPOS_MARCAVEIS).
 2. NOTA DE PERTINÊNCIA, com o GPT: cada mídia sobrevivente recebe de 1 a 5
    pela relação entre o que ela MOSTRA e o que a narração DIZ, e abaixo de
    NOTA_MINIMA sai. É aqui que morre o clipe genérico de arquivo que não tem
@@ -35,6 +37,17 @@ from .config import AVISO_DADOS_EXTERNOS, Config
 
 # Tipos de material barrados por regra, sem passar por julgamento de modelo.
 TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
+
+# No FORMATO LONGO o material de telejornal deixa de ser vetado: entra MARCADO
+# como representação visual (dessaturado + etiqueta na tela, ver edicao.py).
+# 90-120s de tela raramente se sustentam só com cena crua, e a marcação resolve
+# o que originou o veto — o espectador tomar cobertura de terceiro por material
+# do canal. O selo de emissora acompanha: barrá-lo derrubaria justamente os
+# clipes de telejornal que a marcação existe para admitir. Já 'logo_ou_marca'
+# segue vetado nos dois formatos — vinheta de logotipo não representa assunto
+# nenhum, não há o que marcar. A nota de pertinência continua valendo para
+# todo mundo, então telejornal que não mostra o fato narrado cai nela.
+TIPOS_MARCAVEIS = {"reportagem_tv"}
 
 NOTA_MINIMA = 3  # abaixo disto a mídia não entra no vídeo
 
@@ -123,15 +136,29 @@ def _rotulo_midia(m: dict, laudo: dict) -> str:
     return linha
 
 
-def _motivo_do_veto(laudo: dict) -> str:
-    """Motivo do veto duro, ou string vazia se a mídia passa para a nota."""
+def _motivo_do_veto(laudo: dict, marcar_tv: bool) -> tuple[str, bool]:
+    """(motivo do veto, marcar como representação visual).
+
+    Motivo vazio = a mídia segue para a nota de pertinência. Com `marcar_tv`
+    (formato longo), telejornal e selo de emissora não vetam mais: a mídia
+    passa marcada, e a marcação vira dessaturação + etiqueta na montagem.
+    """
     tipo = laudo.get("tipo_material", "")
+    marcada = False
     if tipo in TIPOS_VETADOS:
-        return f"material do tipo '{tipo}' (veto duro)"
+        if not (marcar_tv and tipo in TIPOS_MARCAVEIS):
+            return f"material do tipo '{tipo}' (veto duro)", False
+        marcada = True
     if laudo.get("selo_de_emissora"):
-        marca = (laudo.get("marca_visivel") or "").strip()
-        return f"selo de emissora/veículo na imagem{f' ({marca})' if marca else ''}"
-    return ""
+        if not marcar_tv:
+            marca = (laudo.get("marca_visivel") or "").strip()
+            return (
+                "selo de emissora/veículo na imagem"
+                f"{f' ({marca})' if marca else ''}",
+                False,
+            )
+        marcada = True
+    return "", marcada
 
 
 def _notas(
@@ -207,6 +234,8 @@ def auditar_midias(
     if not midias:
         return []
 
+    marcar_tv = getattr(cfg, "formato", "curto") == "longo"
+
     candidatas: list[dict] = []
     reprovadas: list[dict] = []
     for m in midias:
@@ -214,11 +243,11 @@ def auditar_midias(
         if not laudo:
             reprovadas.append(dict(m, motivo="sem laudo de visão"))
             continue
-        veto = _motivo_do_veto(laudo)
+        veto, marcada = _motivo_do_veto(laudo, marcar_tv)
         if veto:
             reprovadas.append(dict(m, laudo=laudo, motivo=veto))
             continue
-        candidatas.append(dict(m, laudo=laudo))
+        candidatas.append(dict(m, laudo=laudo, representacao=marcada))
 
     notas = _notas(cfg, texto_video, candidatas) if candidatas else {}
 
@@ -255,9 +284,10 @@ def auditar_midias(
             f"{Path(m['caminho']).name}: nota {m['nota']}"
         )
     for m in aprovadas:
+        marca = " [marcado: representação visual]" if m.get("representacao") else ""
         print(
             f"[auditoria] ok {Path(m['caminho']).name}: nota {m['nota']} "
-            f"({m['tipo_material']}) — {m['motivo']}"
+            f"({m['tipo_material']}){marca} — {m['motivo']}"
         )
     print(
         f"[auditoria] {len(aprovadas)} {rotulo}(s) aprovado(s) de "
@@ -271,6 +301,7 @@ def auditar_midias(
                     "arquivo": Path(m["caminho"]).name,
                     "nota": m["nota"],
                     "tipo_material": m["tipo_material"],
+                    "representacao_visual": bool(m.get("representacao")),
                     "motivo": m["motivo"],
                 }
                 for m in aprovadas

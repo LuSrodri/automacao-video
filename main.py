@@ -26,8 +26,10 @@ Fluxo:
 7. AUDITORIA do material visual: o GPT (visão) descreve e CLASSIFICA cada
    clipe, o veto duro derruba material de telejornal e imagem com selo de
    emissora, e uma nota de pertinência (1-5) derruba o clipe que não mostra o
-   que a narração diz. Zero clipe aprovado = SystemExit (o formato longo exige
-   um piso maior). Roda antes do TTS para a reprovação não custar créditos.
+   que a narração diz. No formato longo o telejornal não é vetado: entra
+   MARCADO como representação visual (dessaturado + etiqueta na tela). Zero
+   clipe aprovado = SystemExit (o formato longo exige um piso maior). Roda
+   antes do TTS para a reprovação não custar créditos.
 8. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
 9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
    o momento exato da narração (citações do texto -> timestamps do
@@ -245,6 +247,7 @@ def main() -> None:
             "inicio_frac": k / max(len(clipes), 1),
             "fim_frac": None,
             "conta": m.get("conta", ""),
+            "representacao": bool(m.get("representacao")),
         }
         for k, m in enumerate(clipes)
     ]
@@ -270,10 +273,15 @@ def main() -> None:
     )
     if plano:
         # O plano volta só com caminho/tempos; a conta de origem (crédito de
-        # reprodução na tela) é reanexada pelo caminho do arquivo.
+        # reprodução na tela) e a marcação de representação visual (material de
+        # telejornal no formato longo) são reanexadas pelo caminho do arquivo.
         conta_por_caminho = {str(m["caminho"]): m.get("conta", "") for m in clipes}
+        repr_por_caminho = {
+            str(m["caminho"]): bool(m.get("representacao")) for m in clipes
+        }
         for p in plano:
             p["conta"] = conta_por_caminho.get(str(p["caminho"]), "")
+            p["representacao"] = repr_por_caminho.get(str(p["caminho"]), False)
         sobreposicoes = plano
         (pasta / "cortes.json").write_text(
             json.dumps(

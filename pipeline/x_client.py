@@ -222,6 +222,14 @@ Regras dos campos:
   entre posts igualmente centrais, PRIORIZE os marcados com "COM VÍDEO" — uma
   trend sem nenhum post com vídeo não vira vídeo do canal, e quanto mais posts
   com vídeo, melhor. Nunca invente URL.
+- "posts_video": as URLs de TODOS os posts marcados com "COM VÍDEO" que
+  pertencem a esta trend, mesmo os que você não colocou em "posts" por não
+  serem os mais centrais — e mesmo que já estejam lá. Este campo NÃO é
+  ranqueado por importância: é o inventário do material de vídeo disponível
+  sobre o assunto, e é ele que decide se a trend tem imagem suficiente para
+  virar vídeo. Deixar de fora um post com vídeo do assunto elimina a pauta
+  injustamente. Lista vazia se nenhum post da trend tem vídeo. Nunca invente
+  URL.
 - "data": YYYY-MM-DD do acontecimento.\
 """
 
@@ -245,6 +253,14 @@ ESQUEMA_TRENDS = {
                         "sentimento": {"type": "string"},
                         "apelo_visual": {"type": "string"},
                         "posts": {"type": "array", "items": {"type": "string"}},
+                        "posts_video": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "URLs de TODOS os posts da trend marcados com "
+                                "COM VÍDEO, inclusive os fora de 'posts'."
+                            ),
+                        },
                         "data": {"type": "string"},
                     },
                     "required": [
@@ -255,6 +271,7 @@ ESQUEMA_TRENDS = {
                         "sentimento",
                         "apelo_visual",
                         "posts",
+                        "posts_video",
                         "data",
                     ],
                 },
@@ -328,8 +345,27 @@ def coletar_trends(cfg: Config) -> list[dict]:
     for t in brutos:
         if not (t.get("trend") and t.get("resumo")):
             continue
-        # Garante que só URLs realmente coletadas seguem no pipeline
-        urls = [u for u in (t.get("posts") or []) if u in urls_reais]
+        # "posts" é ranqueado por centralidade e truncado em max_urls_trend;
+        # "posts_video" é o inventário completo do material de vídeo da trend.
+        # Contar o vídeo só no primeiro vetava pauta que TINHA clipe, mas cujo
+        # clipe não estava entre os posts mais centrais — falso negativo que
+        # matava o assunto em definitivo. A união das duas listas é a contagem
+        # honesta. Garante também que só URLs realmente coletadas seguem.
+        brutas = [u for u in (t.get("posts_video") or []) if u in urls_com_video]
+        brutas += [u for u in (t.get("posts") or []) if u in urls_reais]
+
+        vistos: set[str] = set()
+        com_video: list[str] = []
+        sem_video: list[str] = []
+        for u in brutas:
+            if u in vistos:
+                continue
+            vistos.add(u)
+            (com_video if u in urls_com_video else sem_video).append(u)
+
+        # Posts com vídeo primeiro: o lookup de mídias corta esta lista no teto
+        # de max_posts_midia, e é dela que sai o pool de clipes.
+        urls = com_video + sem_video
         trends.append(
             {
                 "trend": t.get("trend", "").strip(),
@@ -339,10 +375,10 @@ def coletar_trends(cfg: Config) -> list[dict]:
                 "sentimento": t.get("sentimento", "").strip(),
                 "apelo_visual": t.get("apelo_visual", "").strip(),
                 "posts": urls,
-                # Quantos dos posts escolhidos têm vídeo nativo: o formato do
-                # canal é montado só com clipes do X, então trend sem nenhum
-                # post com vídeo sai da disputa na seleção.
-                "posts_com_video": sum(1 for u in urls if u in urls_com_video),
+                # Quantos posts da trend têm vídeo nativo: o formato do canal é
+                # montado só com clipes do X, então trend sem nenhum post com
+                # vídeo sai da disputa na seleção.
+                "posts_com_video": len(com_video),
                 "data": t.get("data", ""),
             }
         )

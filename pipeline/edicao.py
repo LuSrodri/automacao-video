@@ -10,6 +10,11 @@ limpo entre si (corte editorial, sem deslizes). A narração TTS (sem silêncios
 @usuario" do post de origem) fica no canto superior direito enquanto o clipe
 daquela conta está na tela.
 
+Clipe marcado como REPRESENTAÇÃO VISUAL (material de telejornal, que só o
+formato longo admite — ver auditoria.py) entra dessaturado e com etiqueta no
+rodapé esquerdo, para não se confundir com material próprio do canal. A marca
+é por clipe: os demais da mesma montagem seguem coloridos e sem etiqueta.
+
 Por cima disso entram duas camadas de sobreposição, ambas como sequências de
 PNG RGBA já renderizadas: as CARTELAS de imagem dos momentos-chave
 (cartelas.py, no miolo da tela) e os INFOGRÁFICOS animados (grafico.py, no
@@ -68,6 +73,20 @@ CREDITO_Y_FRAC = 0.045  # distância do topo como fração da altura
 CREDITO_ENTRELINHA = 1.55  # distância entre as duas linhas (fração da fonte)
 CREDITO_TARJA = 0.45  # opacidade da tarja preta atrás do texto
 CREDITO_TARJA_PAD_FRAC = 0.45  # respiro da tarja ao redor do texto (fração da fonte)
+
+# Marcação de REPRESENTAÇÃO VISUAL: no formato longo o material de telejornal
+# não é mais vetado (auditoria.py) — entra dessaturado e etiquetado no rodapé
+# esquerdo, para o espectador não tomar cobertura de terceiro por material do
+# canal. Só o clipe marcado ("representacao" na sobreposição) recebe o
+# tratamento; os demais seguem coloridos e sem etiqueta na mesma montagem.
+REPR_SATURACAO = 0.10  # 0 = P&B puro; sobra um resto de cor, menos chapado
+REPR_TEXTOS = {
+    "brasil": "REPRESENTAÇÃO VISUAL",
+    "usa": "ILLUSTRATIVE FOOTAGE",
+}
+REPR_FONTE_FRAC = 0.024  # fração do lado menor (mesma lógica do crédito)
+REPR_MARGEM_FRAC = 0.030  # distância da borda esquerda (fração da largura)
+REPR_Y_FRAC = 0.912  # distância do topo como fração da altura (rodapé)
 
 
 def _exigir_ffmpeg() -> None:
@@ -218,11 +237,15 @@ def montar_video(
     """Monta o vídeo final: clipes do X com fundo borrado do próprio clipe.
 
     `sobreposicoes`: [{"caminho": Path, "inicio_frac": float|None,
-    "fim_frac": float|None, "conta": str}, ...] — frações (0 a 1) da narração
-    em que o clipe entra; None usa distribuição uniforme. SOMENTE clipes de
-    vídeo (imagem estática aborta). Os clipes cobrem 100% da narração (sem
-    instante vazio) e fazem crossfade entre si; "conta" (@usuario do post de
-    origem) alimenta o crédito de reprodução no canto superior direito.
+    "fim_frac": float|None, "conta": str, "representacao": bool}, ...] —
+    frações (0 a 1) da narração em que o clipe entra; None usa distribuição
+    uniforme. SOMENTE clipes de vídeo (imagem estática aborta). Os clipes
+    cobrem 100% da narração (sem instante vazio) e fazem crossfade entre si;
+    "conta" (@usuario do post de origem) alimenta o crédito de reprodução no
+    canto superior direito. "representacao" marca o clipe de telejornal que a
+    auditoria admitiu no formato longo: ele entra dessaturado e com a etiqueta
+    "REPRESENTAÇÃO VISUAL" no rodapé, enquanto os outros clipes da mesma
+    montagem seguem coloridos e sem etiqueta.
 
     `graficos`: infográficos animados (grafico.py) — [{"pattern": str,
     "inicio_s": float, "dur_s": float}, ...], sequências de PNGs RGBA
@@ -312,11 +335,16 @@ def montar_video(
             f"[{idx}:v]fps={FPS},format=rgba,split[in_bg{i}][in_fg{i}]"
         )
 
+        # Clipe marcado como representação visual perde a cor — convenção de
+        # material ilustrativo/de arquivo. Fundo e frente juntos: dessaturar só
+        # a frente deixaria um halo colorido em volta do clipe em P&B.
+        dessat = f"eq=saturation={REPR_SATURACAO}," if s.get("representacao") else ""
+
         # Fundo: o próprio clipe cobrindo a tela toda, borrado e levemente escuro.
         filtros.append(
             f"[in_bg{i}]scale={largura}:{altura}:force_original_aspect_ratio=increase,"
             f"crop={largura}:{altura},gblur=sigma={BLUR_SIGMA},"
-            f"eq=brightness={ESCURECER},"
+            f"eq=brightness={ESCURECER},{dessat}"
             f"{fade_in}{fade_out}"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
         )
@@ -329,7 +357,7 @@ def montar_video(
         # um crossfade curto e limpo.
         filtros.append(
             f"[in_fg{i}]scale={largura}:{altura}:force_original_aspect_ratio=decrease,"
-            f"format=rgba,{fade_in}{fade_out}"
+            f"format=rgba,{dessat}{fade_in}{fade_out}"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
         )
 
@@ -385,6 +413,30 @@ def montar_video(
             )
             corrente = f"vcred{seq}"
             seq += 1
+
+    # Etiqueta de representação visual no rodapé esquerdo, só nas janelas dos
+    # clipes marcados. Não some nos infográficos (que ocupam o terço superior)
+    # nem nas cartelas (miolo da tela): a etiqueta precisa acompanhar o clipe
+    # de ponta a ponta, senão o material de telejornal aparece um trecho sem
+    # aviso nenhum — que é justamente o que a marcação existe para impedir.
+    texto_repr = REPR_TEXTOS.get(publico, REPR_TEXTOS["brasil"])
+    fonte_repr = round(min(largura, altura) * REPR_FONTE_FRAC)
+    margem_repr = round(largura * REPR_MARGEM_FRAC)
+    pad_repr = max(6, round(fonte_repr * CREDITO_TARJA_PAD_FRAC))
+    y_repr = round(altura * REPR_Y_FRAC)
+    for s, (ini, fim) in pares:
+        if not s.get("representacao"):
+            continue
+        filtros.append(
+            f"[{corrente}]drawtext=fontfile='{_caminho_filtro(FONTE_CREDITO)}'"
+            f":fontcolor=white:fontsize={fonte_repr}"
+            f":box=1:boxcolor=black@{CREDITO_TARJA}:boxborderw={pad_repr}"
+            f":text='{_texto_drawtext(texto_repr)}'"
+            f":x={margem_repr}:y={y_repr}"
+            f":enable='between(t,{ini:.2f},{fim:.2f})'[vrepr{seq}]"
+        )
+        corrente = f"vrepr{seq}"
+        seq += 1
 
     # Cartelas de imagem (cartelas.py): a imagem emoldurada do momento-chave
     # entra por cima do clipe, no miolo da tela, com o próprio crédito.
