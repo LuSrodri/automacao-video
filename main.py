@@ -385,6 +385,7 @@ def main() -> None:
         descricao,
         tags=roteiro.get("tags"),
         thumbnail=capa,
+        comentario=roteiro.get("comentario"),
     )
 
     print("\nConcluído!")

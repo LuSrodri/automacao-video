@@ -5,10 +5,14 @@ Duas etapas:
    2026-07-18: sem pesos nem filtros editoriais): o modelo recebe as
    candidatas do dia, os últimos vídeos publicados COM as métricas reais
    (views/likes da Data API) e os campeões de retenção, e escolhe a trend com
-   a maior chance de performar com o público DESTE canal. Duas regras duras,
-   aplicadas em código: o teto de MAX_MACROTEMA_SEGUIDOS vídeos seguidos do
-   mesmo macrotema (antes da seleção) e a verificação de vídeo repetido
-   (depois dela): uma chamada ao GPT confere se a escolhida cobriria o mesmo
+   a maior chance de performar com o público DESTE canal. As métricas de cada
+   vídeo recente vão para o prompt NORMALIZADAS PELA IDADE (views por hora ao
+   lado das views brutas): views brutas medem idade tanto quanto qualidade, e
+   comparar um vídeo de 7 dias com um de 3 horas fazia o tema do último pico
+   parecer eterno — era assim que um ciclo de notícia já morto continuava
+   sendo escolhido (ver `_resumo_recentes`). Uma regra dura, aplicada em
+   código: a verificação de vídeo repetido
+   (depois da seleção): uma chamada ao GPT confere se a escolhida cobriria o mesmo
    fato de um vídeo publicado nas últimas JANELA_REPETICAO_HORAS — se sim, a
    candidata sai da disputa e a seleção refaz (com 3-4 execuções/dia sobre a
    mesma janela de posts do X, a ressalva só no prompt deixava passar o mesmo
@@ -36,8 +40,8 @@ prefere trends com mais posts com clipe; o roteiro segue a estrutura em cinco
 blocos (abertura, o que aconteceu, as quatro óticas, o que muda para quem
 trabalha, síntese + o que observar), sem loop e sem CTA, dentro da faixa dura
 de 90 a 120 segundos; e a auditoria ganha regras próprias (fontes nominais,
-payload de carreira, as quatro óticas, nada dependendo de texto na tela). As
-regras duras (teto de macrotema, veto a repetição) comparam só com os vídeos
+payload de carreira, as quatro óticas, nada dependendo de texto na tela). A
+regra dura (veto a repetição) compara só com os vídeos
 LONGOS já publicados — Short e análise são conteúdos diferentes.
 """
 
@@ -66,10 +70,16 @@ PALAVRAS_POR_SEGUNDO = 2.3
 FRACAO_MINIMA = 0.85
 # Tolerância sobre o teto de palavras antes de pedir ao modelo para encurtar.
 FOLGA_PALAVRAS = 1.15
-# Teto de vídeos SEGUIDOS do mesmo macrotema (diretriz 2026-07-18): a seleção
-# segue somente a audiência, mas o mesmo macrotema não pode emendar mais que
-# isso — é a única regra de variabilidade do canal.
-MAX_MACROTEMA_SEGUIDOS = 4
+# Teto de vídeos SEGUIDOS do mesmo macrotema: REMOVIDO em 2026-07-28. Ele valia
+# 4 e era a única regra de variabilidade do canal, mas o custo apareceu nos
+# números: as três sequências conferidas no canal BR mostram o mesmo padrão —
+# 4 vídeos de guerra somando 55 mil views e, no 5º, o teto forçando a troca
+# para a melhor candidata do macrotema SOBRANDO, que rendeu 258 views. Desde
+# 14/07 foram 10 vídeos assim, 2.296 views somadas (18% da produção, 0,6% do
+# resultado). O teto não escolhia o segundo melhor tema: escolhia o melhor de
+# um macrotema que a audiência ignora. A variabilidade passa a ser decidida
+# pela própria seleção guiada pela audiência, que agora enxerga o ciclo
+# esfriando pelas views por hora (ver `_resumo_recentes`).
 # Janela da verificação de vídeo repetido: vídeo publicado há menos que isto
 # cobre a mesma janela de posts do X das execuções seguintes (JANELA_HORAS=24
 # + folga), então a candidata só passa se o resumo dela tiver fato novo. Mais
@@ -84,8 +94,8 @@ JANELA_REPETICAO_HORAS_LONGO = 72
 # pedida por três ou quatro segundos de fala.
 MARGEM_LONGO_S = 4
 # Duração (s) a partir da qual um vídeo já publicado no canal conta como
-# LONGO. As regras duras do formato longo (teto de macrotema e veto a vídeo
-# repetido) olham só para os vídeos longos: senão a rajada de Shorts do dia
+# LONGO. A regra dura do formato longo (veto a vídeo
+# repetido) olha só para os vídeos longos: senão a rajada de Shorts do dia
 # bloquearia todo vídeo longo, e a análise de um fato que virou Short há três
 # horas é conteúdo novo — outro formato, outra profundidade, outro público.
 DURACAO_MINIMA_LONGO = 75
@@ -126,6 +136,34 @@ ESQUEMA_SELECAO = {
         },
         "required": ["trend", "motivo", "consulta_noticias"],
     },
+}
+
+# Comentário do dono, postado pelo pipeline logo após o upload (2026-07-28).
+# Motivo, dos números do canal: 306.947 views no topo da faixa geraram 82
+# comentários e 39 compartilhamentos (0,027% e 0,013%) — propagação social
+# praticamente nula, enquanto a retenção já estava ótima (avp 121%). O vídeo
+# entrega informação fechada e não dá o que discutir. Este comentário é a
+# semente da thread: entra sozinho no vídeo novo e é o primeiro texto que quem
+# abre os comentários lê.
+# NÃO confundir com os comentários automáticos removidos em 2026-07-14: aqueles
+# eram divulgação (Turing/Firecrawl) no canal US. Este é editorial e existe
+# para abrir discussão, não para divulgar nada.
+COMENTARIO_PROPRIEDADE = {
+    "type": "string",
+    "description": (
+        "Comentário do DONO do canal, para ser postado no vídeo assim que ele "
+        "sair. Duas frases, no idioma definido nas instruções, até 280 "
+        "caracteres. Frase 1: o dado, número ou contexto REAL que não coube "
+        "nos segundos do vídeo (algo das notícias ou dos posts recebidos — "
+        "nunca inventado, nunca repetição literal da narração). Frase 2: uma "
+        "pergunta aberta e concreta sobre a DISPUTA do assunto, que uma pessoa "
+        "comum consiga responder com opinião a partir do que o vídeo mostrou "
+        "('quem paga essa conta no fim?'). PROIBIDO: pedir like, inscrição ou "
+        "compartilhamento; link ou nome de produto/serviço; emoji em excesso "
+        "(no máximo 1); hashtag; e pergunta de quiz com resposta certa — a "
+        "pergunta existe para abrir briga civilizada, não para testar o "
+        "espectador."
+    ),
 }
 
 ESQUEMA_ROTEIRO = {
@@ -213,9 +251,17 @@ ESQUEMA_ROTEIRO = {
                     "roda em loop — sem conclusão e sem CTA falado). A última "
                     "frase deve ser NOVA: é PROIBIDO repetir o hook (ou "
                     "qualquer frase anterior) palavra por palavra — quem "
-                    "repete o hook é o reinício do loop, não o texto."
+                    "repete o hook é o reinício do loop, não o texto. Essa "
+                    "última frase carrega A DISPUTA: um FATO do próprio vídeo "
+                    "que deixa duas leituras defensáveis em pé (quem está "
+                    "certo, quem paga a conta, se valeu a pena), de modo que "
+                    "quem assiste termine com uma opinião na ponta da língua. "
+                    "PROIBIDO virar isca: nada de pergunta ao espectador "
+                    "('você concorda?'), nada de opinião do canal, nada de "
+                    "pedir comentário — é fato com tensão, não convite."
                 ),
             },
+            "comentario": COMENTARIO_PROPRIEDADE,
         },
         "required": [
             "tema",
@@ -224,6 +270,7 @@ ESQUEMA_ROTEIRO = {
             "titulo",
             "descricao",
             "texto_video",
+            "comentario",
         ],
     },
 }
@@ -322,6 +369,7 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "'como você vê aqui' nem referência a imagem."
                 ),
             },
+            "comentario": COMENTARIO_PROPRIEDADE,
         },
         "required": [
             "tema",
@@ -332,6 +380,7 @@ ESQUEMA_ROTEIRO_LONGO = {
             "titulo",
             "descricao",
             "texto_video",
+            "comentario",
         ],
     },
 }
@@ -556,15 +605,28 @@ que tem MAIS clipes e o material em vídeo mais forte (veja "apelo visual").
 
 CRITÉRIO ÚNICO — O QUE A AUDIÊNCIA ESTÁ ASSISTINDO: escolha a trend com a
 maior chance de performar com a audiência DESTE canal, e a régua são os
-NÚMEROS listados, não opinião editorial. Os vídeos recentes com MAIS views e
-os campeões de retenção mostram o tipo de tema, tensão e promessa que este
-público clica e assiste até o fim; os vídeos recentes com POUCAS views mostram
-o que ele ignora. Compare cada candidata com esses dois grupos e escolha a que
-mais se parece com o que está performando. Repetir o tipo de conteúdo que está
-dando certo é BEM-VINDO e encorajado — não aplique preferência própria por
-tema "nobre", equilíbrio de pauta ou variedade (a variabilidade do canal já é
-garantida por uma regra automática fora desta escolha: no máximo 4 vídeos
-seguidos do mesmo macrotema).
+NÚMEROS listados, não opinião editorial. Os vídeos com o maior VIEWS/H e os
+campeões de retenção mostram o tipo de tema, tensão e promessa que este
+público clica e assiste até o fim; os de VIEWS/H baixo mostram o que ele
+ignora. Compare cada candidata com esses dois grupos e escolha a que mais se
+parece com o que está performando. Repetir o tipo de conteúdo que está dando
+certo é BEM-VINDO e encorajado: se o macrotema campeão render 10 vídeos
+seguidos, faça os 10. NÃO aplique preferência própria por tema "nobre",
+equilíbrio de pauta, rodízio ou variedade — não existe cota de assunto neste
+canal, e trocar de tema só para variar é a forma mais rápida de queimar um
+vídeo.
+
+CICLO DE NOTÍCIA ESFRIA — E É VOCÊ QUEM TEM QUE PERCEBER: um assunto quente
+(uma guerra, uma crise, uma eleição) domina o canal por dias e depois morre,
+normalmente quando o próprio fato se resolve (trégua, acordo, resultado). O
+sinal de morte está na lista, e é UM só: os vídeos MAIS RECENTES daquele
+macrotema com VIEWS/H bem abaixo dos mais antigos do MESMO macrotema. Quando
+isso aparecer, o pico antigo já não vale de régua — ele só está no topo das
+views acumuladas porque está no ar há mais tempo. Nesse caso escolha o
+macrotema com o melhor VIEWS/H RECENTE, mesmo que as views acumuladas dele
+sejam menores. O erro que se quer evitar aqui é o oposto do rodízio: é
+continuar publicando o assunto de ontem porque o vídeo de ontem tem o maior
+número absoluto da lista.
 
 Única ressalva: não escolha uma candidata que renderia um vídeo IDÊNTICO a um
 já publicado, sem nenhum fato novo. Cobertura contínua do mesmo assunto com
@@ -583,9 +645,13 @@ Você é editor de um canal de vídeos de ANÁLISE (formato longo, 16:9, cerca d
 
 Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema e
 imagem mental), os vídeos CAMPEÕES DE RETENÇÃO do canal e os últimos vídeos
-publicados COM as métricas reais de audiência (views e likes). Atenção: essas
-métricas são dos vídeos CURTOS do canal — use-as como régua do que este
-público responde (tema, tensão, promessa), não como molde de formato.
+publicados COM as métricas reais de audiência (views acumuladas, VIEWS/H e
+likes). Atenção: essas métricas são majoritariamente dos vídeos CURTOS do
+canal — use-as como régua do que este público responde (tema, tensão,
+promessa), não como molde de formato. Compare sempre pelo VIEWS/H: as views
+acumuladas medem há quanto tempo o vídeo está no ar tanto quanto medem
+qualidade, e o assunto de um ciclo já encerrado costuma exibir o maior número
+absoluto da lista muito depois de ter esfriado.
 
 O QUE O VÍDEO LONGO É: uma análise educacional que explica um acontecimento
 atual cruzando QUATRO ÓTICAS — geopolítica, tecnologia e IA, mercado de
@@ -700,6 +766,23 @@ ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
    copiar o hook (ou qualquer frase já dita) no final do texto — escreva uma
    frase NOVA de tensão que, quando o vídeo reiniciar, desemboque naturalmente
    no hook.
+   O LOOP VEM PRIMEIRO, mas dentro dele essa frase final tem um segundo
+   trabalho: carregar A DISPUTA do assunto. Escolha o fato do vídeo sobre o
+   qual duas pessoas razoáveis brigariam — quem está certo, quem paga a conta,
+   se valeu a pena, quem saiu ganhando — e termine NELE. É isso que faz a
+   pessoa comentar e mandar o vídeo para alguém: ela termina com uma opinião
+   formada e um interlocutor em mente. Exemplos do que é e do que não é:
+   - suspense (fraco, ninguém comenta): "E o próximo alvo pode ser o maior de
+     todos."
+   - disputa (forte): "Foram 37 bilhões de dólares em duas semanas, e o Irã
+     segue atirando."
+   O teste: se a frase não dá para discordar dela ou de quem ela responsabiliza,
+   ela é só suspense — reescreva.
+   PROIBIDO, e isto é regra dura: pergunta dirigida ao espectador ("você
+   concorda?", "o que você faria?"), opinião do canal, e qualquer pedido de
+   comentário, like ou compartilhamento. A disputa nasce do FATO estar na mesa,
+   nunca de convite. Pedido explícito quebra o loop e derruba a retenção, que é
+   a métrica que sustenta tudo.
 
 PROIBIDO NO TEXTO:
 - Frases de analista vazias: "no cenário geopolítico", "especialistas
@@ -755,6 +838,15 @@ Exemplos: [excited], [curious], [whispers], [surprised], [sighs], [laughs],
 [short pause]. Use de 8 a 12 tags, variando a emoção conforme o conteúdo (elas
 não são faladas nem aparecem nas legendas). A pontuação também guia a entrega:
 reticências para suspense, MAIÚSCULAS para ênfase pontual.
+
+COMENTÁRIO DE ABERTURA (campo `comentario`) — o pipeline posta esse texto como
+comentário do dono do canal assim que o vídeo sai, e ele é o primeiro texto que
+quem abre a aba de comentários lê. Serve para uma coisa só: abrir a discussão
+que a narração não pode abrir (a narração não tem CTA e não pode quebrar o
+loop). Então ele vai onde o vídeo não foi — o dado que sobrou, o número de
+contexto, o lado que não coube — e termina numa pergunta aberta sobre a
+disputa. Ele NÃO resume o vídeo e NÃO repete a narração: quem chega nos
+comentários já assistiu.
 
 Responda somente com o JSON pedido.\
 """
@@ -892,6 +984,14 @@ modificam. Exemplos: [serious], [curious], [emphatic], [short pause],
 conforme o conteúdo (elas não são faladas). A pontuação também guia a entrega:
 reticências para suspense, MAIÚSCULAS para ênfase pontual.
 
+COMENTÁRIO DE ABERTURA (campo `comentario`) — o pipeline posta esse texto como
+comentário do dono do canal assim que o vídeo sai, e ele é o primeiro texto que
+quem abre a aba de comentários lê. Aqui ele serve à mesma promessa do vídeo:
+leva o dado de carreira ou de mercado que não coube na narração (setor, vaga,
+número, prazo) e fecha com uma pergunta aberta que quem procura emprego
+consegue responder com a própria experiência. NÃO resume o vídeo e NÃO repete
+a narração: quem chega nos comentários já assistiu.
+
 Responda somente com o JSON pedido.\
 """
 
@@ -913,9 +1013,36 @@ def _resumo_trends(trends: list[dict]) -> str:
     return "\n".join(linhas)
 
 
+def _idade_horas(video: dict) -> float | None:
+    """Horas desde a publicação (data UTC da Data API); None se ilegível."""
+    try:
+        publicado = datetime.fromisoformat(video.get("data") or "").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    horas = (datetime.now(timezone.utc) - publicado).total_seconds() / 3600
+    return max(horas, 0.5)  # piso: vídeo recém-publicado não divide por ~zero
+
+
 def _resumo_recentes(
     videos_recentes: list[dict] | None, macrotemas: list[str] | None = None
 ) -> str:
+    """Bloco da régua de audiência, com as views NORMALIZADAS PELA IDADE.
+
+    Views brutas medem idade tanto quanto qualidade: um vídeo de 7 dias com
+    42 mil views e um de 3 horas com 322 não são comparáveis, e a lista chega
+    ao modelo ordenada do mais novo para o mais velho — ou seja, tudo que é
+    recente parece fracasso e tudo que é antigo parece campeão. O efeito
+    prático medido no canal é inércia de pauta: o pico de um ciclo de notícia
+    (guerra EUA-Irã, 20-25/07) continua sendo o maior número da lista por dias
+    depois do assunto esfriar, e o modelo segue escolhendo o tema morto.
+
+    Pedir a conta ao modelo em linguagem natural ("compare vídeos de idade
+    parecida", que era a redação anterior) é frágil em cima de 100 linhas.
+    Aqui a conta é feita em código: views/h ao lado das views brutas e a idade
+    explícita em horas. É aritmética pura — nenhuma chamada de API a mais.
+    """
     if not videos_recentes:
         return ""
     linhas = []
@@ -925,15 +1052,26 @@ def _resumo_recentes(
             if macrotemas and i < len(macrotemas)
             else ""
         )
-        metricas = f" — {v.get('views', '?')} views, {v.get('likes', '?')} likes"
-        linhas.append(
-            f"- ({v.get('data') or '?'}) {v.get('titulo', '')}{macro}{metricas}"
+        views = v.get("views")
+        horas = _idade_horas(v)
+        if isinstance(views, int) and horas:
+            idade = f"há {horas:.0f}h" if horas < 72 else f"há {horas / 24:.0f}d"
+            ritmo = f", {views / horas:.0f} views/h"
+        else:
+            idade, ritmo = "idade ?", ""
+        metricas = (
+            f" — {views if views is not None else '?'} views{ritmo}, "
+            f"{v.get('likes', '?')} likes"
         )
+        linhas.append(f"- ({idade}) {v.get('titulo', '')}{macro}{metricas}")
     return (
         "\n\nÚltimos vídeos publicados neste canal, do mais recente para o mais "
-        "antigo, com as métricas REAIS de audiência (os mais novos ainda estão "
-        "acumulando views — compare vídeos de idade parecida). Esta lista é a "
-        "régua do que o público deste canal assiste e do que ele ignora:\n"
+        "antigo. Cada um traz as views ACUMULADAS e o ritmo em VIEWS POR HORA "
+        "desde a publicação. Compare sempre pelo VIEWS/H, nunca pelas views "
+        "acumuladas: as acumuladas medem há quanto tempo o vídeo está no ar "
+        "tanto quanto medem qualidade, e por isso o vídeo antigo de um assunto "
+        "já morto sempre exibe o maior número da lista. Esta é a régua do que "
+        "o público deste canal assiste e do que ele ignora:\n"
         + "\n".join(linhas)
     )
 
@@ -961,11 +1099,18 @@ def _macrotemas_recentes(
 ) -> list[str]:
     """Classifica o macrotema de cada vídeo recente do canal (1 chamada).
 
-    A sequência inicial da lista (do mais recente para trás) alimenta o teto
-    de MAX_MACROTEMA_SEGUIDOS vídeos seguidos do mesmo macrotema; a lista
-    inteira entra no prompt de seleção como contexto. Falha ABORTA
-    (fail-fast): sem os macrotemas não existe o teto, e rodar sem ele é o que
-    deixa o canal virar monotemático sem ninguém perceber.
+    A lista entra no prompt de seleção como contexto: rotular cada vídeo
+    publicado é o que deixa o modelo ler a régua por TEMA e não vídeo a vídeo
+    ("os 20 'guerra' fazem 15 mil views, os 'tech' fazem 200"). Com o teto de
+    macrotemas seguidos removido (2026-07-28), esse rótulo é a principal coisa
+    que sustenta a decisão de trocar de assunto.
+
+    Falha aqui FALHA ABERTA (aviso no log, lista vazia): enquanto existia o
+    teto, sem os macrotemas não existia a regra e abortar se justificava —
+    agora eles são contexto de prompt, e perder a anotação piora a escolha sem
+    corromper regra nenhuma. Derrubar a execução (que já pagou a leitura do
+    canal e vai pagar X e OpenAI) por um erro transitório da OpenAI custaria
+    mais do que o contexto vale.
     """
     linhas = [
         f"{i}. {v.get('titulo', '')} — {(v.get('descricao') or '')[:200]}"
@@ -984,11 +1129,13 @@ def _macrotemas_recentes(
             },
         )
         macros = json.loads(resposta.choices[0].message.content)["macrotemas"]
-    except Exception as erro:  # noqa: BLE001 — sem macrotemas não há rotação
-        raise SystemExit(
-            "Classificação de macrotema dos vídeos recentes falhou (OpenAI) — "
-            f"sem ela não existe a rotação de macrotemas; abortando: {erro}"
-        ) from erro
+    except Exception as erro:  # noqa: BLE001 — só contexto de prompt; segue
+        print(
+            "[aviso] Classificação de macrotema dos vídeos recentes falhou "
+            f"({erro}) — a seleção segue sem o rótulo por tema, lendo as "
+            "métricas vídeo a vídeo."
+        )
+        return []
 
     macros = [m if m in MACROTEMAS else "outro" for m in macros]
     macros = macros[: len(videos_recentes)]
@@ -1095,23 +1242,6 @@ def _video_repetido(
     return veredito.get("video_repetido") or "um vídeo publicado nas últimas horas"
 
 
-def _macrotema_no_teto(macros_recentes: list[str]) -> str | None:
-    """Macrotema que atingiu o teto de vídeos seguidos, se houver.
-
-    Conta a sequência inicial (do vídeo mais recente para trás) de vídeos com
-    o mesmo macrotema; se ela chegou a MAX_MACROTEMA_SEGUIDOS, esse macrotema
-    está bloqueado no próximo vídeo.
-    """
-    if not macros_recentes:
-        return None
-    seguidos = 0
-    for m in macros_recentes:
-        if m != macros_recentes[0]:
-            break
-        seguidos += 1
-    return macros_recentes[0] if seguidos >= MAX_MACROTEMA_SEGUIDOS else None
-
-
 def selecionar_trend(
     cfg: Config,
     trends: list[dict],
@@ -1132,17 +1262,21 @@ def selecionar_trend(
        piso da auditoria): candidata que não tem material para o piso não
        disputa, porque escolhê-la só gastaria roteiro e narração para abortar
        na auditoria — e ainda tiraria a vaga de uma candidata bem servida.
-    1. O mesmo macrotema não emenda mais de MAX_MACROTEMA_SEGUIDOS vídeos
-       seguidos. Quando os últimos MAX_MACROTEMA_SEGUIDOS publicados são
-       todos do mesmo macrotema, as candidatas dele saem da disputa ANTES da
-       seleção.
-    2. Vídeo repetido é vetado: a escolhida passa por uma verificação
+    1. Vídeo repetido é vetado: a escolhida passa por uma verificação
        (``_video_repetido``) contra os vídeos publicados nas últimas
        JANELA_REPETICAO_HORAS; se ela cobriria o mesmo fato sem
        desenvolvimento novo, sai da disputa e a seleção refaz com as
        restantes.
-    Se qualquer uma das regras zerar as candidatas do dia, aborta — melhor
-    uma execução sem vídeo do que canal monotemático ou vídeo clonado.
+    Se alguma das regras zerar as candidatas do dia, aborta — melhor uma
+    execução sem vídeo do que vídeo clonado.
+
+    NÃO há mais teto de macrotemas seguidos (removido em 2026-07-28, ver o
+    comentário no lugar da constante): rodar 8 vídeos seguidos de guerra é o
+    resultado CERTO quando é isso que a audiência está assistindo. A defesa
+    contra ficar preso a um assunto morto não é uma cota de variedade, é o
+    sinal de audiência chegar normalizado pela idade — o vídeo de guerra de 3
+    horas atrás com 40 views/h ao lado do de 7 dias atrás com 253 views/h diz
+    ao modelo que o ciclo acabou, e ele troca de tema por conta própria.
     """
     cliente = OpenAI(api_key=cfg.openai_api_key)
     longo = cfg.formato == "longo"
@@ -1150,26 +1284,21 @@ def selecionar_trend(
         _macrotemas_recentes(cliente, cfg, videos_recentes) if videos_recentes else []
     )
 
-    # As regras duras (teto de macrotema e veto a vídeo repetido) do formato
-    # longo comparam só com os vídeos LONGOS do canal; o prompt continua
-    # recebendo a lista inteira, que é a régua de audiência.
+    # O veto a vídeo repetido do formato longo compara só com os vídeos LONGOS
+    # do canal; o prompt continua recebendo a lista inteira, que é a régua de
+    # audiência.
     if longo:
-        indices = [
-            i
-            for i, v in enumerate(videos_recentes or [])
+        recentes_regras = [
+            v
+            for v in (videos_recentes or [])
             if (v.get("duracao_s") or 0) >= DURACAO_MINIMA_LONGO
-        ]
-        recentes_regras = [(videos_recentes or [])[i] for i in indices]
-        macros_regras = [
-            macros_recentes[i] for i in indices if i < len(macros_recentes)
         ]
         print(
             f"[longo] {len(recentes_regras)} vídeo(s) longo(s) já publicados "
-            "servem de base para o teto de macrotema e o veto a repetição."
+            "servem de base para o veto a repetição."
         )
     else:
         recentes_regras = list(videos_recentes or [])
-        macros_regras = macros_recentes
 
     # O formato do canal é montado só com clipes dos posts do X: candidata
     # sem nenhum post com vídeo nativo não tem material e sai da disputa.
@@ -1216,26 +1345,6 @@ def selecionar_trend(
                 "acompanhadas."
             )
         candidatas = com_material
-
-    macro_bloqueado = _macrotema_no_teto(macros_regras)
-    if macro_bloqueado:
-        candidatas = [
-            t for t in candidatas
-            if t.get("macrotema", "outro") != macro_bloqueado
-        ]
-        print(
-            f"[veto] Os últimos {MAX_MACROTEMA_SEGUIDOS} vídeos publicados são "
-            f"todos '{macro_bloqueado}' — teto de macrotemas seguidos "
-            f"atingido; candidatas desse macrotema fora da disputa "
-            f"({len(candidatas)} de {len(trends)} seguem)."
-        )
-        if not candidatas:
-            raise SystemExit(
-                f"Todas as candidatas de hoje são '{macro_bloqueado}' e o teto "
-                f"de {MAX_MACROTEMA_SEGUIDOS} vídeos seguidos desse macrotema "
-                "foi atingido — sem vídeo hoje, para o canal não virar "
-                "monotemático."
-            )
 
     janela_repeticao = (
         JANELA_REPETICAO_HORAS_LONGO if longo else JANELA_REPETICAO_HORAS
@@ -1413,6 +1522,43 @@ def _aparar_hook_final(roteiro: dict) -> None:
         print(
             "[roteiro] Hook repetido no fim do texto removido "
             "(o loop emenda no reinício, não dentro da narração)."
+        )
+
+
+# Teto de caracteres do comentário de abertura. A API aceita muito mais, mas o
+# YouTube corta o texto com "Ler mais" por volta disto no app — e a pergunta,
+# que é o motivo do comentário existir, é a última coisa do texto.
+MAX_CARACTERES_COMENTARIO = 280
+
+
+def _limpar_comentario(roteiro: dict) -> None:
+    """Aplica em código as duas regras do comentário que não podem vazar.
+
+    URL e pedido de like/inscrição estão proibidos na descrição do campo, mas
+    regra de comportamento nunca fica só em prompt (é a mesma lição que criou a
+    auditoria pró-leigo). As duas doem de verdade: link em comentário do dono
+    reduz o alcance do vídeo, e pedido de like é exatamente o CTA que o formato
+    tirou da narração — reintroduzi-lo pela porta dos comentários anularia a
+    escolha. Sanear é melhor do que descartar: o resto do texto continua útil.
+    """
+    texto = (roteiro.get("comentario") or "").strip()
+    if not texto:
+        return
+    texto = re.sub(r"\S*(?:https?://|www\.)\S*", "", texto)
+    texto = re.sub(
+        r"(?im)^.*\b(?:se inscrev\w*|inscreva-se|deixa? o like|dá o like|"
+        r"curte a[ií]|compartilh\w+ com|subscribe|hit the like|smash that)\b.*$",
+        "",
+        texto,
+    )
+    texto = re.sub(r"\s{2,}", " ", texto).strip()
+    if len(texto) > MAX_CARACTERES_COMENTARIO:
+        texto = texto[:MAX_CARACTERES_COMENTARIO].rsplit(" ", 1)[0].rstrip(" ,;:—-")
+    roteiro["comentario"] = texto
+    if not texto:
+        print(
+            "[aviso] Comentário de abertura ficou vazio depois do saneamento "
+            "(era só link ou pedido de like) — o vídeo sai sem comentário."
         )
 
 
@@ -1632,9 +1778,15 @@ def gerar_roteiro(
             print("[roteiro] Reescrita aprovada pela auditoria pró-leigo.")
         palavras = _contar_palavras(roteiro["texto_video"])
 
+    # Depois da reescrita, não antes: a auditoria devolve o JSON completo e
+    # traria um comentário novo, ainda por sanear.
+    _limpar_comentario(roteiro)
+
     print(f"[roteiro] {palavras} palavras faladas (faixa {minimo}-{limite})")
     print(f"[roteiro] Tema do dia: {roteiro['tema']}")
     print(f"[roteiro] Título: {roteiro['titulo']}")
+    if roteiro.get("comentario"):
+        print(f"[roteiro] Comentário de abertura: {roteiro['comentario']}")
     if roteiro.get("hook"):
         print(f"[roteiro] Hook: {roteiro['hook']}")
     if roteiro.get("implicacao"):

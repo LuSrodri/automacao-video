@@ -6,8 +6,10 @@ passou a ser guiada SOMENTE pelo que a audiência do canal está assistindo —
 sem pesos nem filtro editorial, nenhuma candidata é rejeitada aqui. O que
 sobrou desta etapa é a anotação que a seleção ainda precisa:
 
-- macrotema: alimenta o teto de repetição (o mesmo macrotema não emenda mais
-  de 4 vídeos seguidos — ver escritor.py);
+- macrotema: rotula a candidata para a seleção poder ler a régua de audiência
+  por TEMA e não vídeo a vídeo ("os 'guerra' fazem 15 mil views, os 'tech'
+  fazem 200" — ver escritor.py). Já alimentou um teto de macrotemas seguidos,
+  removido em 2026-07-28;
 - imagem_mental: o que a pessoa visualiza ao ouvir a notícia; é a matéria-prima
   do HOOK na hora do roteiro.
 
