@@ -1,18 +1,19 @@
-﻿# Automação de Vídeos — Geopolítica, Inteligência, IA & Tech
+﻿# Automação de Vídeos — Tech, IA, Mercado de Trabalho & Mercado Financeiro
 
-Pipeline em Python que transforma as trends mais quentes de geopolítica, inteligência, IA e tech no X (Twitter) em um vídeo vertical narrado, em formato explicativo (análise/educacional), pronto para publicar:
+Pipeline em Python que transforma as trends mais quentes de tecnologia, inteligência artificial, mercado de trabalho e mercado financeiro no X (Twitter) em um vídeo vertical narrado, em formato explicativo (análise/educacional), pronto para publicar. **Guerra, geopolítica militar e inteligência/espionagem estão fora do escopo do canal** (decisão de 2026-07-30: as contas de OSINT e defesa saíram da lista e os prompts vetam o tema):
 
-1. **Coleta** os posts das últimas 24h da **lista fixa de contas** do canal (`CONTAS_PADRAO` em `pipeline/config.py`; `X_ACCOUNTS` no `.env` a substitui) via X API oficial v2, pay-per-use, com teto de leitura configurável, e o **GPT** os sumariza nas **10 trends mais quentes** — notícias, lançamentos, novidades, curiosidades e tretas — cada uma com resumo, engajamento, nota de apelo visual e **quantos posts têm clipe de vídeo nativo** (a mesma chamada da coleta já traz o tipo de mídia de cada post). O GPT devolve o **inventário completo** dos posts com vídeo de cada trend (`posts_video`) à parte da lista de posts mais centrais (`posts`, truncada): a contagem sai da união dos dois, senão uma pauta que **tem** clipe — só não entre os posts mais centrais — seria vetada como se não tivesse material. Os posts com vídeo vão para a frente da lista, que é onde o lookup de mídias corta.
+1. **Coleta** os posts das últimas 24h da **lista fixa de contas** do canal (`CONTAS_PADRAO` em `pipeline/config.py`; `X_ACCOUNTS` no `.env` a substitui) via X API oficial v2, pay-per-use, com teto de leitura configurável, por **dois caminhos complementares**: a **busca por relevância** (`/2/tweets/search/recent`, mais a varredura opcional `has:videos`) e a **timeline cronológica** das contas (`/2/users/:id/tweets`) — ver "Como funciona a coleta por timeline". O **GPT** então os sumariza nas **10 trends mais quentes**, ordenadas pelo **valor da informação** (vazamento, documento, exclusivo, urgência, número inédito) **antes** do engajamento, cada uma com resumo, `valor_informativo`, `urgencia`, engajamento, nota de apelo visual e **quantos posts têm clipe de vídeo nativo** (a mesma chamada da coleta já traz o tipo de mídia de cada post). O GPT devolve o **inventário completo** dos posts com vídeo de cada trend (`posts_video`) à parte da lista de posts mais centrais (`posts`, truncada): a contagem sai da união dos dois, senão uma pauta que **tem** clipe — só não entre os posts mais centrais — seria vetada como se não tivesse material. Os posts com vídeo vão para a frente da lista, que é onde o lookup de mídias corta.
 2. **GPT 5.6 Luna** classifica cada candidata (**macrotema** + **imagem mental**) — sem filtro nem score: todas as candidatas seguem vivas para a seleção.
 3. **GPT 5.6 Luna** escolhe a trend guiado **somente pela audiência**: recebe os **últimos 100 vídeos publicados no canal selecionado com as métricas reais** (views/likes em tempo real, YouTube Data API) e os **campeões de retenção** (YouTube Analytics), e escolhe a candidata com a maior chance de performar com esse público — repetir o tipo de conteúdo que está performando é bem-vindo, **sem cota de variedade e sem rodízio de tema**. As métricas chegam ao prompt **normalizadas pela idade** (**views por hora** ao lado das views acumuladas): views acumuladas medem há quanto tempo o vídeo está no ar tanto quanto medem qualidade, então o pico de um ciclo já encerrado continuaria sendo o maior número da lista por dias depois do assunto morrer. É o views/h que mostra o ciclo esfriando — vídeos recentes de um macrotema rendendo bem menos por hora que os antigos do mesmo macrotema — e faz o modelo trocar de assunto sozinho. Regras duras, aplicadas em código: **candidata sem nenhum post com clipe de vídeo sai da disputa** (o formato é montado só com clipes do X) e a **verificação anti-repetição** — o GPT confere se a escolhida cobriria o **mesmo fato** de um vídeo publicado nas últimas 36h sem desenvolvimento novo; se sim, ela sai da disputa e a seleção refaz (se todas as candidatas caírem em uma das regras, não há vídeo).
 4. **Firecrawl (sources=news)** busca **notícias recentes** sobre a trend escolhida (título, link, resumo e data) para complementar o material com fatos, nomes e números corretos (falha aqui não aborta: o roteiro segue com o resumo e os posts do X).
-5. **GPT 5.6 Luna** escreve o roteiro **explicativo (análise/educacional) em tom adulto**, **sempre citando as fontes** (as contas do X que originaram a trend e os veículos das notícias do Firecrawl): para um adulto leigo (o público real: homens de 25-54) com metade da atenção — frases com **ritmo de fala natural** (8 a 16 palavras, teto 20, alternando curtas de impacto com mais cheias), uma ideia por frase, **vocabulário preciso de telejornal** (sem jargão de nicho nem sigla sem explicação), tom de furo de notícia (nunca infantil), estrutura fixa **HOOK (imagem chocante, 0-2s) → FATO (até a metade, com âncora pró-leigo quando o assunto é de nicho) → IMPLICAÇÃO única (segunda metade) → CORTE em tensão que emenda no hook (loop) e carrega a disputa do assunto**, sem CTA falado. O roteiro traz também o **comentário de abertura** que o pipeline posta no vídeo (ver "Como funciona a alavanca de share e comentário"). O **título e a descrição são autossuficientes** (teste do leigo: sem nome de nicho, sem cauda de suspense; a descrição entrega o fato com a fonte, não é teaser) e prometem **exatamente** o que o vídeo entrega. Uma **auditoria pró-leigo** (chamada própria ao GPT) confere título, descrição e narração contra essas regras e pede **uma reescrita** quando reprova. O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz.
+5. **GPT 5.6 Luna** escreve o roteiro **explicativo (análise/educacional) em tom adulto**, **sempre citando as fontes** (as contas do X que originaram a trend e os veículos das notícias do Firecrawl): para um adulto leigo (o público real: homens de 25-54) com metade da atenção — frases com **ritmo de fala natural** (8 a 16 palavras, teto 20, alternando curtas de impacto com mais cheias), uma ideia por frase, **vocabulário preciso de telejornal** (sem jargão de nicho nem sigla sem explicação), tom de furo de notícia (nunca infantil), e a estrutura fixa em **cinco blocos: PERGUNTA ESQUISITA (0-2s) → CONTEXTUALIZAÇÃO → DESENVOLVIMENTO → CONSEQUÊNCIA → CONCLUSÃO** — a conclusão responde a pergunta da abertura de um jeito que **emenda de volta nela quando o Short reinicia** (loop) e carrega a **disputa** do assunto, sem CTA falado. Ver "Como funciona a estrutura em cinco blocos". O roteiro traz também o **comentário de abertura** que o pipeline posta no vídeo (ver "Como funciona a alavanca de share e comentário"). O **título e a descrição são autossuficientes** (teste do leigo: sem nome de nicho, sem cauda de suspense; a descrição entrega o fato com a fonte, não é teaser) e prometem **exatamente** o que o vídeo entrega. Uma **auditoria pró-leigo** (chamada própria ao GPT) confere título, descrição e narração contra essas regras e pede **uma reescrita** quando reprova. O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz.
 6. **X API** baixa um **pool de clipes de vídeo** dos posts originais da trend (o MP4 de maior bitrate de cada um) — mais do que os 3 que entram na montagem, como folga para a auditoria — junto com a **conta de origem** de cada clipe e as **fotos dos posts**, que alimentam as cartelas. **Imagem estática nunca ocupa a tela**, então não há busca de imagens na web.
 7. **Auditoria do material visual** (`pipeline/auditoria.py`): o **GPT com visão** descreve e **classifica** cada clipe do pool (cena real, reportagem de TV, gravação de tela, cartela, logo…) e diz se há **selo de emissora ou veículo de imprensa** na imagem. Em cima disso: **veto duro em código** — material de telejornal, vinheta de logotipo e qualquer mídia com selo de emissora saem da disputa, assim como mídia que não recebeu laudo — e uma **nota de pertinência de 1 a 5** dada pelo GPT, que mede só uma coisa: o quanto aquilo que a mídia **mostra** é o que a narração **diz** (abaixo de 3 sai; material que mostra a manchete de um veículo em vez do fato tem teto 2). **Zero clipe aprovado aborta a execução** (o formato longo exige um piso de 3). Roda **antes do ElevenLabs**, para a reprovação não custar créditos de narração, e deixa o rastro em `auditoria_clipe.json`.
-8. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere) e o pipeline **corta os silêncios** da narração (remapeando os timestamps para as legendas continuarem sincronizadas), deixando o áudio sem trechos parados.
+8. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere), o pipeline **acelera a narração** conforme o formato (`VIDEO_VELOCIDADE`, 1.25x no Short; **1.0x, velocidade normal, no `--long-take`**) e **corta os silêncios**, deixando o áudio sem trechos parados. Os timestamps do alinhamento são reescalados nas duas etapas, então cortes, legendas, infográficos, cartelas e figuras seguem sincronizados. O orçamento de palavras do roteiro é multiplicado pela velocidade — narração mais rápida cabe mais palavras nos mesmos segundos de tela.
 9. **Infográficos animados**: o GPT escolhe até **2 números reais** da história (nunca inventados) e o pipeline renderiza (Pillow) **contadores** que sobem do zero e terminam **verdes** — ou descem até o negativo e terminam **vermelhos** — e **barras comparativas** com a barra destacada crescendo mais que as outras. Estilo minimalista e editorial: Archivo Black preta com **stroke branco** (a mesma tipografia das legendas), **emoji colorido com halo branco** e a **fonte do dado citada** no rodapé. O painel ocupa o **terço superior** (o crédito de reprodução some enquanto ele está na tela) e **sempre surge deslizando da base do vídeo** com easing suave.
-10. **Cartelas de imagem nos momentos-chave** (`pipeline/cartelas.py`): a **foto do post da trend** (que o pipeline já lia e descartava) ou a **og:image de uma das notícias** entra **emoldurada por cima do clipe** por ~3,6s, no instante em que a narração **nomeia** o que ela mostra — a pessoa citada, o lugar atingido, o documento assinado. Cartão branco com cantos arredondados, sombra e o **crédito próprio** no rodapé (`Reprodução: X / @conta` ou o domínio do veículo; `Image Credit` no `-usa`), entrando com escala 92%→100% e fade. As imagens passam pela **mesma auditoria dos clipes** (visão + veto duro + nota), o gancho fica limpo (nada entra nos 3 primeiros segundos) e nenhuma cartela cai em cima de um infográfico.
-11. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é o próprio clipe daquele trecho, ampliado para cobrir a tela e borrado**; por cima entra o **clipe nítido em largura total, centrado** (clipe mais curto que a janela repete em loop). Os clipes **cobrem 100% da narração** (nunca há um instante sem imagem) com **crossfade curto e limpo** entre si. **Legendas** sincronizadas palavra a palavra — grandes, em **Archivo Black** branca com contorno preto, com entrada de "carimbo" editorial — são queimadas no vídeo, e o **crédito de reprodução** ("Reprodução Imagem: X" + "Conta `@usuario`" do post de origem; "Image Credit"/"Account" no modo `-usa`) fica no **canto superior direito** sobre uma tarja preta translúcida, trocando junto com o clipe. A trilha `assets/trilha.mp3` entra em **loop sob a narração** a ~-18 dB (alavanca de retenção; a faixa incluída é "Tension Documentary" de AtlasAudio, licença Pixabay — uso comercial livre, sem atribuição; troque o arquivo para mudar a trilha, ou apague-o para vídeo sem música). A cauda após a narração é de **0,15s** — curta de propósito, para o CORTE emendar no hook quando o Short reinicia (loop).
+10. **Cartelas de imagem nos momentos-chave** (`pipeline/cartelas.py`): a **foto do post da trend** (que o pipeline já lia e descartava) ou a **og:image de uma das notícias** entra **emoldurada por cima do clipe** por ~3,6s, no instante em que a narração **nomeia** o que ela mostra — a pessoa citada, o lugar atingido, o documento assinado. Cartão branco com cantos arredondados, sombra e o **crédito próprio** no rodapé (`Reprodução: X / @conta` ou o domínio do veículo; `Image Credit` no `-usa`). O movimento é o mesmo das figuras geradas: **sobe de baixo do quadro** até a posição de leitura e **sai por cima do quadro**. As imagens passam pela **mesma auditoria dos clipes** (visão + veto duro + nota), o gancho fica limpo (nada entra nos 3 primeiros segundos) e nenhuma cartela cai em cima de um infográfico.
+11. **ffmpeg** monta o vídeo vertical: o **fundo de cada momento é o próprio clipe daquele trecho, ampliado para cobrir a tela e borrado**; por cima entra o **clipe nítido em largura total, centrado** (clipe mais curto que a janela repete em loop). Os clipes **cobrem 100% da narração** (nunca há um instante sem imagem) com **crossfade curto e limpo** entre si. **Legendas** sincronizadas palavra a palavra — grandes, em **Archivo Black** branca com contorno preto, com entrada de "carimbo" editorial — são queimadas no vídeo, e o **crédito de reprodução** ("Reprodução Imagem: X" + "Conta `@usuario`" do post de origem; "Image Credit"/"Account" no modo `-usa`) fica no **canto superior direito** sobre uma tarja preta translúcida, trocando junto com o clipe. O vídeo **não tem música de fundo** (a trilha foi removida em 2026-07-30, junto com o arquivo `assets/trilha.mp3`): sobram a narração e os wooshes das transições — o formato virou análise, e música disputa atenção com a informação falada. A cauda após a narração é de **0,15s** — curta de propósito, para a CONCLUSÃO emendar na pergunta de abertura quando o Short reinicia (loop).
+10b. **Figuras geradas por IA** (`pipeline/figuras.py`): o **gpt-image-2** desenha **gráficos, tabelas, infográficos, diagramas e cartazes** a partir dos **números que a própria narração diz**, ancorados numa **citação literal** do trecho em que o dado é falado. Só entra dado que está na narração — a tela nunca mostra um número que ninguém falou. Cada figura entra num cartão branco etiquetado como **infográfico do canal** (para o espectador não confundir com material de terceiro), **sobe de baixo do quadro** e **sai por cima**. Ver "Como funcionam as figuras geradas".
 12. O `.mp4` final vai para `output/`, é registrado em `videos.txt` e publicado automaticamente no **YouTube** (Data API v3). Roda sempre, independente da flag `-usa` (o horário de publicação é o do cronjob que dispara a execução). Logo após o upload, o pipeline posta o **comentário de abertura** do dono no vídeo (`commentThreads.insert`, 50 unidades de cota) — ver "Como funciona a alavanca de share e comentário".
 
 ## Pré-requisitos
@@ -73,16 +74,20 @@ mesmo pipeline — mesma coleta do X, mesmas notícias do Firecrawl, mesmo
 crédito de reprodução no canto superior direito — com outra direção editorial:
 
 - **Enquadramento**: explica um acontecimento contemporâneo cruzando as quatro
-  óticas — **geopolítica, tecnologia/IA, negócios e mercado de trabalho** —
-  costuradas por causa e efeito, nunca como lista de tópicos.
+  óticas — **tecnologia/IA, negócios, mercado de trabalho e mercado
+  financeiro** — costuradas por causa e efeito, nunca como lista de tópicos.
+  (Guerra e geopolítica militar saíram do canal em 2026-07-30.)
 - **Espectador**: o adulto que está **procurando emprego ou em transição de
   carreira**. O payload obrigatório do vídeo é o que aquele acontecimento muda
   na prática para ele (setor que contrata ou corta, função na linha de tiro,
   habilidade que passa a valer, prazo) — conselho de coach e futurologia sem
   base reprovam na auditoria.
-- **Estrutura**: ABERTURA (hook + promessa) → O QUE ACONTECEU → AS QUATRO
-  ÓTICAS → O QUE ISSO MUDA PARA QUEM TRABALHA → SÍNTESE + O QUE OBSERVAR
-  (próximo marco concreto). Sem CTA e sem loop — o vídeo fecha entregando.
+- **Estrutura**: a mesma do Short — PERGUNTA ESQUISITA → CONTEXTUALIZAÇÃO →
+  DESENVOLVIMENTO (as quatro óticas) → CONSEQUÊNCIA PARA QUEM TRABALHA →
+  CONCLUSÃO (a resposta à pergunta + o próximo marco concreto a observar). Sem
+  CTA e **sem loop** — aqui o vídeo fecha entregando.
+- **Velocidade normal** (`LONG_VELOCIDADE=1.0`): análise não se acompanha em
+  fala apressada. O Short é o contrário e roda acelerado.
 - **Fontes**: pelo menos duas citações nominais na narração (veículo ou conta
   do X) e a **lista de links reais** anexada ao final da descrição do YouTube.
 - **Sem legendas queimadas**: a narração se sustenta sozinha (nenhuma frase
@@ -103,8 +108,8 @@ crédito de reprodução no canto superior direito — com outra direção edito
 - **Material**: até **8 clipes** de vídeo do X (consultando até 16 posts da
   trend, e baixando 11 para a auditoria escolher 8), trocando a cada 8-20s;
   clipe vertical aparece como faixa central sobre o próprio clipe borrado. Até
-  **4 infográficos** animados e **4 cartelas** de imagem, espalhados pela
-  narração. A auditoria exige um **piso de 3 clipes aprovados** — 90 a 120
+  **4 infográficos** animados, **4 cartelas** de imagem e **4 figuras geradas**
+  pelo gpt-image-2, espalhados pela narração. A auditoria exige um **piso de 3 clipes aprovados** — 90 a 120
   segundos presos em um ou dois clipes é insustentável, então abaixo disso o
   vídeo não sai.
 - **Regras duras próprias**: candidata precisa de **4 posts com clipe** para
@@ -138,20 +143,25 @@ sair fora de 90-120s.
 | `X_MAX_POSTS` | `200` | Teto de posts lidos por execução (a X API cobra por post lido) |
 | `X_MAX_POSTS_VIDEO` | `60` | Leituras extras de uma varredura `has:videos` sobre as **mesmas** contas — a coleta normal ordena por relevância e não prefere vídeo, então o post com clipe perdia vaga para texto. Nenhuma fonte nova; `0` desliga |
 | `X_MAX_POSTS_BUSCA` | `30` (só `--long-take`) | Busca **aberta** por clipes do assunto, fora das contas do canal. Fontes **não curadas** — a auditoria é a única guarda, e ela julga pertinência, não veracidade; `0` desliga |
+| `X_MAX_POSTS_TIMELINE` | `60` | Leituras da **timeline** das contas (`/2/users/:id/tweets`), cronológica: é ela que pega o post fresco que a busca por relevância ainda não ranqueou. Custa **1 requisição por conta**, então o orçamento cobre um subconjunto **rotativo** por execução; `0` desliga |
 | `JANELA_HORAS` | `24` | Idade máxima dos posts coletados. Alargar **não** custa mais na X API (o teto é o `X_MAX_POSTS`; a janela só decide de que intervalo saem esses posts). Case com a **cadência do cron**, não com o formato: em produção os Shorts rodam com `4` (de 4 em 4 horas) e os crons `--long-take` com `48` — ver a nota abaixo |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
 | `NUM_NOTICIAS` | `6` | Quantas notícias (Firecrawl news) buscar para enriquecer a trend |
 | `TEXT_MODEL` | `gpt-5.6-luna` | Modelo do roteiro, da sumarização das trends e da visão |
+| `IMAGEM_MODEL` | `gpt-image-2` | Modelo das figuras geradas (gráficos, tabelas, infográficos, cartazes) |
+| `IMAGEM_QUALIDADE` | `medium` | `low`/`medium`/`high`/`auto`. `medium` é o piso para figura com texto: em `low` o rótulo sai borrado |
 | `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
 | `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
-| `VIDEO_DURACAO` | `32` | Duração-alvo da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%, então 32s de alvo ≈ vídeo final de ~29s, a faixa que melhor retém) |
+| `VIDEO_DURACAO` | `60` | Duração-alvo da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%) |
+| `VIDEO_VELOCIDADE` | `1.25` | Velocidade da narração e, com ela, do ritmo do vídeo inteiro. O **Short roda acelerado**; o `--long-take` roda em `1.0` (`LONG_VELOCIDADE`). O orçamento de palavras do roteiro é multiplicado por este valor |
 | `VIDEO_LARGURA` | `1080` | Largura do vídeo |
 | `VIDEO_ALTURA` | `1920` | Altura do vídeo |
 | `MAX_POSTS_MIDIA` | `12` | Posts da trend consultados no lookup de mídias (a X API cobra por post lido) |
 | `POOL_EXTRA_CLIPES` | `3` | Clipes baixados além dos que entram na montagem, como folga da auditoria |
 | `MAX_FOTOS` | `4` | Fotos dos posts baixadas para as cartelas (`0` desliga) |
 | `MAX_CARTELAS` | `2` | Cartelas de imagem sobrepostas nos momentos-chave (`0` desliga) |
+| `MAX_FIGURAS` | `2` | Figuras **geradas** pelo gpt-image-2 a partir dos números da narração (`0` desliga) |
 | `LONG_DURACAO` | `105` | Só com `--long-take`: duração-alvo da narração (aceita 90 a 120) |
 | `LONG_LARGURA` / `LONG_ALTURA` | `1920` / `1080` | Só com `--long-take`: resolução 16:9 |
 | `LONG_MAX_CLIPES` | `8` | Só com `--long-take`: clipes do X usados na montagem |
@@ -159,6 +169,8 @@ sair fora de 90-120s.
 | `LONG_NUM_NOTICIAS` | `10` | Só com `--long-take`: notícias que embasam a análise |
 | `LONG_MAX_CARTELAS` | `4` | Só com `--long-take`: cartelas de imagem sobrepostas |
 | `LONG_MAX_FOTOS` | `6` | Só com `--long-take`: fotos dos posts baixadas para as cartelas |
+| `LONG_MAX_FIGURAS` | `4` | Só com `--long-take`: figuras geradas pelo gpt-image-2 |
+| `LONG_VELOCIDADE` | `1.0` | Só com `--long-take`: velocidade **normal** da narração (análise não se acompanha em fala apressada) |
 | `YOUTUBE_CLIENT_ID` | — | Client ID OAuth (Google Cloud, tipo "Desktop app") |
 | `YOUTUBE_CLIENT_SECRET` | — | Client secret OAuth |
 | `YOUTUBE_REFRESH_TOKEN` | — | Canal português; preenchido por `--auth-youtube` |
@@ -251,21 +263,57 @@ A auditoria roda **antes do ElevenLabs**, então reprovar não custa crédito de
 Um segundo tipo de sobreposição, ao lado dos infográficos: nos **momentos-chave** — quando a narração **nomeia** a pessoa, o lugar, o documento ou o produto — uma imagem entra **emoldurada por cima do clipe** por ~3,6s. O corpo do vídeo continua sendo só clipe de vídeo do X; imagem estática nunca ocupa a tela sozinha.
 
 - **De onde vêm** — as **fotos dos posts da trend** (que o pipeline já lia da X API e descartava no filtro de tipo: são o material mais barato, vêm no mesmo lookup e estão no assunto por construção) e a **og:image das notícias** já buscadas no Firecrawl, creditadas pelo domínio do veículo. Nenhuma chamada nova de API, e nada de busca de imagem em banco.
-- **Como aparecem** — cartão branco com cantos arredondados e sombra, **crédito próprio no rodapé** (`Reprodução: X / @conta` ou `Reprodução: reuters.com`; `Image Credit` no `-usa`), entrando com escala 92%→100% e fade. Centralizado acima da faixa das legendas no vertical, no meio da tela no 16:9.
+- **Como aparecem** — cartão branco com cantos arredondados e sombra, **crédito próprio no rodapé** (`Reprodução: X / @conta` ou `Reprodução: reuters.com`; `Image Credit` no `-usa`). Movimento de direção única: **sobem de baixo do quadro** até a posição de leitura, ficam paradas enquanto são lidas e **saem por cima do quadro**. Centralizado acima da faixa das legendas no vertical, no meio da tela no 16:9.
 - **Onde não aparecem** — nos **3 primeiros segundos** (o gancho fica com o clipe limpo) e em cima de um infográfico (as janelas nunca coincidem).
 - **Quantas** — até `MAX_CARTELAS` (2; 4 no `--long-take`), escolhidas pelo GPT entre as imagens aprovadas na auditoria, com o momento ancorado numa **citação exata da narração**. O plano fica em `cartelas.json`. `MAX_CARTELAS=0` desliga a feature; qualquer falha só deixa o vídeo sem cartelas.
+
+## Como funcionam as figuras geradas
+
+O `pipeline/figuras.py` desenha, com o **gpt-image-2**, o que os infográficos do `grafico.py` não desenham: **tabela, linha do tempo, diagrama de causa e efeito, comparação de mercado e cartaz**. É a diferença de repertório que um canal de análise sobre tecnologia, trabalho e mercado pede — o `grafico.py` continua fazendo, com precisão perfeita, o contador e a barra comparativa.
+
+- **De onde vêm os dados** — **exclusivamente da narração**. Um GPT lê o texto narrado e devolve, para cada figura, a **citação literal** do trecho em que o dado é dito, o **tipo** de figura, o título e os pares rótulo/valor. Número que está nas notícias mas não foi falado **não** entra: a tela mostrando um valor que ninguém disse é o pior defeito possível nesta camada.
+- **Como são desenhadas** — o estilo visual é **fixo em código** (fundo branco, tipografia grotesca pesada, preto quase puro + um único laranja de destaque, sem 3D, sem sombra, sem marca d'água), porque identidade visual não pode variar de vídeo para vídeo. O prompt lista os rótulos exatos e proíbe qualquer texto além deles — o modelo ainda erra tipografia quando o cartaz é cheio, e figura enxuta é figura legível.
+- **Como aparecem** — cartão branco com sombra, etiquetado como **infográfico do canal** (`CHANNEL GRAPHIC` no `-usa`) para o espectador não confundir com gráfico publicado por terceiro, do mesmo jeito que o crédito de reprodução distingue o clipe de terceiro. **Sobem de baixo do quadro**, ficam ~4s paradas e **saem por cima do quadro**.
+- **Onde não aparecem** — nos 3 primeiros segundos (gancho limpo) e em cima de um infográfico ou de uma cartela (as janelas nunca coincidem).
+- **Quantas** — até `MAX_FIGURAS` (2; 4 no `--long-take`). O plano fica em `figuras.json`. A ancoragem na narração é conferida **antes** da geração da imagem, que é a única etapa cara aqui. `MAX_FIGURAS=0` desliga; qualquer falha só deixa o vídeo sem figuras.
+
+O roteirista sabe dessa camada: o prompt pede que **todo número, comparação e lista curta seja dito na narração, com valor e unidade** — dado não falado não vira figura —, e ao mesmo tempo mantém a proibição de referenciar a tela ("como você vê no gráfico"), porque a narração tem que se sustentar de olhos fechados.
+
+## Como funciona a coleta por timeline
+
+A busca do X (`/2/tweets/search/recent`) ordena por **relevância**, e relevância no X é engajamento acumulado. O post publicado há vinte minutos — o **vazamento**, o comunicado, o número que acabou de sair — ainda não tem engajamento nenhum, e por isso é justamente o que a busca deixa de fora. Como a diretriz do canal passou a priorizar informação de alto valor e urgência, essa era a lacuna estrutural da coleta.
+
+A timeline (`/2/users/:id/tweets`) resolve isso: é **cronológica** e não faz juízo de popularidade. Ela aceita o mesmo bearer app-only da busca (a `reverse_chronological` **não** serve — exige contexto de usuário, OAuth 1.0a/PKCE, que o pipeline não tem).
+
+- **Custo** — 1 requisição por conta. O orçamento `X_MAX_POSTS_TIMELINE` é dividido em "posts por conta" (mínimo 5 da API) e cobre um **subconjunto rotativo** das contas por execução; um cursor circular persistido (`.rotacao_timeline`) garante que todas passem ao longo do dia, como já acontece com os lotes da busca.
+- **IDs** — a timeline é endereçada por ID numérico, resolvido em `/2/users/by` e guardado em `.contas_ids.json` por 30 dias (a lista de contas quase não muda).
+- **Fusão** — os posts da timeline entram deduplicados por URL, depois da busca por relevância e da varredura `has:videos`; o log diz quantos posts frescos a busca não tinha devolvido.
+
+## Como funciona a estrutura em cinco blocos
+
+Todo roteiro — Short e `--long-take` — segue a mesma ordem de aula bem dada:
+
+1. **PERGUNTA ESQUISITA** (a primeira frase, campo `pergunta`): concreta, estranha e específica, com coisa/número/gente dentro ("quanto custa desligar um data center por um dia?"). É **proibida** pergunta abstrata, retórica ou dirigida ao espectador ("você já parou pra pensar?"). O estranhamento é o gancho: o cérebro quer a resposta.
+2. **CONTEXTUALIZAÇÃO**: o mínimo para a pergunta fazer sentido — e é aqui que assunto de nicho ganha a âncora pró-leigo ("a empresa por trás do ChatGPT").
+3. **DESENVOLVIMENTO**: o miolo. O que aconteceu, com número, nome, **mecanismo** e a fonte nominal.
+4. **CONSEQUÊNCIA**: uma só, concreta — o que muda para quem trabalha, investe ou usa aquilo.
+5. **CONCLUSÃO**: a **resposta** à pergunta da abertura, em uma frase seca que carrega a **disputa** do assunto. No Short ela emenda de volta na pergunta quando o vídeo reinicia (**loop**); no `--long-take` ela fecha de verdade, com o próximo marco a observar.
+
+A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de prompt: reprova se a primeira frase não for pergunta, se a pergunta for abstrata ou dirigida ao espectador, e se a narração **não responder** a pergunta antes de acabar.
 
 ## Custo estimado por vídeo
 
 | Etapa | Custo |
 | --- | --- |
 | Coleta de posts (X API pay-per-use, ~US$ 0,005/post, teto `X_MAX_POSTS`) | ~US$ 1,00 com o padrão de 200 posts |
+| Timeline das contas (X API, teto `X_MAX_POSTS_TIMELINE`) | ~US$ 0,30 com o padrão de 60 posts (`0` desliga) |
+| Figuras geradas (gpt-image-2, `MAX_FIGURAS` imagens em qualidade `medium`) | ~US$ 0,08 por figura (`MAX_FIGURAS=0` desliga) |
 | Mídias dos posts da trend (X API, até 12 posts + pool de 6 clipes e 4 fotos) | ~US$ 0,11 (~US$ 0,17 com `--long-take`: 16 posts, 11 clipes, 6 fotos) |
 | Busca de notícias (Firecrawl Search) | ~2 créditos por consulta |
 | GPT 5.6 Luna (sumarização + seleção + roteiro + visão e auditoria das mídias) | ~US$ 0,08 (~US$ 0,14 com `--long-take`: mais mídias no pool) |
 | ElevenLabs (~1.000 caracteres por narração de 60s) | ~1.000 créditos do plano (~1.700 no `--long-take`) |
 
-O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para equilibrar cobertura e preço. A auditoria e as cartelas somam ~US$ 0,10 por vídeo (pool maior de mídias na X API + uma chamada de visão por mídia do pool + a chamada da nota de pertinência): para cortar isso, baixe `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` — mas lembre que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam a parte das cartelas sem mexer na auditoria dos clipes. O custo fixo segue sendo o plano da ElevenLabs: o gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana.
+O maior custo de API é a leitura de posts do X — ajuste `X_MAX_POSTS` para equilibrar cobertura e preço. A auditoria e as cartelas somam ~US$ 0,10 por vídeo (pool maior de mídias na X API + uma chamada de visão por mídia do pool + a chamada da nota de pertinência): para cortar isso, baixe `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` — mas lembre que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam a parte das cartelas sem mexer na auditoria dos clipes; `MAX_FIGURAS=0` desliga a geração de imagem e `X_MAX_POSTS_TIMELINE=0` desliga a leitura de timelines — as duas adições de 2026-07-30, que juntas somam ~US$ 0,45 por vídeo. O custo fixo segue sendo o plano da ElevenLabs: o gratuito dá 10k créditos/mês (~10 vídeos) e o **Starter (US$ 5/mês, 30k créditos)** cobre folgado 3 vídeos/semana.
 
 **Atenção ao ligar o `--long-take` num cron diário**: cada vídeo longo consome ~1.700 créditos de TTS, ou seja ~51k créditos/mês com uma execução por dia — sozinho já estoura o Starter. Some a isso a leitura de posts do X, que é cobrada por execução (~US$ 1,00 com `X_MAX_POSTS=200`): um cron de vídeo longo por dia custa ~US$ 30/mês só de X API. Se o longo rodar em horário próximo ao de um Short, considere baixar `X_MAX_POSTS` na execução longa.
 

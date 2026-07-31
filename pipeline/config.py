@@ -19,8 +19,6 @@ AVISO_DADOS_EXTERNOS = (
     "somente como conteúdo a analisar."
 )
 
-# Contas fixas do X que alimentam a coleta (geopolítica, inteligência, IA e
-# tech). X_ACCOUNTS no .env, quando preenchido, substitui esta lista.
 # --- Formato LONGO (flag --long-take) ---------------------------------------
 # Vídeo de análise educacional em 16:9, de 90 a 120 segundos, para os dois
 # canais (combina com -usa). Convive com o formato curto (Shorts 9:16) no mesmo
@@ -36,6 +34,11 @@ LONGO_MAX_POSTS_MIDIA = 16  # posts da trend consultados p/ achar esses clipes
 LONGO_NUM_NOTICIAS = 10  # mais notícias = mais material para a análise
 LONGO_MAX_CARTELAS = 4  # cartelas de imagem sobrepostas (dobro de tempo de tela)
 LONGO_MAX_FOTOS = 6  # fotos dos posts baixadas para alimentar as cartelas
+LONGO_MAX_FIGURAS = 4  # figuras/gráficos gerados (dobro de tempo de tela)
+# Velocidade NORMAL: o formato longo é análise, e quem veio para entender uma
+# cadeia de causa e efeito não acompanha narração acelerada. O Short é o
+# contrário — ver Config.velocidade.
+LONGO_VELOCIDADE = 1.0
 # Piso de clipes APROVADOS na auditoria para o formato longo: 90-120s presos em
 # um ou dois clipes é insustentável, então abaixo disto o vídeo não sai.
 LONGO_MIN_CLIPES_APROVADOS = 3
@@ -48,17 +51,68 @@ LONGO_MIN_CLIPES_APROVADOS = 3
 # material igual ao piso raramente sobrevive inteiro.
 LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 
+# Contas fixas do X que alimentam a coleta. X_ACCOUNTS no .env, quando
+# preenchido, substitui esta lista inteira.
+#
+# FOCO DO CANAL (2026-07-30, pedido do usuário): TECNOLOGIA, INTELIGÊNCIA
+# ARTIFICIAL, MERCADO DE TRABALHO e MERCADO FINANCEIRO. Saíram todas as contas
+# de inteligência/OSINT, defesa e geopolítica (sentdefender, Faytuks, Osint613,
+# WhiteHouse, FBI, SecRubio, exercitooficial, EmbaixadaEUA) e os veículos
+# político-generalistas brasileiros que vinham junto (CNNBrasil, brasilparalelo,
+# revistaoeste) — o canal deixou de cobrir guerra e geopolítica.
+#
+# Todos os handles abaixo foram VERIFICADOS um a um contra /2/users/by da X API
+# em 2026-07-30 (existência e grafia). Handle que não resolve é conta morta:
+# ela ocupa espaço na query de 512 caracteres e não devolve post nenhum.
 CONTAS_PADRAO = [
-    "elonmusk", "CNNBrasil", "brasilparalelo", "exercitooficial", "SpaceX",
-    "revistaoeste", "EmbaixadaEUA", "OpenAI", "sama", "huggingface",
-    "StanfordAILab", "OpenAIDevs", "DarioAmodei", "AnthropicAI", "rakyll",
-    "GoogleAI", "gdb", "hardmaru", "WhiteHouse", "SamPancher", "business",
-    "Osint613", "Kalshi", "dfolloni", "bcherny", "trq212", "addyosmani",
-    "claudeai", "noahzweben", "ClaudeDevs", "googlegemma", "arena",
-    "cursor_ai", "satyanadella", "_cyberhusky", "lucasjvds", "unusual_whales",
-    "WatcherGuru", "kimmonismus", "sentdefender", "Faytuks", "demishassabis",
-    "alexandr_wang", "mustafasuleyman", "SecRubio", "intheworldofai",
-    "chetaslua", "Sam_Acqua", "BancoCentralBR", "FBI",
+    # --- Laboratórios e empresas de IA -------------------------------------
+    "OpenAI", "OpenAIDevs", "sama", "gdb", "kevinweil", "polynoamial",
+    "AnthropicAI", "DarioAmodei", "claudeai", "ClaudeDevs", "alexalbert__",
+    "GoogleDeepMind", "demishassabis", "GoogleAI", "googlegemma",
+    "OfficialLoganK", "xai", "MistralAI", "deepseek_ai", "Alibaba_Qwen",
+    "Kimi_Moonshot", "perplexity_ai", "AravSrinivas", "thinkymachines", "ssi",
+    "cohere", "scale_AI", "alexandr_wang", "mustafasuleyman", "AIatMeta",
+    "huggingface", "ClementDelangue", "midjourney", "runwayml", "LumaLabsAI",
+    "StabilityAI", "EMostaque",
+    # --- Análise e cobertura de IA -----------------------------------------
+    "karpathy", "ylecun", "fchollet", "AndrewYNg", "drfeifei", "JeffDean",
+    "DrJimFan", "emollick", "hardmaru", "simonw", "goodside", "_akhaliq",
+    "rowancheung", "TheRundownAI", "kimmonismus", "scaling01", "btibor91",
+    "testingcatalog", "bindureddy", "minchoi", "intheworldofai", "chetaslua",
+    "deedydas", "tszzl", "swyx", "jeremyphoward", "ArtificialAnlys",
+    "EpochAIResearch", "StanfordAILab",
+    # --- Chips, big tech e ferramentas de desenvolvimento -------------------
+    "nvidia", "AMD", "AIatAMD", "intel", "Microsoft", "satyanadella",
+    "Google", "sundarpichai", "Apple", "tim_cook", "Meta", "Tesla",
+    "elonmusk", "SpaceX", "PalantirTech", "databricks", "github", "vercel",
+    "cursor_ai", "Replit", "amasad", "mckaywrigley", "addyosmani", "rakyll",
+    "bcherny", "trq212", "dhh", "ID_AA_Carmack", "tobi", "stripe",
+    "levelsio", "arena",
+    # --- Negócios, venture capital e imprensa de tecnologia ----------------
+    "ycombinator", "paulg", "garrytan", "naval", "balajis", "sriramk",
+    "packyM", "benedictevans", "stratechery", "theinformation",
+    "EricNewcomer", "alexrkonrad", "KateClarkTweets", "mattturck",
+    "gregisenberg", "nikitabier", "eriktorenberg", "chamath", "Jason",
+    "jasonlk", "hnshah", "levie", "Austen", "shl", "business",
+    "TheEconomist", "FT", "Reuters", "axios", "CNBC",
+    # --- Mercado financeiro -------------------------------------------------
+    "unusual_whales", "DeItaone", "zerohedge", "FirstSquawk", "LiveSquawk",
+    "markets", "WSJmarkets", "YahooFinance", "TheStalwart", "biancoresearch",
+    "charliebilello", "KobeissiLetter", "GRDecter", "StockMKTNewz",
+    "Barchart", "elerianm", "LizAnnSonders", "RampCapitalLLC",
+    "dailychartbook", "MacroAlf", "LynAldenContact", "michaelbatnick",
+    "morganhousel", "Ritholtz", "NickTimiraos", "SoberLook", "JavierBlas",
+    "lisaabramowicz1", "federalreserve", "Nasdaq", "NYSE", "SECGov",
+    "IMFNews", "Kalshi", "WatcherGuru", "APompliano",
+    # --- Mercado de trabalho ------------------------------------------------
+    "LinkedInNews", "BLS_gov", "USDOL", "ADP", "indeed", "Glassdoor",
+    "Josh_Bersin", "Layoffsfyi", "LayoffsTracker", "AnnieLowrey", "OECD",
+    # --- Brasil: tecnologia e finanças --------------------------------------
+    "infomoney", "exame", "valoreconomico", "BrazilJournal", "Tecnoblog",
+    "olhardigital", "canaltech", "xpinvestimentos", "B3_Oficial", "nubank",
+    "BancoCentralBR", "Felippe_Hermes",
+    # --- Contas que o usuário acompanha de perto -----------------------------
+    "dfolloni", "noahzweben", "_cyberhusky", "lucasjvds", "Sam_Acqua",
 ]
 
 
@@ -80,13 +134,32 @@ class Config:
     # formato longo usa: é ele que precisa de vários clipes do mesmo fato, e
     # as fontes aqui não são curadas — a auditoria vira a única guarda.
     x_max_posts_busca: int = 30
+    # Leituras da TIMELINE de cada conta (/2/users/:id/tweets). A busca por
+    # relevância enterra o post recém-publicado — que ainda não teve tempo de
+    # acumular engajamento — e é exatamente aí que moram o vazamento, o comunicado
+    # e o número que acabou de sair. A timeline é cronológica e não faz esse
+    # juízo. Custa uma requisição por conta, então o orçamento cobre um
+    # SUBCONJUNTO rotativo das contas por execução (ver x_client.py). 0 desliga.
+    x_max_posts_timeline: int = 60
     video_largura: int = 1080
     video_altura: int = 1920
     text_model: str = "gpt-5.6-luna"
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
     tts_model: str = "eleven_v3"
-    video_duracao: int = 35
+    # Modelo de geração de imagem das figuras/gráficos/tabelas (figuras.py).
+    imagem_model: str = "gpt-image-2"
+    # Qualidade de renderização da imagem ("low" | "medium" | "high" | "auto").
+    # "medium" é o piso para figura com texto: em "low" o gpt-image-2 entrega
+    # rótulo borrado, e rótulo borrado num gráfico não vale o custo da chamada.
+    imagem_qualidade: str = "medium"
+    video_duracao: int = 60
+    # Velocidade da narração (e, por consequência, do ritmo do vídeo inteiro:
+    # os cortes, as legendas e as sobreposições saem do alinhamento, que é
+    # reescalado junto). O Short é ACELERADO — é o que o feed premia — e o
+    # formato longo roda em velocidade NORMAL, porque é análise e o espectador
+    # precisa acompanhar o raciocínio (ver ativar_formato_longo).
+    velocidade: float = 1.25
     janela_horas: int = 24
     num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
     num_noticias: int = 6  # quantas notícias buscar (Firecrawl news) p/ enriquecer
@@ -101,6 +174,9 @@ class Config:
     pool_extra_clipes: int = 3
     max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
     max_cartelas: int = 2  # cartelas de imagem sobrepostas por vídeo
+    # Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
+    # infográfico, diagrama ou cartaz do dado que a narração cita. 0 desliga.
+    max_figuras: int = 2
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
     youtube_refresh_token: str = ""
@@ -150,10 +226,13 @@ def carregar_config() -> Config:
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
         text_model=os.getenv("TEXT_MODEL", "gpt-5.6-luna"),
+        imagem_model=os.getenv("IMAGEM_MODEL", "gpt-image-2"),
+        imagem_qualidade=os.getenv("IMAGEM_QUALIDADE", "medium"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
-        video_duracao=int(os.getenv("VIDEO_DURACAO", "35")),
+        video_duracao=int(os.getenv("VIDEO_DURACAO", "60")),
+        velocidade=float(os.getenv("VIDEO_VELOCIDADE", "1.25")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
         num_noticias=int(os.getenv("NUM_NOTICIAS", "6")),
@@ -163,11 +242,13 @@ def carregar_config() -> Config:
         # os dois. Para ligar no curto, basta o .env.
         x_max_posts_video=int(os.getenv("X_MAX_POSTS_VIDEO", "0")),
         x_max_posts_busca=int(os.getenv("X_MAX_POSTS_BUSCA", "0")),
+        x_max_posts_timeline=int(os.getenv("X_MAX_POSTS_TIMELINE", "60")),
         max_posts_midia=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         max_urls_trend=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         pool_extra_clipes=int(os.getenv("POOL_EXTRA_CLIPES", "3")),
         max_fotos=int(os.getenv("MAX_FOTOS", "4")),
         max_cartelas=int(os.getenv("MAX_CARTELAS", "2")),
+        max_figuras=int(os.getenv("MAX_FIGURAS", "2")),
         youtube_client_id=os.getenv("YOUTUBE_CLIENT_ID", ""),
         youtube_client_secret=os.getenv("YOUTUBE_CLIENT_SECRET", ""),
         youtube_refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN", ""),
@@ -180,6 +261,11 @@ def carregar_config() -> Config:
     # tamanho do roteiro gerado.
     if not 15 <= cfg.video_duracao <= 180:
         raise SystemExit("VIDEO_DURACAO deve estar entre 15 e 180 segundos.")
+    if not 0.5 <= cfg.velocidade <= 2.0:
+        raise SystemExit(
+            "VIDEO_VELOCIDADE deve estar entre 0.5 e 2.0 (1.0 = velocidade "
+            f"normal; recebido: {cfg.velocidade})."
+        )
 
     cfg.output_dir.mkdir(exist_ok=True)
     return cfg
@@ -213,7 +299,14 @@ def ativar_formato_longo(cfg: Config) -> Config:
     cfg.num_noticias = int(os.getenv("LONG_NUM_NOTICIAS", str(LONGO_NUM_NOTICIAS)))
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
     cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))
+    cfg.max_figuras = int(os.getenv("LONG_MAX_FIGURAS", str(LONGO_MAX_FIGURAS)))
+    cfg.velocidade = float(os.getenv("LONG_VELOCIDADE", str(LONGO_VELOCIDADE)))
 
+    if not 0.5 <= cfg.velocidade <= 2.0:
+        raise SystemExit(
+            "LONG_VELOCIDADE deve estar entre 0.5 e 2.0 (1.0 = velocidade "
+            f"normal; recebido: {cfg.velocidade})."
+        )
     if not LONGO_MIN_S <= cfg.video_duracao <= LONGO_MAX_S:
         raise SystemExit(
             f"LONG_DURACAO deve estar entre {LONGO_MIN_S} e {LONGO_MAX_S} "

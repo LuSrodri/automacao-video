@@ -1,19 +1,30 @@
 """Coleta dos posts da lista fixa de contas do X e sumarização das trends via GPT.
 
 Usa a X API oficial v2 em modo pay-per-use (a mesma credencial do download de
-mídias em midia_x.py): coleta os posts das contas configuradas (CONTAS_PADRAO
-em config.py, ou X_ACCOUNTS no .env) na janela configurada via
-/2/tweets/search/recent. Como a leitura é cobrada por post (~US$ 0,005 cada),
-X_MAX_POSTS limita o total lido por execução.
+mídias em midia_x.py) e lê as contas configuradas (CONTAS_PADRAO em config.py,
+ou X_ACCOUNTS no .env) por DOIS caminhos complementares:
 
-Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes —
-notícias, lançamentos, novidades, curiosidades e tretas — no mesmo formato que
-o resto do pipeline já consome (trend, resumo, num_posts, engajamento,
+- /2/tweets/search/recent, por relevância (a coleta principal, mais uma
+  varredura opcional `has:videos` atrás de material de vídeo);
+- /2/users/:id/tweets, a TIMELINE de cada conta, cronológica. Ela existe porque
+  relevância no X é engajamento acumulado, e o post publicado há vinte minutos
+  — o vazamento, o comunicado, o número que acabou de sair — ainda não tem
+  engajamento nenhum. Custa uma requisição por conta, então roda sobre um
+  subconjunto rotativo por execução.
+
+Como a leitura é cobrada por post (~US$ 0,005 cada), X_MAX_POSTS,
+X_MAX_POSTS_VIDEO e X_MAX_POSTS_TIMELINE limitam cada caminho por execução.
+
+Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes,
+ordenadas pelo VALOR DA INFORMAÇÃO (vazamento, exclusivo, urgência, número
+inédito) antes do engajamento, no formato que o resto do pipeline consome
+(trend, resumo, num_posts, valor_informativo, urgencia, engajamento,
 sentimento, apelo_visual, posts, data).
 """
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 from openai import OpenAI
@@ -22,14 +33,31 @@ from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
 
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
+USERS_ENDPOINT = "https://api.x.com/2/users/by"
+# Timeline de posts de uma conta. Aceita OAuth 2.0 App-Only (o mesmo bearer da
+# busca), devolve em ordem CRONOLÓGICA REVERSA e aceita start_time — por isso
+# ela enxerga o post recém-publicado que a busca por relevância ainda não
+# ranqueou. `/2/users/:id/timelines/reverse_chronological` NÃO serve aqui:
+# exige contexto de usuário (OAuth 1.0a / PKCE), que o pipeline não tem.
+TIMELINE_ENDPOINT = "https://api.x.com/2/users/{id}/tweets"
 
 MAX_QUERY = 512  # limite de caracteres da query do search/recent
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
+MIN_RESULTS_TIMELINE = 5  # mínimo aceito por max_results em /2/users/:id/tweets
 
 # Estado da rotação de lotes entre execuções: quando X_MAX_POSTS não cobre
 # todas as consultas, as execuções avançam um cursor circular em vez de
 # sortear — sorteio deixava contas dias sem serem lidas no azar.
 ESTADO_ROTACAO = RAIZ / ".rotacao_lotes"
+# Mesmo mecanismo para a leitura de timelines, que é UMA requisição por conta:
+# o orçamento cobre só um punhado de contas por execução, e o cursor garante
+# que ao longo do dia todas passem pela vez delas.
+ESTADO_ROTACAO_TIMELINE = RAIZ / ".rotacao_timeline"
+# Cache dos IDs numéricos das contas (a timeline é por ID, não por @). A lista
+# de contas quase não muda; sem cache seriam 2 requisições extras por execução
+# só para reconverter os mesmos nomes.
+CACHE_IDS = RAIZ / ".contas_ids.json"
+CACHE_IDS_DIAS = 30
 
 
 def obter_bearer(cfg: Config) -> str | None:
@@ -72,25 +100,65 @@ def _lotes_de_query(contas: list[str]) -> list[str]:
     return lotes
 
 
-def _rotacionar_lotes(lotes: list[str], max_lotes: int) -> list[str]:
-    """Seleciona `max_lotes` consultas avançando um cursor circular persistido.
+def _rotacionar(itens: list, quantidade: int, estado: Path) -> list:
+    """Seleciona `quantidade` itens avançando um cursor circular persistido.
 
     Garante que todas as contas sejam lidas ao longo das execuções (o sorteio
-    anterior podia deixar as mesmas contas dias sem coleta).
+    anterior podia deixar as mesmas contas dias sem coleta). Serve tanto para os
+    lotes da busca quanto para as contas da leitura de timeline.
     """
+    if not itens:
+        return []
     try:
-        inicio = int(ESTADO_ROTACAO.read_text(encoding="utf-8").strip())
+        inicio = int(estado.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         inicio = 0
-    inicio %= len(lotes)
-    escolhidos = [lotes[(inicio + k) % len(lotes)] for k in range(max_lotes)]
+    inicio %= len(itens)
+    escolhidos = [itens[(inicio + k) % len(itens)] for k in range(quantidade)]
     try:
-        ESTADO_ROTACAO.write_text(
-            str((inicio + max_lotes) % len(lotes)), encoding="utf-8"
-        )
+        estado.write_text(str((inicio + quantidade) % len(itens)), encoding="utf-8")
     except OSError as erro:
-        print(f"[aviso] Não consegui salvar o estado da rotação de lotes: {erro}")
+        print(f"[aviso] Não consegui salvar o estado da rotação ({estado.name}): {erro}")
     return escolhidos
+
+
+def _normalizar_posts(dados: dict, usuario_padrao: str = "") -> list[dict]:
+    """Converte a resposta da X API (busca ou timeline) em posts do pipeline.
+
+    `usuario_padrao` é usado pela TIMELINE, onde todos os posts são da mesma
+    conta e a resposta não precisa (nem traz) a expansão de autor.
+    """
+    includes = dados.get("includes") or {}
+    autores = {u["id"]: u["username"] for u in includes.get("users") or []}
+    # Tipo de cada mídia anexada: o formato do vídeo é montado SÓ com clipes
+    # dos posts, então saber quem tem vídeo nativo orienta a curadoria e a
+    # seleção (mesma chamada, nenhum custo extra).
+    tipo_midia = {
+        m.get("media_key"): m.get("type") for m in includes.get("media") or []
+    }
+
+    posts = []
+    for post in dados.get("data") or []:
+        metricas = post.get("public_metrics") or {}
+        usuario = autores.get(post.get("author_id"), "") or usuario_padrao
+        chaves = (post.get("attachments") or {}).get("media_keys") or []
+        tem_video = any(
+            tipo_midia.get(c) in ("video", "animated_gif") for c in chaves
+        )
+        posts.append(
+            {
+                "url": f"https://x.com/{usuario}/status/{post['id']}",
+                "usuario": usuario,
+                "texto": post.get("text", ""),
+                "data": (post.get("created_at") or "")[:16].replace("T", " "),
+                "likes": metricas.get("like_count", 0),
+                "reposts": metricas.get("retweet_count", 0)
+                + metricas.get("quote_count", 0),
+                "respostas": metricas.get("reply_count", 0),
+                "video": tem_video,
+            }
+        )
+    return posts
 
 
 def _consultar(
@@ -119,37 +187,115 @@ def _consultar(
     except requests.RequestException as erro:
         print(f"[aviso] X API: consulta de posts falhou ({erro}); lote pulado")
         return []
+    return _normalizar_posts(dados)
 
-    includes = dados.get("includes") or {}
-    autores = {u["id"]: u["username"] for u in includes.get("users") or []}
-    # Tipo de cada mídia anexada: o formato do vídeo é montado SÓ com clipes
-    # dos posts, então saber quem tem vídeo nativo orienta a curadoria e a
-    # seleção (mesma chamada, nenhum custo extra).
-    tipo_midia = {
-        m.get("media_key"): m.get("type") for m in includes.get("media") or []
-    }
 
-    posts = []
-    for post in dados.get("data") or []:
-        metricas = post.get("public_metrics") or {}
-        usuario = autores.get(post.get("author_id"), "")
-        chaves = (post.get("attachments") or {}).get("media_keys") or []
-        tem_video = any(
-            tipo_midia.get(c) in ("video", "animated_gif") for c in chaves
-        )
-        posts.append(
-            {
-                "url": f"https://x.com/{usuario}/status/{post['id']}",
-                "usuario": usuario,
-                "texto": post.get("text", ""),
-                "data": (post.get("created_at") or "")[:16].replace("T", " "),
-                "likes": metricas.get("like_count", 0),
-                "reposts": metricas.get("retweet_count", 0)
-                + metricas.get("quote_count", 0),
-                "respostas": metricas.get("reply_count", 0),
-                "video": tem_video,
-            }
-        )
+# ---- Timeline das contas (/2/users/:id/tweets) ------------------------------
+
+
+def _ids_das_contas(token: str, contas: list[str]) -> dict[str, str]:
+    """Mapa @conta -> id numérico, com cache local de CACHE_IDS_DIAS dias.
+
+    A timeline é endereçada por ID; a lista de contas quase não muda, então
+    reconverter os mesmos nomes a cada execução seria requisição jogada fora.
+    Contas novas (ainda fora do cache) são resolvidas em lotes de 100.
+    """
+    cache: dict[str, str] = {}
+    try:
+        bruto = json.loads(CACHE_IDS.read_text(encoding="utf-8"))
+        gravado = datetime.fromisoformat(bruto["data"])
+        if datetime.now(timezone.utc) - gravado < timedelta(days=CACHE_IDS_DIAS):
+            cache = dict(bruto.get("ids") or {})
+    except (OSError, ValueError, KeyError, TypeError):
+        cache = {}
+
+    faltando = [c for c in contas if c.lower() not in cache]
+    for k in range(0, len(faltando), 100):
+        lote = faltando[k : k + 100]
+        try:
+            dados = _get(
+                token,
+                USERS_ENDPOINT,
+                {"usernames": ",".join(lote), "user.fields": "username"},
+            )
+        except requests.RequestException as erro:
+            print(f"[aviso] X API: lookup de contas falhou ({erro}); lote pulado")
+            continue
+        for u in dados.get("data") or []:
+            cache[u["username"].lower()] = u["id"]
+        for e in dados.get("errors") or []:
+            print(f"[aviso] Conta não resolvida no X: {e.get('value', '?')}")
+
+    if faltando:
+        try:
+            CACHE_IDS.write_text(
+                json.dumps(
+                    {"data": datetime.now(timezone.utc).isoformat(), "ids": cache},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as erro:
+            print(f"[aviso] Não consegui salvar o cache de IDs das contas: {erro}")
+
+    return {c: cache[c.lower()] for c in contas if c.lower() in cache}
+
+
+def _coletar_timelines(cfg: Config, token: str, contas: list[str]) -> list[dict]:
+    """Posts recentes lidos direto da TIMELINE de um subconjunto das contas.
+
+    Por que existe, além da busca: `search/recent` ordena por RELEVÂNCIA, e
+    relevância no X é engajamento acumulado. O post publicado há vinte minutos
+    — o vazamento, o comunicado, o número que acabou de sair — ainda não tem
+    engajamento nenhum e por isso é justamente o que a busca deixa de fora. A
+    timeline é cronológica e não faz esse juízo: ela devolve o que a conta
+    publicou, na ordem em que publicou.
+
+    O custo é uma requisição POR CONTA, então o orçamento
+    (X_MAX_POSTS_TIMELINE) é dividido em `posts por conta` e cobre só um
+    punhado de contas por execução — um cursor circular persistido faz o rodízio
+    entre execuções, como nos lotes da busca. X_MAX_POSTS_TIMELINE=0 desliga.
+    """
+    orcamento = getattr(cfg, "x_max_posts_timeline", 0) or 0
+    if orcamento <= 0:
+        return []
+
+    ids = _ids_das_contas(token, contas)
+    if not ids:
+        print("[aviso] Nenhum ID de conta resolvido; leitura de timelines pulada.")
+        return []
+
+    quantas = max(1, orcamento // MIN_RESULTS_TIMELINE)
+    escolhidas = _rotacionar(
+        sorted(ids), min(quantas, len(ids)), ESTADO_ROTACAO_TIMELINE
+    )
+    por_conta = min(max(orcamento // max(len(escolhidas), 1), MIN_RESULTS_TIMELINE), 100)
+    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
+
+    print(
+        f"[x] Lendo a timeline de {len(escolhidas)} conta(s) "
+        f"({por_conta} posts cada, cronológico): "
+        + ", ".join(f"@{c}" for c in escolhidas)
+    )
+    posts: list[dict] = []
+    for conta in escolhidas:
+        try:
+            dados = _get(
+                token,
+                TIMELINE_ENDPOINT.format(id=ids[conta]),
+                {
+                    "max_results": por_conta,
+                    "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "exclude": "retweets,replies",
+                    "tweet.fields": "created_at,public_metrics,text",
+                    "expansions": "attachments.media_keys",
+                    "media.fields": "type",
+                },
+            )
+        except requests.RequestException as erro:
+            print(f"[aviso] Timeline de @{conta} falhou ({erro}); conta pulada")
+            continue
+        posts += _normalizar_posts(dados, usuario_padrao=conta)
     return posts
 
 
@@ -160,14 +306,16 @@ def _por_engajamento(post: dict) -> int:
 def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
     """Posts das contas na janela, limitados a cfg.x_max_posts (leitura é paga).
 
-    Duas passadas sobre os mesmos lotes de contas. A primeira é a coleta
-    normal, por relevância. A segunda repete as consultas com `has:videos` e
-    existe porque a primeira NÃO prefere vídeo: post com clipe disputa as vagas
-    do teto em pé de igualdade com texto, e as contas do canal postam muito
-    mais texto — o material que o formato precisa era o que mais perdia vaga.
-    A varredura é o mesmo conjunto de contas (nenhuma fonte nova entra por
-    aqui), custa `x_max_posts_video` leituras a mais e pode ser desligada com
-    X_MAX_POSTS_VIDEO=0.
+    Três passadas sobre as MESMAS contas — nenhuma fonte nova entra aqui:
+
+    1. Busca por RELEVÂNCIA (`search/recent`): a coleta principal.
+    2. Varredura `has:videos`: a passada 1 não prefere vídeo, então post com
+       clipe disputava vaga em pé de igualdade com texto e o material que a
+       montagem precisa era o que mais perdia. Desliga com X_MAX_POSTS_VIDEO=0.
+    3. TIMELINE de um subconjunto rotativo das contas (`/2/users/:id/tweets`):
+       cronológica, pega o que acabou de ser publicado e ainda não acumulou
+       engajamento — o vazamento e o comunicado quente que a relevância
+       enterra. Desliga com X_MAX_POSTS_TIMELINE=0.
     """
     inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
     lotes = _lotes_de_query(contas)
@@ -183,7 +331,7 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
             f"X_MAX_POSTS={cfg.x_max_posts} só cobre {max_lotes}; rotacionando "
             "quais contas entram hoje (aumente X_MAX_POSTS para cobrir todas)"
         )
-        lotes = _rotacionar_lotes(lotes, max_lotes)
+        lotes = _rotacionar(lotes, max_lotes, ESTADO_ROTACAO)
     por_lote = min(max(cfg.x_max_posts // len(lotes), 10), 100)
 
     posts: list[dict] = []
@@ -215,6 +363,16 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
                 "clipe que a coleta por relevância havia deixado de fora."
             )
         posts += novos
+
+    # Timeline cronológica: o post fresco que a relevância ainda não viu.
+    vistos = {p["url"] for p in posts}
+    frescos = [p for p in _coletar_timelines(cfg, token, contas) if p["url"] not in vistos]
+    if frescos:
+        print(
+            f"[x] Timelines trouxeram {len(frescos)} post(s) recentes que a "
+            "busca por relevância não havia devolvido."
+        )
+        posts += frescos
 
     return posts
 
@@ -281,18 +439,36 @@ def _listar_posts(posts: list[dict]) -> str:
 
 
 INSTRUCOES_RESUMO = """\
-Você é curador de um canal de vídeos sobre geopolítica, inteligência
-(espionagem, defesa, OSINT), inteligência artificial e tecnologia. O canal
-trata cada pauta em formato EXPLICATIVO — análise ou educacional: o vídeo
-explica o que aconteceu e por que importa.
+Você é curador de um canal de vídeos de ANÁLISE sobre TECNOLOGIA, INTELIGÊNCIA
+ARTIFICIAL, MERCADO DE TRABALHO e MERCADO FINANCEIRO. O canal trata cada pauta
+em formato EXPLICATIVO — análise ou educacional: o vídeo explica o que
+aconteceu, como funciona e por que importa.
+
+FORA DE ESCOPO: guerra, conflito armado, geopolítica militar, inteligência,
+espionagem e defesa. Esses assuntos NÃO viram trend deste canal, nem quando
+dominam a conversa. Se um post falar de guerra ou de política externa, só
+aproveite o ângulo de tecnologia, empresa, emprego ou mercado que houver nele —
+e, se não houver, ignore o post.
 
 Você recebe os posts publicados nas últimas {horas} horas pelas contas que o
 canal acompanha no X, com autor, data, métricas de engajamento e texto.
-Agrupe-os nas ATÉ {n} TRENDS mais quentes: notícias, anúncios e
-lançamentos, novidades, curiosidades, tretas/polêmicas, rumores, quedas de
-serviço, demissões/contratações e viradas que estão dominando a conversa.
-Ordene da mais quente para a menos quente, pesando engajamento (likes, reposts,
-respostas) e quantos posts falam do mesmo assunto.
+Agrupe-os nas ATÉ {n} TRENDS mais quentes: anúncios e lançamentos, resultados,
+números divulgados, mudanças de preço, demissões e contratações, aquisições,
+regulação, quedas de serviço, pesquisas, rumores e disputas.
+
+ORDENE PELO VALOR DA INFORMAÇÃO, não pelo barulho. Sobem para o topo:
+1. VAZAMENTO, documento interno, memorando, print de comunicado, benchmark ou
+   número que ainda não estava público;
+2. EXCLUSIVO ou primeira mão — a conta é a FONTE do fato, não quem comenta o
+   fato dos outros;
+3. URGÊNCIA: acabou de acontecer, está acontecendo agora ou tem prazo curto
+   (corte que começa amanhã, decisão marcada, oferta que expira);
+4. NÚMERO CONCRETO E VERIFICÁVEL: dinheiro, vagas, preço, porcentagem, prazo;
+5. CONSEQUÊNCIA DIRETA para quem trabalha ou investe.
+Descem para o fim: opinião sem fato novo, previsão genérica, thread
+motivacional, recorte de notícia velha e "alguém disse que acha que".
+Engajamento (likes, reposts, respostas) e volume de posts continuam pesando —
+mas como desempate, DEPOIS do valor da informação.
 
 Cada trend deve ser um ACONTECIMENTO específico e datado — quem fez o quê, com
 número quando houver — NUNCA um tema guarda-chuva. "Oracle corta 21.000 vagas e
@@ -305,6 +481,13 @@ Regras dos campos:
   apareceram nos posts. Reproduza com fidelidade, sem inventar nada.
 - "num_posts": quantos dos posts listados acima falam deste assunto (conte
   TODOS os que pertencem à trend, mesmo os que não entrarem em "posts").
+- "valor_informativo": UMA frase dizendo o que esta trend entrega de
+  informação que ainda não é conhecimento comum — o vazamento, o documento, o
+  exclusivo, o número inédito, o prazo que aperta. Se o assunto for só
+  repercussão de algo que todo mundo já sabe, diga isso com essas palavras
+  ("apenas repercussão, sem fato novo").
+- "urgencia": "agora" (está acontecendo ou saiu nas últimas horas), "hoje"
+  (fato do dia, ainda quente) ou "morno" (já circulou, sem prazo apertando).
 - "engajamento": uma frase sobre o quão quente está (some as métricas dos posts
   do assunto e cite quem está falando).
 - "sentimento": a EMOÇÃO dominante nos posts (indignação, medo, deboche,
@@ -344,6 +527,18 @@ ESQUEMA_TRENDS = {
                         "trend": {"type": "string"},
                         "resumo": {"type": "string"},
                         "num_posts": {"type": "integer"},
+                        "valor_informativo": {
+                            "type": "string",
+                            "description": (
+                                "O que esta trend entrega que ainda não é "
+                                "conhecimento comum (vazamento, documento, "
+                                "exclusivo, número inédito, prazo curto)."
+                            ),
+                        },
+                        "urgencia": {
+                            "type": "string",
+                            "enum": ["agora", "hoje", "morno"],
+                        },
                         "engajamento": {"type": "string"},
                         "sentimento": {"type": "string"},
                         "apelo_visual": {"type": "string"},
@@ -362,6 +557,8 @@ ESQUEMA_TRENDS = {
                         "trend",
                         "resumo",
                         "num_posts",
+                        "valor_informativo",
+                        "urgencia",
                         "engajamento",
                         "sentimento",
                         "apelo_visual",
@@ -474,6 +671,8 @@ def coletar_trends(cfg: Config) -> list[dict]:
                 "trend": t.get("trend", "").strip(),
                 "resumo": t.get("resumo", "").strip(),
                 "num_posts": max(int(t.get("num_posts") or 0), len(urls)),
+                "valor_informativo": t.get("valor_informativo", "").strip(),
+                "urgencia": (t.get("urgencia") or "morno").strip().lower(),
                 "engajamento": t.get("engajamento", "").strip(),
                 "sentimento": t.get("sentimento", "").strip(),
                 "apelo_visual": t.get("apelo_visual", "").strip(),

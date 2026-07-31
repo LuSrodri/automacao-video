@@ -12,14 +12,17 @@ from .config import Config
 
 API_BASE = "https://api.elevenlabs.io/v1"
 
-# A narração é acelerada para ficar mais dinâmica; os timestamps do alinhamento
-# são reescalados na mesma proporção para as legendas/imagens seguirem em sincronia.
-VELOCIDADE = 1.1
+# Velocidade da narração: quem manda é `cfg.velocidade` (VIDEO_VELOCIDADE para
+# o Short, LONG_VELOCIDADE para o formato longo). O Short é ACELERADO — ritmo
+# rápido é o que segura o feed — e o formato longo roda em 1.0, velocidade
+# normal, porque análise em fala apressada não é acompanhável. Os timestamps do
+# alinhamento são reescalados na mesma proporção, então cortes, legendas,
+# infográficos, cartelas e figuras seguem sincronizados sem saber disso.
 
 
 def _acelerar_audio(audio: Path, fator: float) -> bool:
     """Acelera o MP3 em `fator` (atempo) no lugar. Devolve True se funcionou."""
-    if fator == 1.0:
+    if abs(fator - 1.0) < 0.01:
         return False
     if shutil.which("ffmpeg") is None:
         print("[audio] ffmpeg ausente; narração não foi acelerada.")
@@ -88,9 +91,12 @@ def gerar_narracao(cfg: Config, texto: str, destino: Path) -> tuple[Path, dict]:
     if not alinhamento:
         print("[aviso] ElevenLabs não retornou alinhamento; legendas serão estimadas.")
 
-    if _acelerar_audio(destino, VELOCIDADE):
-        alinhamento = _reescalar_alinhamento(alinhamento, VELOCIDADE)
-        print(f"[audio] Narração acelerada em {VELOCIDADE}x.")
+    velocidade = getattr(cfg, "velocidade", 1.0) or 1.0
+    if _acelerar_audio(destino, velocidade):
+        alinhamento = _reescalar_alinhamento(alinhamento, velocidade)
+        print(f"[audio] Narração acelerada em {velocidade}x.")
+    else:
+        print("[audio] Narração em velocidade normal (1.0x).")
 
     (destino.parent / "alinhamento.json").write_text(
         json.dumps(alinhamento, ensure_ascii=False), encoding="utf-8"

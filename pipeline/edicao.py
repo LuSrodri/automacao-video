@@ -6,7 +6,8 @@ PRÓPRIO clipe daquele trecho, ampliado para cobrir a tela toda e BORRADO; por
 cima entra o clipe nítido em largura total, centrado. Os clipes cobrem 100% da
 narração — nunca há um instante sem imagem na tela — com um crossfade curto e
 limpo entre si (corte editorial, sem deslizes). A narração TTS (sem silêncios)
-é a trilha, e o crédito de reprodução ("Reprodução Imagem: X" + "Conta
+é a única faixa contínua — o vídeo NÃO tem música de fundo (removida em
+2026-07-30) —, e o crédito de reprodução ("Reprodução Imagem: X" + "Conta
 @usuario" do post de origem) fica no canto superior direito enquanto o clipe
 daquela conta está na tela.
 
@@ -55,13 +56,11 @@ ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça o clipe nítido)
 WOOSH = RAIZ / "assets" / "woosh.mp3"
 WOOSH_VOL = 0.5  # volume do efeito relativo à narração
 
-# Trilha musical de fundo: assets/trilha.mp3 entra em loop sob a narração em
-# volume baixo — alavanca de retenção clássica de Shorts. A faixa padrão é
-# "Tension Documentary" (AtlasAudio, Pixabay — licença Pixabay: uso comercial
-# livre, sem atribuição), normalizada para -16 LUFS; qualquer .mp3 no mesmo
-# caminho a substitui. Sem o arquivo, o vídeo sai só com narração + wooshes.
-TRILHA = RAIZ / "assets" / "trilha.mp3"
-TRILHA_VOL = 0.12  # ~-18 dB sob a narração (a trilha já vem normalizada)
+# TRILHA MUSICAL REMOVIDA em 2026-07-30 (pedido do usuário). O vídeo sai só com
+# a narração e os wooshes das transições: o formato virou análise/educacional e
+# música de fundo disputa atenção com a informação falada. O arquivo
+# assets/trilha.mp3 foi apagado do repositório junto com este código — não
+# reintroduzir mixagem de música sem pedido explícito.
 
 # Crédito de reprodução no canto superior direito, por clipe: linha 1 fixa
 # ("Reprodução Imagem: X") e linha 2 com a conta do post de origem. Estética
@@ -245,6 +244,7 @@ def montar_video(
     legendas: Path | None = None,
     graficos: list[dict] | None = None,
     cartelas: list[dict] | None = None,
+    figuras: list[dict] | None = None,
     publico: str = "brasil",
     formato: str = "curto",
 ) -> Path:
@@ -271,6 +271,11 @@ def montar_video(
     crédito, então NÃO desligam o crédito de reprodução do topo; entram abaixo
     dos infográficos na pilha (as janelas nunca coincidem, por construção).
 
+    `figuras`: gráficos, tabelas e cartazes gerados por IA (figuras.py), no
+    mesmo formato das cartelas — sobem de baixo do quadro e saem por cima. São
+    tratadas exatamente como cartelas na montagem (mesma camada, mesmo borrão
+    do que está atrás); a diferença está na origem da imagem, não no ffmpeg.
+
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
 
     `formato`: "curto" (Shorts 9:16, com legendas queimadas) ou "longo"
@@ -287,7 +292,12 @@ def montar_video(
 
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
     graficos = graficos or []
-    cartelas = cartelas or []
+    # Cartelas e figuras compartilham a camada: as duas são sequências de PNG
+    # RGBA no miolo da tela, com o mesmo borrão por trás. Ordenadas pelo início
+    # para o log e a pilha ficarem previsíveis.
+    cartelas = sorted(
+        (cartelas or []) + (figuras or []), key=lambda c: float(c["inicio_s"])
+    )
 
     # Cenário de sala com TV: identidade visual do formato longo. O clipe passa
     # a ser escalado para o retângulo da TELA e o PNG da sala entra por cima,
@@ -533,14 +543,13 @@ def montar_video(
         )
         corrente = f"vgfx{j}"
 
-    # Áudio: narração + woosh em cada transição de clipe + trilha de fundo
-    # opcional. O primeiro clipe não tem transição de entrada.
+    # Áudio: narração + woosh em cada transição de clipe. SEM música de fundo
+    # (removida em 2026-07-30). O primeiro clipe não tem transição de entrada.
     mapa_audio = "1:a"
     transicoes = [ini for _, (ini, _) in pares[1:]]
     usar_woosh = WOOSH.is_file() and bool(transicoes)
-    usar_trilha = TRILHA.is_file()
     entradas_mix: list[str] = []
-    if usar_woosh or usar_trilha:
+    if usar_woosh:
         filtros.append(
             "[1:a]aformat=channel_layouts=stereo:sample_rates=44100[narr]"
         )
@@ -560,16 +569,6 @@ def montar_video(
                 f"volume={WOOSH_VOL}[wd{k}]"
             )
             entradas_mix.append(f"[wd{k}]")
-    if usar_trilha:
-        idx_trilha = prox_entrada
-        prox_entrada += 1
-        comando += ["-stream_loop", "-1", "-t", f"{duracao:.2f}", "-i", str(TRILHA)]
-        filtros.append(
-            f"[{idx_trilha}:a]aformat=channel_layouts=stereo:sample_rates=44100,"
-            f"volume={TRILHA_VOL},"
-            f"afade=t=out:st={max(0.0, duracao - 0.5):.2f}:d=0.5[trilha]"
-        )
-        entradas_mix.append("[trilha]")
     if entradas_mix:
         filtros.append(
             f"[narr]{''.join(entradas_mix)}amix=inputs={len(entradas_mix) + 1}"

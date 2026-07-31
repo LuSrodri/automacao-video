@@ -7,9 +7,9 @@ sem pesos nem filtro editorial, nenhuma candidata é rejeitada aqui. O que
 sobrou desta etapa é a anotação que a seleção ainda precisa:
 
 - macrotema: rotula a candidata para a seleção poder ler a régua de audiência
-  por TEMA e não vídeo a vídeo ("os 'guerra' fazem 15 mil views, os 'tech'
-  fazem 200" — ver escritor.py). Já alimentou um teto de macrotemas seguidos,
-  removido em 2026-07-28;
+  por TEMA e não vídeo a vídeo ("os 'mercado-trabalho' fazem 15 mil views, os
+  'dev-software' fazem 200" — ver escritor.py). Já alimentou um teto de
+  macrotemas seguidos, removido em 2026-07-28;
 - imagem_mental: o que a pessoa visualiza ao ouvir a notícia; é a matéria-prima
   do HOOK na hora do roteiro.
 
@@ -26,13 +26,17 @@ from .config import AVISO_DADOS_EXTERNOS, Config
 # Macrotemas do canal: a seleção em escritor.py impede que o mesmo macrotema
 # emende mais vídeos seguidos que o teto configurado lá, garantindo um mínimo
 # de variabilidade sem impor preferência editorial.
+# Macrotemas do canal. "guerra-geopolitica" saiu em 2026-07-30 junto com as
+# contas de inteligência/defesa: o canal deixou de cobrir o assunto, e manter o
+# rótulo só serviria para rotular como "outro" disfarçado o que já não é pauta.
+# "mercado-financeiro" entrou no lugar, com o novo foco do canal.
 MACROTEMAS = [
     "ia",
     "dev-software",
     "hardware-chips",
     "bigtech-negocios",
-    "mercado-trabalho-ti",
-    "guerra-geopolitica",
+    "mercado-trabalho",
+    "mercado-financeiro",
     "ciencia-espaco",
     "outro",
 ]
@@ -42,16 +46,16 @@ MACROTEMAS_DESCRICAO = """\
 - dev-software: desenvolvimento de software, linguagens, frameworks, ferramentas
 - hardware-chips: chips, GPUs, dispositivos, robôs, data centers
 - bigtech-negocios: negócios, aquisições, disputas e resultados das big techs
-- mercado-trabalho-ti: empregos, demissões, salários e carreira em tecnologia
-- guerra-geopolitica: guerra, conflito militar, geopolítica, inteligência,
-  espionagem, defesa
+- mercado-trabalho: empregos, demissões, contratações, salários e carreira
+- mercado-financeiro: bolsa, juros, inflação, resultados, investimento,
+  regulação financeira, cripto
 - ciencia-espaco: ciência, espaço, energia
 - outro: o que não couber acima\
 """
 
 INSTRUCOES_CLASSIFICACAO = """\
-Você anota notícias candidatas a vídeo de um canal de notícias quentes (geopolítica, inteligência, IA, tecnologia, negócios e o que
-mais estiver dominando a conversa).
+Você anota notícias candidatas a vídeo de um canal de análise sobre
+tecnologia, inteligência artificial, mercado de trabalho e mercado financeiro.
 
 Para CADA notícia, preencha:
 - "macrotema": UM macrotema da lista:

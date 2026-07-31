@@ -18,6 +18,10 @@ estruturada, veto duro em material de emissora e nota de pertinência. Sem isso
 a cartela reintroduziria pela lateral exatamente o problema que a auditoria
 existe para resolver.
 
+Movimento: a cartela SOBE de baixo do quadro até a posição de leitura e SAI
+POR CIMA do quadro — o mesmo movimento das figuras geradas (figuras.py), para
+as duas camadas parecerem a mesma coisa na tela.
+
 Etapa opcional: qualquer falha (rede, GPT, Pillow, citação não encontrada) só
 deixa o vídeo sem cartelas — nunca derruba o pipeline.
 """
@@ -44,9 +48,12 @@ GAP_CARTELAS = 1.2  # s; respiro mínimo entre cartelas e para os infográficos
 # O gancho é o que decide o swipe: os primeiros segundos ficam com o clipe
 # limpo, sem nada sobreposto.
 INICIO_MINIMO = 3.0
-T_ENTRADA = 0.35  # s; entrada com escala 92% -> 100% e fade
-T_SAIDA = 0.30  # s; fade de saída
-ESCALA_INICIAL = 0.92
+# Movimento (2026-07-30, pedido do usuário): a cartela SOBE de baixo do quadro
+# até a posição de leitura e SAI POR CIMA do quadro — uma travessia de baixo
+# para cima ao longo da vida dela, igual às figuras geradas (figuras.py). O
+# "carimbo" antigo (escala 92% -> 100% com fade) foi substituído por este.
+T_ENTRADA = 0.50  # s; sobe de fora da tela até a posição de leitura
+T_SAIDA = 0.45  # s; continua subindo até sumir acima do quadro
 
 MAX_NOTICIAS_IMAGEM = 3  # páginas de notícia consultadas por og:image
 # Teto de imagens que chegam à visão do GPT: cada uma é uma chamada paga, e
@@ -275,6 +282,11 @@ def _ease_out(u: float) -> float:
     return 1 - (1 - u) ** 3
 
 
+def _ease_in(u: float) -> float:
+    u = min(max(u, 0.0), 1.0)
+    return u**3
+
+
 def _texto_credito(m: dict, publico: str) -> str:
     prefixo = "Image Credit" if publico == "usa" else "Reprodução"
     if m.get("origem") == "noticia":
@@ -350,43 +362,38 @@ def _montar_cartao(m: dict, largura: int, altura: int, publico: str):
 def _renderizar_frames(
     m: dict, destino: Path, largura: int, altura: int, dur: float, publico: str
 ) -> int:
-    """Gera os PNGs RGBA da cartela; devolve o número de frames."""
+    """Gera os PNGs RGBA da cartela; devolve o número de frames.
+
+    O movimento entra por baixo e sai por cima: a cartela sobe de FORA DO
+    QUADRO até a posição de leitura, fica parada enquanto é lida e continua
+    subindo até sumir acima do quadro.
+    """
     from PIL import Image
 
     destino.mkdir(parents=True, exist_ok=True)
     cartao = _montar_cartao(m, largura, altura, publico)
     # Vertical: acima da faixa das legendas queimadas. 16:9 (sem legendas):
     # centro da tela.
-    cy = round(altura * 0.44) if altura > largura else altura // 2
+    cy_final = round(altura * 0.44) if altura > largura else altura // 2
     cx = largura // 2
+    cy_baixo = altura + cartao.height // 2
+    cy_cima = -cartao.height // 2
     nframes = max(1, round(dur * FPS))
 
     for f in range(nframes):
         t = f / FPS
-        p = _ease_out(t / T_ENTRADA)
-        escala = ESCALA_INICIAL + (1 - ESCALA_INICIAL) * p
-        alfa = p
-        if t > dur - T_SAIDA:
-            alfa = min(alfa, max(0.0, (dur - t) / T_SAIDA))
-
-        atual = cartao
-        if escala < 0.999:
-            atual = cartao.resize(
-                (
-                    max(1, round(cartao.width * escala)),
-                    max(1, round(cartao.height * escala)),
-                ),
-                Image.LANCZOS,
+        if t < T_ENTRADA:
+            cy = cy_baixo + (cy_final - cy_baixo) * _ease_out(t / T_ENTRADA)
+        elif t > dur - T_SAIDA:
+            cy = cy_final + (cy_cima - cy_final) * _ease_in(
+                (t - (dur - T_SAIDA)) / T_SAIDA
             )
-        if alfa < 0.999:
-            atual = atual.copy()
-            atual.putalpha(
-                atual.getchannel("A").point(lambda v: int(v * max(alfa, 0.0)))
-            )
+        else:
+            cy = cy_final
 
         quadro = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
         quadro.alpha_composite(
-            atual, (cx - atual.width // 2, cy - atual.height // 2)
+            cartao, (cx - cartao.width // 2, round(cy) - cartao.height // 2)
         )
         quadro.save(destino / f"f_{f + 1:04d}.png")
     return nframes

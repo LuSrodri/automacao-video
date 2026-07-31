@@ -21,7 +21,9 @@ Duas etapas:
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
    roteiro em enquadramento de ANÁLISE/EDUCACIONAL (formato explicativo), em
    tom adulto e inteligente (ritmo de fala natural, vocabulário preciso de
-   telejornal, estrutura HOOK → FATO → IMPLICAÇÃO → CORTE em loop), SEMPRE
+   telejornal, estrutura PERGUNTA ESQUISITA → CONTEXTUALIZAÇÃO →
+   DESENVOLVIMENTO → CONSEQUÊNCIA → CONCLUSÃO, com a conclusão respondendo a
+   pergunta de um jeito que emenda de volta nela no reinício — o loop), SEMPRE
    citando as fontes (contas do X e veículos das notícias do Firecrawl),
    dentro de uma FAIXA dura de palavras (piso e teto derivados de
    VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
@@ -34,11 +36,11 @@ Duas etapas:
 
 FORMATO LONGO (`--long-take`, cfg.formato == "longo"): as duas etapas trocam
 de prompt e de esquema, mantendo a mesma mecânica. A seleção passa a exigir
-pauta que renda análise das quatro óticas (geopolítica, tecnologia/IA,
-negócios, mercado de trabalho) com payload para quem procura emprego, e
-prefere trends com mais posts com clipe; o roteiro segue a estrutura em cinco
-blocos (abertura, o que aconteceu, as quatro óticas, o que muda para quem
-trabalha, síntese + o que observar), sem loop e sem CTA, dentro da faixa dura
+pauta que renda análise das quatro óticas (tecnologia/IA, negócios, mercado de
+trabalho, mercado financeiro) com payload para quem procura emprego, e
+prefere trends com mais posts com clipe; o roteiro segue a mesma estrutura em
+cinco blocos do Short (pergunta esquisita, contextualização, desenvolvimento,
+consequência, conclusão), sem loop e sem CTA, dentro da faixa dura
 de 90 a 120 segundos; e a auditoria ganha regras próprias (fontes nominais,
 payload de carreira, as quatro óticas, nada dependendo de texto na tela). A
 regra dura (veto a repetição) compara só com os vídeos
@@ -61,10 +63,14 @@ from .config import (
     Config,
 )
 
-# Ritmo real médio da narração do ElevenLabs (medido nas narrações do canal:
-# ~2,1 a 2,5 palavras faladas por segundo, já sem os silêncios). Converte a
-# duração-alvo do .env (VIDEO_DURACAO) no teto de palavras do roteiro.
-PALAVRAS_POR_SEGUNDO = 2.3
+# Ritmo real médio da narração do ElevenLabs a VELOCIDADE NORMAL (1.0x). O
+# número medido nas narrações do canal era ~2,3 palavras/s, mas aquelas
+# narrações já saíam aceleradas em 1,1x (o fator estava fixo em audio.py) —
+# então o ritmo de base é 2,3 / 1,1. Agora que a velocidade é configurável (o
+# Short acelera, o formato longo não), o cálculo do orçamento de palavras
+# precisa multiplicar por ela: narração mais rápida cabe mais palavras no
+# mesmo tempo de tela. Ver `_faixa_palavras`.
+PALAVRAS_POR_SEGUNDO = 2.3 / 1.1
 # Piso de palavras como fração do teto: o teto sozinho deixava o modelo
 # entregar metade das palavras e o vídeo sair com metade da duração-alvo.
 FRACAO_MINIMA = 0.85
@@ -177,22 +183,27 @@ ESQUEMA_ROTEIRO = {
                 "type": "string",
                 "description": "A trend/tema do vídeo.",
             },
-            "hook": {
+            "pergunta": {
                 "type": "string",
                 "description": (
-                    "A frase de abertura (0-2s): a imagem mais CHOCANTE da "
-                    "notícia, direta, sem preâmbulo. Máximo 8 palavras. NUNCA "
-                    "começar com contexto, data ou nome de instituição. A "
-                    "primeira frase de texto_video DEVE ser exatamente esta "
-                    "(copiada palavra por palavra, antes de qualquer audio tag)."
+                    "A PERGUNTA ESQUISITA de abertura (0-2s): uma pergunta "
+                    "concreta, estranha e específica que nasce do fato e que "
+                    "ninguém pensaria em fazer sozinho — 'quanto custa desligar "
+                    "um data center por um dia?', 'quem assina o cheque quando "
+                    "uma IA erra?'. Máximo 12 palavras, sem preâmbulo, sem "
+                    "contexto, sem data. Ela NÃO é retórica nem dirigida ao "
+                    "espectador ('você já parou pra pensar?' é proibido): é uma "
+                    "pergunta que o próprio vídeo responde. A primeira frase de "
+                    "texto_video DEVE ser exatamente esta (copiada palavra por "
+                    "palavra, antes de qualquer audio tag)."
                 ),
             },
-            "implicacao": {
+            "consequencia": {
                 "type": "string",
                 "description": (
-                    "A ÚNICA consequência simples que o vídeo entrega "
-                    "('isso significa que...'). Uma só — decida antes de "
-                    "escrever o texto_video."
+                    "A CONSEQUÊNCIA concreta que o vídeo entrega — o que muda "
+                    "para quem trabalha, investe ou usa aquilo ('isso significa "
+                    "que...'). Uma só, decidida antes de escrever o texto_video."
                 ),
             },
             "titulo": {
@@ -241,17 +252,22 @@ ESQUEMA_ROTEIRO = {
                     "citação de fonte obrigatória: o fato central é atribuído "
                     "nominalmente ao veículo ou à conta do X de onde veio "
                     "(somente fontes das listas recebidas). "
-                    "Estrutura obrigatória: HOOK (a primeira frase = campo "
-                    "hook) → FATO (o que aconteceu, coisa concreta primeiro; "
-                    "se o assunto central for de nicho, a primeira frase do "
-                    "FATO ancora o assunto em algo que o leigo conhece — 'a "
-                    "empresa por trás do ChatGPT') → "
-                    "IMPLICAÇÃO (uma única consequência simples) → CORTE "
-                    "(termina em tensão emendando de volta no hook — o vídeo "
-                    "roda em loop — sem conclusão e sem CTA falado). A última "
-                    "frase deve ser NOVA: é PROIBIDO repetir o hook (ou "
+                    "Estrutura obrigatória em CINCO blocos: "
+                    "1) PERGUNTA ESQUISITA (a primeira frase = campo pergunta) "
+                    "→ 2) CONTEXTUALIZAÇÃO (o que é isso e por que a pergunta "
+                    "faz sentido; se o assunto for de nicho, é aqui que ele é "
+                    "amarrado em algo que o leigo conhece — 'a empresa por trás "
+                    "do ChatGPT') → 3) DESENVOLVIMENTO (o que aconteceu de "
+                    "fato, com número, nome e mecanismo, na fonte citada) → "
+                    "4) CONSEQUÊNCIA (o que isso muda para quem trabalha, "
+                    "investe ou usa aquilo) → 5) CONCLUSÃO (a resposta à "
+                    "pergunta da abertura, em uma frase seca — sem moral da "
+                    "história e sem CTA falado). A conclusão é o CORTE: ela "
+                    "responde a pergunta de um jeito que emenda de volta nela "
+                    "quando o vídeo reinicia (o Short roda em loop). A última "
+                    "frase deve ser NOVA: é PROIBIDO repetir a pergunta (ou "
                     "qualquer frase anterior) palavra por palavra — quem "
-                    "repete o hook é o reinício do loop, não o texto. Essa "
+                    "repete a pergunta é o reinício do loop, não o texto. Essa "
                     "última frase carrega A DISPUTA: um FATO do próprio vídeo "
                     "que deixa duas leituras defensáveis em pé (quem está "
                     "certo, quem paga a conta, se valeu a pena), de modo que "
@@ -265,8 +281,8 @@ ESQUEMA_ROTEIRO = {
         },
         "required": [
             "tema",
-            "hook",
-            "implicacao",
+            "pergunta",
+            "consequencia",
             "titulo",
             "descricao",
             "texto_video",
@@ -286,23 +302,26 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "type": "string",
                 "description": "O acontecimento contemporâneo analisado no vídeo.",
             },
-            "hook": {
+            "pergunta": {
                 "type": "string",
                 "description": (
-                    "A frase de abertura (0-5s): o fato concreto mais forte JÁ "
-                    "amarrado ao bolso/emprego de quem assiste. Máximo 14 "
-                    "palavras, sem preâmbulo, sem data, sem nome de "
-                    "instituição na primeira posição. A primeira frase de "
-                    "texto_video DEVE ser exatamente esta (copiada palavra por "
-                    "palavra, antes de qualquer audio tag)."
+                    "A PERGUNTA ESQUISITA de abertura (0-5s): uma pergunta "
+                    "concreta, estranha e específica que nasce do fato e que "
+                    "ninguém faria sozinho ('quanto vale um engenheiro que a "
+                    "empresa não consegue substituir?'). Máximo 14 palavras, "
+                    "sem preâmbulo, sem data, sem nome de instituição na "
+                    "primeira posição. NÃO é retórica nem dirigida ao "
+                    "espectador: é a pergunta que o vídeo inteiro responde. A "
+                    "primeira frase de texto_video DEVE ser exatamente esta "
+                    "(copiada palavra por palavra, antes de qualquer audio tag)."
                 ),
             },
             "tese": {
                 "type": "string",
                 "description": (
                     "Em uma frase: a leitura que costura as quatro óticas "
-                    "(geopolítica, tecnologia/IA, mercado de trabalho e "
-                    "negócios) sobre este acontecimento. É o fio condutor do "
+                    "(tecnologia/IA, negócios, mercado de trabalho e mercado "
+                    "financeiro) sobre este acontecimento. É o fio condutor do "
                     "vídeo inteiro — decida antes de escrever a narração."
                 ),
             },
@@ -356,10 +375,11 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "type": "string",
                 "description": (
                     "Texto/roteiro narrado do vídeo, no idioma definido nas "
-                    "instruções, seguindo a ESTRUTURA EM BLOCOS das "
-                    "instruções (ABERTURA → O QUE ACONTECEU → AS QUATRO "
-                    "ÓTICAS → O QUE ISSO MUDA PARA QUEM TRABALHA → SÍNTESE E "
-                    "O QUE OBSERVAR). Ritmo de fala natural (frases de 8 a 18 "
+                    "instruções, seguindo a ESTRUTURA EM CINCO BLOCOS das "
+                    "instruções (PERGUNTA ESQUISITA → CONTEXTUALIZAÇÃO → "
+                    "DESENVOLVIMENTO NAS QUATRO ÓTICAS → CONSEQUÊNCIA PARA "
+                    "QUEM TRABALHA → CONCLUSÃO, que responde a pergunta e "
+                    "aponta o que observar). Ritmo de fala natural (frases de 8 a 18 "
                     "palavras, teto 22), vocabulário preciso de telejornal, "
                     "tom adulto de analista que respeita o espectador. Toda "
                     "afirmação central atribuída nominalmente à fonte "
@@ -373,7 +393,7 @@ ESQUEMA_ROTEIRO_LONGO = {
         },
         "required": [
             "tema",
-            "hook",
+            "pergunta",
             "tese",
             "impacto_carreira",
             "o_que_observar",
@@ -458,20 +478,21 @@ ESQUEMA_AUDITORIA_LEIGO = {
 }
 
 INSTRUCOES_AUDITORIA_LEIGO = """\
-Você é o auditor pró-leigo de um canal de vídeos curtos de notícias. Você
-recebe o título, a descrição e a narração de um vídeo e verifica as regras
-abaixo. O espectador é um adulto leigo que NUNCA ouviu falar de modelos de
-IA, labs, startups e siglas de nicho — Trump, Google, Irã, iPhone, Elon Musk
-ele conhece; Grok, Kimi K3, Anthropic, CENTCOM, GPU ele NÃO conhece.
+Você é o auditor pró-leigo de um canal de vídeos curtos de análise sobre
+tecnologia, IA, mercado de trabalho e mercado financeiro. Você recebe o título,
+a descrição e a narração de um vídeo e verifica as regras abaixo. O espectador
+é um adulto leigo que NUNCA ouviu falar de modelos de IA, labs, startups e
+siglas de nicho — Google, iPhone, Elon Musk, ChatGPT ele conhece; Grok, Kimi
+K3, Anthropic, EBITDA, GPU ele NÃO conhece.
 
 CALIBRAGEM (vale para as três partes):
-- Nome próprio UNIVERSALMENTE conhecido (países, Trump, Google, Elon Musk,
-  ChatGPT, iPhone...) é permitido em qualquer quantidade — nunca é problema.
+- Nome próprio UNIVERSALMENTE conhecido (países, Google, Elon Musk, ChatGPT,
+  iPhone...) é permitido em qualquer quantidade — nunca é problema.
   O que reprova é nome de NICHO (modelo de IA, lab, startup, app pouco
-  conhecido, sigla militar/técnica) sem tradução para o efeito concreto.
+  conhecido, sigla técnica ou financeira) sem tradução para o efeito concreto.
 - Termos do dia a dia NÃO são jargão: inteligência artificial, IA/AI, app,
-  site, robô, chip, e tudo que um adulto ouve num telejornal (bilhões,
-  míssil, sanção, falência, petróleo).
+  site, robô, chip, e tudo que um adulto ouve num telejornal (bilhões, juros,
+  demissão, falência, bolsa).
 - As hashtags no final da descrição não entram na auditoria.
 
 TÍTULO:
@@ -489,12 +510,23 @@ DESCRIÇÃO:
 NARRAÇÃO:
 5. Jargão técnico ou sigla de nicho sem explicação de meia frase REPROVA
    (audio tags entre colchetes não são jargão).
-6. Se o assunto CENTRAL é de nicho, a primeira frase depois do hook precisa
-   ancorar em algo que o leigo conhece ("a empresa por trás do ChatGPT", "o
-   maior rival do ChatGPT"); sem âncora REPROVA. Assunto universalmente
-   conhecido não precisa de âncora.
-7. No máximo 1 nome próprio de nicho no vídeo inteiro (veículo ou conta do X
+6. A PRIMEIRA frase é uma PERGUNTA concreta e específica (a "pergunta
+   esquisita"). REPROVAM: abrir sem pergunta; pergunta abstrata ou filosófica
+   sem coisa/número/gente dentro; e pergunta dirigida ao espectador ("você já
+   parou pra pensar?", "e se eu te dissesse?").
+7. A narração RESPONDE essa pergunta antes de acabar. Pergunta que fica sem
+   resposta no texto REPROVA.
+8. Bloco de CONTEXTUALIZAÇÃO logo depois da pergunta: se o assunto CENTRAL é de
+   nicho, ele precisa ser ancorado em algo que o leigo conhece ("a empresa por
+   trás do ChatGPT"); sem âncora REPROVA. Assunto universalmente conhecido não
+   precisa de âncora.
+9. No máximo 1 nome próprio de nicho no vídeo inteiro (veículo ou conta do X
    citado como FONTE não conta; nome universalmente conhecido não conta).
+10. Nenhuma frase pode depender do que está na tela ("como você vê no
+   gráfico", "veja a tabela") — as figuras entram por cima do vídeo, mas a
+   narração tem que se sustentar de olhos fechados.
+11. FORA DE ESCOPO: se o vídeo for sobre guerra, conflito armado, geopolítica
+   militar, inteligência ou espionagem, REPROVA — não é assunto deste canal.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO
 invente problema: o que segue as regras passa, e "aprovado" = true com zero
@@ -505,15 +537,15 @@ INSTRUCOES_AUDITORIA_LEIGO_LONGO = """\
 Você é o auditor de um canal de vídeos de ANÁLISE de 90 a 120 segundos, feitos
 para um adulto leigo que está procurando emprego ou em transição de carreira.
 Você recebe o título, a descrição e a narração de um vídeo e verifica as
-regras abaixo. O espectador conhece Trump, Google, Irã, iPhone, Elon Musk; ele
-NÃO conhece Grok, Kimi K3, Anthropic, CENTCOM, GPU.
+regras abaixo. O espectador conhece Google, iPhone, Elon Musk, ChatGPT; ele
+NÃO conhece Grok, Kimi K3, Anthropic, EBITDA, GPU.
 
 CALIBRAGEM (vale para as três partes):
 - Nome próprio UNIVERSALMENTE conhecido é permitido em qualquer quantidade —
   nunca é problema. O que reprova é nome de NICHO (modelo de IA, lab, startup,
-  app pouco conhecido, sigla militar/técnica) sem tradução.
+  app pouco conhecido, sigla técnica ou financeira) sem tradução.
 - Termos do dia a dia NÃO são jargão: inteligência artificial, IA/AI, app,
-  chip, robô, e tudo que se ouve num telejornal (bilhões, míssil, sanção,
+  chip, robô, e tudo que se ouve num telejornal (bilhões, juros, inflação,
   falência, demissão em massa, tarifa).
 - As hashtags no final da descrição não entram na auditoria.
 - Audio tags entre colchetes não entram na auditoria.
@@ -537,13 +569,18 @@ NARRAÇÃO:
    acontecimento muda para quem procura emprego ou muda de área (setor,
    função, habilidade, prazo, número). Conselho de coach ("se reinvente",
    "esteja preparado", "invista em você") e futurologia sem base REPROVAM.
-8. AS QUATRO ÓTICAS: geopolítica, tecnologia/IA, negócios e mercado de
-   trabalho precisam aparecer, costuradas por causa e efeito. Ótica ausente
+8. AS QUATRO ÓTICAS: tecnologia/IA, negócios, mercado de trabalho e mercado
+   financeiro precisam aparecer, costuradas por causa e efeito. Ótica ausente
    ou lista de tópicos soltos REPROVA.
 9. Nenhuma frase pode depender de texto na tela ("como você vê aqui", "no
    gráfico") — o vídeo não tem legendas.
-10. Fechamento: síntese + próximo marco a observar. CTA falado, pedido de
-   inscrição ou despedida REPROVAM.
+10. A PRIMEIRA frase é uma PERGUNTA concreta e específica, e a narração a
+   RESPONDE antes de acabar. REPROVAM: abrir sem pergunta; pergunta abstrata
+   ou dirigida ao espectador; pergunta que fica sem resposta.
+11. Fechamento: conclusão que responde a pergunta + próximo marco a observar.
+   CTA falado, pedido de inscrição ou despedida REPROVAM.
+12. FORA DE ESCOPO: se o vídeo for sobre guerra, conflito armado, geopolítica
+   militar, inteligência ou espionagem, REPROVA — não é assunto deste canal.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
 problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\
@@ -588,22 +625,36 @@ português.\
 """
 
 INSTRUCOES_SELECAO = """\
-Você é editor de um canal de vídeos curtos (YouTube Shorts) de notícias
-quentes.
+Você é editor de um canal de vídeos curtos (YouTube Shorts) de ANÁLISE sobre
+tecnologia, inteligência artificial, mercado de trabalho e mercado financeiro.
 
-Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema e
-imagem mental), os vídeos CAMPEÕES DE RETENÇÃO do canal (quando houver) e os
-últimos vídeos publicados COM as métricas reais de audiência (views e likes).
-Todo vídeo do canal é EXPLICATIVO — análise ou educacional —, então prefira,
-em empate, a candidata que rende a melhor explicação (um acontecimento com
-causa, mecanismo e consequência claros).
+Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema,
+imagem mental, VALOR INFORMATIVO e URGÊNCIA), os vídeos CAMPEÕES DE RETENÇÃO do
+canal (quando houver) e os últimos vídeos publicados COM as métricas reais de
+audiência (views e likes). Todo vídeo do canal é EXPLICATIVO — análise ou
+educacional: ele explica o que aconteceu, como funciona e o que muda. Prefira,
+portanto, a candidata que rende a melhor explicação (um acontecimento com
+causa, mecanismo e consequência claros) e descarte a que só rende manchete.
+
+VALOR DA INFORMAÇÃO — o primeiro corte: entre as candidatas, prefira sempre a
+que entrega informação que ainda NÃO é conhecimento comum. Nesta ordem: (1)
+vazamento, documento interno, memorando ou número inédito; (2) exclusivo ou
+primeira mão; (3) urgência real (marcada como "agora" ou "hoje", ou com prazo
+apertando); (4) número concreto de dinheiro, vagas, preço ou prazo. Candidata
+marcada como "apenas repercussão, sem fato novo" só vence se TODAS as outras
+também forem — repercussão de algo que a audiência já viu ontem é o pior vídeo
+possível, por mais quente que esteja o assunto.
+
+FORA DE ESCOPO: guerra, conflito armado, geopolítica militar, inteligência,
+espionagem e defesa. Se uma candidata for sobre isso, ela não é elegível —
+escolha outra, mesmo que os números apontem para ela.
 
 FORMATO DO CANAL: o vídeo é montado SOMENTE com os clipes de vídeo anexados
 aos posts do X da trend (até 3 clipes; nenhuma foto estática). Todas as
 candidatas listadas têm pelo menos 1 post com clipe, mas em empate prefira a
 que tem MAIS clipes e o material em vídeo mais forte (veja "apelo visual").
 
-CRITÉRIO ÚNICO — O QUE A AUDIÊNCIA ESTÁ ASSISTINDO: escolha a trend com a
+AUDIÊNCIA — O QUE DECIDE ENTRE AS ELEGÍVEIS: escolha a trend com a
 maior chance de performar com a audiência DESTE canal, e a régua são os
 NÚMEROS listados, não opinião editorial. Os vídeos com o maior VIEWS/H e os
 campeões de retenção mostram o tipo de tema, tensão e promessa que este
@@ -617,8 +668,9 @@ canal, e trocar de tema só para variar é a forma mais rápida de queimar um
 vídeo.
 
 CICLO DE NOTÍCIA ESFRIA — E É VOCÊ QUEM TEM QUE PERCEBER: um assunto quente
-(uma guerra, uma crise, uma eleição) domina o canal por dias e depois morre,
-normalmente quando o próprio fato se resolve (trégua, acordo, resultado). O
+(uma onda de demissões, um lançamento, uma queda de mercado) domina o canal por
+dias e depois morre, normalmente quando o próprio fato se resolve (acordo,
+recuo, número final divulgado). O
 sinal de morte está na lista, e é UM só: os vídeos MAIS RECENTES daquele
 macrotema com VIEWS/H bem abaixo dos mais antigos do MESMO macrotema. Quando
 isso aparecer, o pico antigo já não vale de régua — ele só está no topo das
@@ -654,25 +706,32 @@ qualidade, e o assunto de um ciclo já encerrado costuma exibir o maior número
 absoluto da lista muito depois de ter esfriado.
 
 O QUE O VÍDEO LONGO É: uma análise educacional que explica um acontecimento
-atual cruzando QUATRO ÓTICAS — geopolítica, tecnologia e IA, mercado de
-trabalho e negócios — e entrega valor prático para o espectador principal:
+atual cruzando QUATRO ÓTICAS — tecnologia e IA, negócios, mercado de trabalho e
+mercado financeiro — e entrega valor prático para o espectador principal:
 o adulto que está PROCURANDO EMPREGO ou EM TRANSIÇÃO DE CARREIRA e quer
 entender para onde o mundo (e o trabalho dele) está indo.
 
+FORA DE ESCOPO: guerra, conflito armado, geopolítica militar, inteligência,
+espionagem e defesa. Candidata sobre isso não é elegível — escolha outra.
+
 CRITÉRIOS, nesta ordem:
-1. RENDE ANÁLISE DAS QUATRO ÓTICAS: o acontecimento tem causa, mecanismo e
+1. VALOR DA INFORMAÇÃO: prefira a candidata que entrega o que ainda não é
+   conhecimento comum — vazamento, documento, número inédito, exclusivo ou
+   prazo apertando (os campos VALOR INFORMATIVO e URGÊNCIA de cada candidata).
+   Candidata marcada como "apenas repercussão, sem fato novo" só vence se todas
+   as outras também forem.
+2. RENDE ANÁLISE DAS QUATRO ÓTICAS: o acontecimento tem causa, mecanismo e
    consequência claros e toca — mesmo que indiretamente — dinheiro, empresas,
-   poder entre países e trabalho. Fato isolado e sem desdobramento (uma treta
-   de rede social, um vídeo curioso) NÃO vira vídeo longo, por mais quente que
-   esteja.
-2. PAYLOAD DE CARREIRA: dá para dizer, com fato e não com achismo, o que isso
+   trabalho e mercado. Fato isolado e sem desdobramento (uma treta de rede
+   social, um vídeo curioso) NÃO vira vídeo longo, por mais quente que esteja.
+3. PAYLOAD DE CARREIRA: dá para dizer, com fato e não com achismo, o que isso
    muda para quem procura emprego ou está mudando de área (setor que contrata
    ou corta, habilidade que passa a valer, prazo). Prefira acontecimentos com
    números de dinheiro, investimento, vagas, contratos ou regulação.
-3. AUDIÊNCIA: entre as candidatas que passam em 1 e 2, escolha a que mais se
+4. AUDIÊNCIA: entre as candidatas que passam nos anteriores, escolha a que mais se
    parece com o que o público DESTE canal assiste, segundo os números
    listados. Repetir o tipo de assunto que performa é bem-vindo.
-4. MATERIAL EM VÍDEO: o vídeo é montado SOMENTE com os clipes anexados aos
+5. MATERIAL EM VÍDEO: o vídeo é montado SOMENTE com os clipes anexados aos
    posts do X da trend (até {max_clipes} clipes, nenhuma foto estática). Em
    empate, vence a candidata com MAIS posts com clipe.
 
@@ -686,21 +745,26 @@ Responda somente com o JSON pedido.\
 """
 
 INSTRUCOES_ROTEIRO = """\
-Você é roteirista de vídeos curtos (YouTube Shorts/Reels/TikTok) sobre
-geopolítica, inteligência (espionagem, defesa, OSINT), inteligência artificial
-e tecnologia. {foco}
+Você é roteirista de vídeos curtos (YouTube Shorts/Reels/TikTok) de ANÁLISE
+sobre tecnologia, inteligência artificial, mercado de trabalho e mercado
+financeiro. {foco}
 
 Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
 X que originaram a trend e NOTÍCIAS recentes sobre ela. Use as notícias para
 acertar fatos, nomes, empresas, datas e números — não invente.
 
 ENQUADRAMENTO — SEMPRE análise ou educacional, em formato EXPLICATIVO: o vídeo
-explica o que aconteceu, como e por que importa — nunca é um grito de manchete
-sem explicação, nunca é opinião militante. A estrutura abaixo (HOOK → FATO →
-IMPLICAÇÃO → CORTE) já é o formato explicativo: o FATO mostra o acontecimento
-e o mecanismo por trás dele, a IMPLICAÇÃO é a análise (a consequência que o
-espectador leva para casa). Explicar NÃO é palestrar: o tom continua de
-jornalista afiado, não de professor.
+explica o que aconteceu, como funciona e por que importa — nunca é um grito de
+manchete sem explicação, nunca é opinião militante. O espectador tem que sair
+do vídeo SABENDO alguma coisa que não sabia: um mecanismo, um número, uma
+relação de causa e efeito. A estrutura em cinco blocos abaixo é justamente o
+formato explicativo em ordem de aula bem dada — pergunta, contexto,
+desenvolvimento, consequência, resposta. Explicar NÃO é palestrar: o tom
+continua de jornalista afiado, não de professor.
+
+ASSUNTOS FORA DO CANAL: guerra, conflito armado, geopolítica militar,
+inteligência, espionagem e defesa. Se a trend recebida encostar nisso, escreva
+pelo ângulo de tecnologia, empresa, emprego ou mercado — nunca pelo militar.
 
 FONTES — OBRIGATÓRIO citar a fonte na narração: todo fato central do vídeo é
 atribuído a quem o publicou — o veículo de notícias ("segundo a Reuters", "o
@@ -739,43 +803,53 @@ conceito que exige formação para entender. Se o fato depende de um conceito
 (tarifa, benchmark, protocolo), não o infantilize: entregue o efeito concreto
 em meia frase ("tarifa — o imposto que encarece o produto importado") e siga.
 
-ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
-1. HOOK (0-2s): a imagem mais CHOCANTE da notícia, direta, sem preâmbulo.
-   NUNCA começar com contexto, data ou nome de instituição. O hook decide o
-   "viewed vs swiped": metade do público desliza no primeiro segundo — esta
-   frase e a primeira imagem valem mais que todo o resto do vídeo.
-2. FATO (até a metade do vídeo): o que aconteceu, em ordem "coisa concreta
-   primeiro, detalhe depois". Cada frase mostra uma cena que dá para VER de
-   olhos fechados.
-   ÂNCORA PARA LEIGO: se o assunto CENTRAL do vídeo não é universalmente
-   conhecido (empresa, modelo de IA, app, pessoa de nicho), a PRIMEIRA frase
-   do FATO — logo depois do hook, nunca antes dele — amarra o assunto em algo
-   que o espectador já conhece: "a empresa por trás do ChatGPT", "o maior
-   rival do ChatGPT", "a dona do Instagram". Meia frase embutida na
-   narrativa (no máximo duas frases se o assunto for muito distante do dia a
-   dia), NUNCA tom de aula ou de glossário. Assunto que todo mundo conhece
-   (Trump, guerra, Google, iPhone) NÃO leva âncora — vá direto ao fato:
-   âncora desnecessária é preâmbulo, e preâmbulo derruba retenção.
-3. IMPLICAÇÃO (segunda metade): UMA única consequência simples ("isso significa
-   que..."). Só uma — duas implicações confundem e a pessoa desliza.
-4. CORTE (últimos 2-3s): terminar em tensão. Sem conclusão, sem moral da
-   história, sem CTA falado, sem frase de encerramento. O Shorts REINICIA
-   sozinho: a última frase deve emendar na primeira (o hook) como se a história
-   continuasse — o loop bem feito faz a pessoa assistir de novo sem perceber,
-   e replay multiplica a distribuição. EMENDAR NÃO É REPETIR: é PROIBIDO
-   copiar o hook (ou qualquer frase já dita) no final do texto — escreva uma
-   frase NOVA de tensão que, quando o vídeo reiniciar, desemboque naturalmente
-   no hook.
-   O LOOP VEM PRIMEIRO, mas dentro dele essa frase final tem um segundo
-   trabalho: carregar A DISPUTA do assunto. Escolha o fato do vídeo sobre o
-   qual duas pessoas razoáveis brigariam — quem está certo, quem paga a conta,
-   se valeu a pena, quem saiu ganhando — e termine NELE. É isso que faz a
-   pessoa comentar e mandar o vídeo para alguém: ela termina com uma opinião
-   formada e um interlocutor em mente. Exemplos do que é e do que não é:
-   - suspense (fraco, ninguém comenta): "E o próximo alvo pode ser o maior de
-     todos."
-   - disputa (forte): "Foram 37 bilhões de dólares em duas semanas, e o Irã
-     segue atirando."
+ESTRUTURA OBRIGATÓRIA — CINCO BLOCOS (narração de ~{duracao}s):
+1. PERGUNTA ESQUISITA (0-2s): abra com uma PERGUNTA concreta, estranha e
+   específica, que nasce do fato e que ninguém pensaria em fazer sozinho.
+   "Quanto custa desligar um data center por um dia?" "Quem paga o salário de
+   um engenheiro que a empresa não consegue substituir?" "O que acontece com
+   500 mil currículos quando o robô que os lia sai do ar?"
+   O estranhamento é o gancho: metade do público desliza no primeiro segundo, e
+   uma pergunta que soa esquisita segura porque o cérebro quer a resposta.
+   REGRAS DURAS: pergunta CONCRETA (com coisa, número, gente ou dinheiro
+   dentro), nunca abstrata ("o que é a inteligência?"); nunca dirigida ao
+   espectador ("você já parou pra pensar?", "e se eu te dissesse que...");
+   nunca retórica de palestra; nunca começando por contexto, data ou nome de
+   instituição. Máximo 12 palavras. É a pergunta que o vídeo inteiro responde —
+   e ela precisa ter resposta REAL no material recebido.
+2. CONTEXTUALIZAÇÃO (2 a 3 frases): o mínimo que o leigo precisa para a
+   pergunta fazer sentido — o que é essa empresa, esse mercado, esse número.
+   Se o assunto CENTRAL não é universalmente conhecido (empresa, modelo de IA,
+   app, pessoa de nicho), é AQUI que ele é amarrado em algo que o espectador já
+   conhece: "a empresa por trás do ChatGPT", "a dona do Instagram". Meia frase
+   embutida na narrativa, NUNCA tom de aula ou de glossário. Assunto que todo
+   mundo conhece (Google, iPhone, Nubank) leva contexto curtíssimo — contexto
+   desnecessário é preâmbulo, e preâmbulo derruba retenção.
+3. DESENVOLVIMENTO (o miolo, o bloco mais longo): o que aconteceu de fato, em
+   ordem "coisa concreta primeiro, detalhe depois", com número, nome e o
+   MECANISMO (como funciona, por que isso produz aquilo). É aqui que a fonte é
+   citada nominalmente. Cada frase mostra uma cena que dá para VER de olhos
+   fechados.
+4. CONSEQUÊNCIA: UMA única consequência concreta ("isso significa que...") —
+   o que muda para quem trabalha, investe ou usa aquilo. Só uma: duas
+   consequências confundem e a pessoa desliza.
+5. CONCLUSÃO (últimos 2-3s): a RESPOSTA à pergunta da abertura, em uma frase
+   seca. Sem moral da história, sem CTA falado, sem frase de encerramento.
+   O Shorts REINICIA sozinho: a conclusão tem que desembocar naturalmente na
+   pergunta quando o vídeo recomeça — quem responde e emenda de volta na
+   pergunta faz a pessoa assistir de novo sem perceber, e replay multiplica a
+   distribuição. RESPONDER NÃO É REPETIR: é PROIBIDO copiar a pergunta (ou
+   qualquer frase já dita) no final do texto.
+   O LOOP VEM PRIMEIRO, mas dentro dele a conclusão tem um segundo trabalho:
+   carregar A DISPUTA do assunto. Responda com o fato do vídeo sobre o qual
+   duas pessoas razoáveis brigariam — quem está certo, quem paga a conta, se
+   valeu a pena, quem saiu ganhando. É isso que faz a pessoa comentar e mandar
+   o vídeo para alguém: ela termina com uma opinião formada e um interlocutor
+   em mente. Exemplos do que é e do que não é:
+   - suspense (fraco, ninguém comenta): "E a próxima empresa pode ser a maior
+     de todas."
+   - disputa (forte): "A conta foi de 2 bilhões, e quem pagou foram os 8 mil
+     demitidos."
    O teste: se a frase não dá para discordar dela ou de quem ela responsabiliza,
    ela é só suspense — reescreva.
    PROIBIDO, e isto é regra dura: pergunta dirigida ao espectador ("você
@@ -785,18 +859,20 @@ ESTRUTURA OBRIGATÓRIA (narração de ~{duracao}s):
    a métrica que sustenta tudo.
 
 PROIBIDO NO TEXTO:
-- Frases de analista vazias: "no cenário geopolítico", "especialistas
-  afirmam", "o mercado reagiu" e afins — e "segundo fontes" SEM nomear a
-  fonte (a citação obrigatória é sempre nominal: veículo ou conta do X).
+- Frases de analista vazias: "no cenário atual", "especialistas afirmam", "o
+  mercado reagiu" e afins — e "segundo fontes" SEM nomear a fonte (a citação
+  obrigatória é sempre nominal: veículo ou conta do X).
 - Número com mais de 2 dígitos significativos: escreva "2 bilhões", "150 mil",
   "quase 30%" — nunca "2,37 bilhões", "148.532" ou "29,7%".
 - Mais de 1 nome próprio DESCONHECIDO por vídeo. Nomes que todo mundo conhece
-  (Trump, Google, China, Elon Musk) não contam, nem veículo/conta citado como
-  fonte; o segundo nome obscuro vira "um chefe da empresa", "um general", "o
+  (Google, Apple, Elon Musk) não contam, nem veículo/conta citado como fonte;
+  o segundo nome obscuro vira "um chefe da empresa", "um fundo americano", "o
   dono do site".
 
-PAYLOAD OBRIGATÓRIO: o roteiro entrega 1 fato real e 1 implicação. Clickbait
-sem payload é PROIBIDO — o título promete exatamente o que o vídeo entrega.
+PAYLOAD OBRIGATÓRIO: o roteiro responde a pergunta da abertura com 1 fato real
+e 1 consequência. Clickbait sem payload é PROIBIDO — o título promete
+exatamente o que o vídeo entrega, e a pergunta esquisita promete uma resposta
+que precisa realmente vir.
 
 TÍTULO — medido nos números do canal: título autossuficiente rende o DOBRO de
 views do título com nome de nicho, e os 10 maiores vídeos do canal têm título
@@ -809,7 +885,7 @@ preço dos agents"); (3) PROIBIDO cauda de suspense ("— e o detalhe muda
 tudo", "here's why it matters", "e agora?").
 
 DESCRIÇÃO — resumo do payload, não teaser: 1 a 3 frases que ENTREGAM o fato
-central (com número/nome concreto e a fonte nominal) e a implicação, seguidas
+central (com número/nome concreto e a fonte nominal) e a consequência, seguidas
 das hashtags. Mesmo teste do leigo do título: nome de nicho vira o efeito
 concreto. PROIBIDO na descrição: cauda de suspense e CTA ("veja o que mudou
 nas últimas horas", "saiba mais", "e agora?"), frase de analista vazia
@@ -821,16 +897,24 @@ DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 colchetes não contam). Os DOIS limites são DUROS: estourar alonga o vídeo e
 derruba a retenção; ficar abaixo do mínimo entrega um vídeo raso e curto
 demais, que o algoritmo distribui menos. Se faltar espaço, corte detalhes do
-FATO — nunca o hook, a implicação única nem o corte final. Se sobrar espaço,
-acrescente um detalhe concreto ao FATO (número, nome, cena) — nunca encha
-linguiça.
+DESENVOLVIMENTO — nunca a pergunta, a consequência única nem a conclusão. Se
+sobrar espaço, acrescente um detalhe concreto ao DESENVOLVIMENTO (número, nome,
+mecanismo) — nunca encha linguiça.
 
-MATERIAL VISUAL — o vídeo é montado SOMENTE com os clipes de vídeo anexados
-aos posts do X da trend (nada de foto estática nem imagem de banco). Você não
-escolhe os clipes — um editor de cortes casa cada um com a narração depois —
-mas escreva o texto SABENDO disso: descreva cenas que os posts da trend
-documentam em vídeo, e lembre que o primeiro clipe + o hook decidem o "viewed
-vs swiped".
+MATERIAL VISUAL — o corpo do vídeo é montado SOMENTE com os clipes de vídeo
+anexados aos posts do X da trend (nada de foto estática ocupando a tela). Você
+não escolhe os clipes — um editor de cortes casa cada um com a narração depois
+— mas escreva o texto SABENDO disso: descreva cenas que os posts da trend
+documentam em vídeo, e lembre que o primeiro clipe + a pergunta de abertura
+decidem o "viewed vs swiped".
+Por cima dos clipes o pipeline sobrepõe, em momentos-chave, GRÁFICOS, TABELAS,
+INFOGRÁFICOS e CARTAZES gerados a partir dos DADOS que você escreveu — eles são
+ancorados em citações literais da sua narração. Então: sempre que houver um
+número, uma comparação (antes/depois, empresa A vs empresa B) ou uma lista
+curta no material recebido, ESCREVA-A explicitamente na narração, com o valor e
+a unidade. Um dado que você não falar não vira figura. Ao mesmo tempo, a
+narração precisa se sustentar de olhos fechados: NUNCA escreva "como você vê no
+gráfico", "veja a tabela" nem qualquer referência ao que está na tela.
 
 NARRAÇÃO EXPRESSIVA — insira audio tags do ElevenLabs v3 no texto_video:
 palavras em inglês entre colchetes, imediatamente antes do trecho que modificam.
@@ -855,7 +939,10 @@ Responda somente com o JSON pedido.\
 INSTRUCOES_ROTEIRO_LONGO = """\
 Você é roteirista de vídeos de ANÁLISE (formato longo, 16:9, {duracao}
 segundos) que explicam os grandes acontecimentos contemporâneos cruzando
-quatro óticas: GEOPOLÍTICA, TECNOLOGIA E IA, MERCADO DE TRABALHO e NEGÓCIOS.
+quatro óticas: TECNOLOGIA E IA, NEGÓCIOS, MERCADO DE TRABALHO e MERCADO
+FINANCEIRO. Guerra, conflito armado, geopolítica militar, inteligência e
+espionagem estão FORA do canal — se a trend encostar nisso, escreva pelo ângulo
+de tecnologia, empresa, emprego ou mercado.
 {foco}
 
 Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
@@ -882,7 +969,7 @@ dependa de algo escrito na tela.
 
 FONTES — OBRIGATÓRIO citar nominalmente: cada afirmação central é atribuída a
 quem a publicou — o veículo ("segundo a Reuters", "o Financial Times revelou")
-ou a conta do X ("no post de @sentdefender"). Cite SOMENTE fontes das listas
+ou a conta do X ("no post de @unusual_whales"). Cite SOMENTE fontes das listas
 recebidas, pelo menos DUAS ao longo do vídeo, embutidas na frase — nunca em
 bloco de créditos. "Segundo fontes", sem nome, continua proibido. Nome de
 veículo ou de conta citado como fonte não conta como nome próprio de nicho.
@@ -906,32 +993,37 @@ produto importado"). Sem a tradução, não use o nome.
 
 ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
 (PROIBIDO "neste vídeo vamos ver três pontos"):
-1. ABERTURA (0-8s): o HOOK (campo hook, primeira frase do texto, palavra por
-   palavra) — o fato concreto mais forte já amarrado ao bolso ou ao emprego de
-   quem assiste — seguido de UMA frase que promete o que o espectador leva do
-   vídeo. Nada de contexto histórico, data ou nome de instituição na abertura.
-2. O QUE ACONTECEU (~20s): o acontecimento em ordem "coisa concreta primeiro,
-   detalhe depois", com número real, quem fez, quando, e a FONTE nominal. Se o
-   assunto central for de nicho, a primeira frase deste bloco ancora em algo
-   que o leigo conhece.
-3. AS QUATRO ÓTICAS (~40s, o corpo do vídeo): explique o acontecimento por
-   GEOPOLÍTICA (quem ganha e quem perde poder), TECNOLOGIA E IA (o que a
-   tecnologia tem a ver com isso, o que ela permite ou destrói), NEGÓCIOS
-   (dinheiro, empresas, investimento, quem paga a conta) e MERCADO DE TRABALHO
-   (o que acontece com as vagas). Duas a quatro frases por ótica, ENCADEADAS
-   por causa e efeito ("por isso", "o efeito disso", "e aí entra o dinheiro")
-   — nunca uma lista de tópicos soltos. Cada ótica carrega pelo menos um dado
-   concreto do material recebido. A ordem interna pode mudar se a lógica do
-   fato pedir, mas as quatro precisam estar lá, costuradas pela sua TESE.
-4. O QUE ISSO MUDA PARA QUEM TRABALHA (~25s): o payload. Concreto e
-   verificável: que setor contrata ou corta, que tipo de função entra na
-   linha de tiro, que habilidade passa a valer, em que prazo, com que número.
-   PROIBIDO conselho de coach ("se reinvente", "esteja preparado", "invista em
-   você") e futurologia sem base no material recebido.
-5. SÍNTESE E O QUE OBSERVAR (últimos ~10s): uma frase que amarra a tese e uma
-   que aponta o PRÓXIMO MARCO concreto a acompanhar (decisão, balanço, data,
-   número que sai em breve). Sem CTA, sem pedido de inscrição, sem despedida,
-   sem moral da história.
+1. PERGUNTA ESQUISITA (0-8s): abra com a PERGUNTA do campo `pergunta` (primeira
+   frase do texto, palavra por palavra) — uma pergunta concreta, estranha e
+   específica, que nasce do fato e que ninguém faria sozinho ("quanto vale um
+   engenheiro que a empresa não consegue substituir?"). Nunca abstrata, nunca
+   retórica, nunca dirigida ao espectador ("você já parou pra pensar?"). Logo
+   depois, UMA frase que promete o que o espectador leva do vídeo. Nada de
+   contexto histórico, data ou nome de instituição na abertura.
+2. CONTEXTUALIZAÇÃO (~20s): o que o leigo precisa saber para a pergunta fazer
+   sentido, e o acontecimento em ordem "coisa concreta primeiro, detalhe
+   depois", com número real, quem fez, quando, e a FONTE nominal. Se o assunto
+   central for de nicho, é aqui que ele é ancorado em algo que o leigo conhece.
+3. DESENVOLVIMENTO — AS QUATRO ÓTICAS (~40s, o corpo do vídeo): explique o
+   acontecimento por TECNOLOGIA E IA (o que a tecnologia permite ou destrói
+   aqui), NEGÓCIOS (dinheiro, empresas, investimento, quem paga a conta),
+   MERCADO DE TRABALHO (o que acontece com as vagas) e MERCADO FINANCEIRO (o
+   que os investidores, a bolsa, os juros ou o crédito fazem com isso). Duas a
+   quatro frases por ótica, ENCADEADAS por causa e efeito ("por isso", "o
+   efeito disso", "e aí entra o dinheiro") — nunca uma lista de tópicos soltos.
+   Cada ótica carrega pelo menos um dado concreto do material recebido. A ordem
+   interna pode mudar se a lógica do fato pedir, mas as quatro precisam estar
+   lá, costuradas pela sua TESE.
+4. CONSEQUÊNCIA — O QUE ISSO MUDA PARA QUEM TRABALHA (~25s): o payload.
+   Concreto e verificável: que setor contrata ou corta, que tipo de função
+   entra na linha de tiro, que habilidade passa a valer, em que prazo, com que
+   número. PROIBIDO conselho de coach ("se reinvente", "esteja preparado",
+   "invista em você") e futurologia sem base no material recebido.
+5. CONCLUSÃO (últimos ~10s): a RESPOSTA à pergunta da abertura, em uma frase
+   seca que amarra a tese, mais uma frase apontando o PRÓXIMO MARCO concreto a
+   acompanhar (decisão, balanço, data, número que sai em breve). Sem CTA, sem
+   pedido de inscrição, sem despedida, sem moral da história. Este formato NÃO
+   roda em loop: ele fecha de verdade.
 
 RETENÇÃO: a cada ~25 segundos abra um mini-gancho que puxa para o bloco
 seguinte ("o número que interessa não é esse", "e é aqui que isso encosta no
@@ -939,8 +1031,8 @@ seu emprego"). O vídeo não roda em loop: ele fecha — mas fecha entregando,
 nunca com suspense vazio.
 
 PROIBIDO NO TEXTO:
-- Frases de analista vazias: "no cenário geopolítico", "especialistas
-  afirmam", "o mercado reagiu", "só o tempo dirá".
+- Frases de analista vazias: "no cenário atual", "especialistas afirmam", "o
+  mercado reagiu", "só o tempo dirá".
 - Número com mais de 2 dígitos significativos: "2 bilhões", "150 mil", "quase
   30%" — nunca "2,37 bilhões", "148.532" ou "29,7%".
 - Opinião militante, torcida política e previsão inventada. Cenário só entra
@@ -967,15 +1059,23 @@ DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 {palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
 colchetes não contam). Os DOIS limites são DUROS — o formato do canal é de 90
 a 120 segundos. Se faltar espaço, corte detalhe secundário do bloco 2 ou 3 —
-nunca o hook, o bloco 4 (o payload de carreira) nem o fechamento. Se sobrar
+nunca a pergunta, o bloco 4 (o payload de carreira) nem a conclusão. Se sobrar
 espaço, acrescente dado concreto do material recebido (número, nome, cena),
 nunca encha linguiça.
 
-MATERIAL VISUAL — o vídeo é montado SOMENTE com os clipes de vídeo anexados
-aos posts do X da trend (até {max_clipes} clipes, nada de foto estática nem
-imagem de banco). Você não escolhe os clipes — um editor de cortes casa cada um
-com a narração depois — mas escreva sabendo disso: fale de cenas que os posts
-documentam em vídeo, e lembre que o primeiro clipe + o hook decidem quem fica.
+MATERIAL VISUAL — o corpo do vídeo é montado SOMENTE com os clipes de vídeo
+anexados aos posts do X da trend (até {max_clipes} clipes, nada de foto
+estática ocupando a tela). Você não escolhe os clipes — um editor de cortes casa
+cada um com a narração depois — mas escreva sabendo disso: fale de cenas que os
+posts documentam em vídeo, e lembre que o primeiro clipe + a pergunta de
+abertura decidem quem fica.
+Por cima dos clipes o pipeline sobrepõe GRÁFICOS, TABELAS, INFOGRÁFICOS e
+CARTAZES gerados a partir dos DADOS que você escreveu, ancorados em citações
+literais da narração. Então diga os números por extenso na narração (valor e
+unidade), e sempre que houver comparação (antes/depois, empresa A vs empresa B)
+ou uma sequência curta de itens, ESCREVA-A — dado que você não falar não vira
+figura. A regra "sem referência ao que está na tela" continua valendo: nunca
+"como você vê no gráfico".
 
 NARRAÇÃO EXPRESSIVA — insira audio tags do ElevenLabs v3 no texto_video:
 palavras em inglês entre colchetes, imediatamente antes do trecho que
@@ -1005,6 +1105,8 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"   Macrotema: {t.get('macrotema', '?')}\n"
             f"   Posts coletados sobre o assunto: {t.get('num_posts', '?')}\n"
             f"   Posts com clipe de vídeo nativo: {t.get('posts_com_video', '?')}\n"
+            f"   VALOR INFORMATIVO: {t.get('valor_informativo', '?')}\n"
+            f"   URGÊNCIA: {t.get('urgencia', '?')}\n"
             f"   Imagem mental: {t.get('imagem_mental', '?')}\n"
             f"   Engajamento: {t.get('engajamento', '?')}\n"
             f"   Sentimento: {t.get('sentimento', '?')}\n"
@@ -1488,24 +1590,30 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     piso em FRACAO_MINIMA dela). No formato longo ela sai da FAIXA DURA do
     próprio formato (90 a 120s), com MARGEM_LONGO_S de folga em cada ponta
     para absorver a variação de ritmo do TTS.
+
+    A VELOCIDADE entra como multiplicador: a narração acelerada do Short cabe
+    proporcionalmente mais palavras no mesmo tempo de tela, e sem isso o vídeo
+    sairia mais curto que a duração pedida — que foi exatamente o bug do piso
+    de palavras em 2026-07-16, por outro caminho.
     """
+    ritmo = PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
     if cfg.formato == "longo":
         return (
-            int((LONGO_MIN_S + MARGEM_LONGO_S) * PALAVRAS_POR_SEGUNDO),
-            int((LONGO_MAX_S - MARGEM_LONGO_S) * PALAVRAS_POR_SEGUNDO),
+            int((LONGO_MIN_S + MARGEM_LONGO_S) * ritmo),
+            int((LONGO_MAX_S - MARGEM_LONGO_S) * ritmo),
         )
-    limite = int(cfg.video_duracao * PALAVRAS_POR_SEGUNDO)
+    limite = int(cfg.video_duracao * ritmo)
     return int(limite * FRACAO_MINIMA), limite
 
 
 def _aparar_hook_final(roteiro: dict) -> None:
-    """Remove o hook repetido literalmente no fim do texto_video.
+    """Remove a pergunta de abertura repetida literalmente no fim do texto.
 
-    O loop emenda no hook do REINÍCIO do vídeo; quando o modelo copia o hook
-    no final da narração, o gancho fica duplicado e o trecho da última imagem
-    passa a existir duas vezes no texto, desalinhando os cortes.
+    O loop emenda na pergunta do REINÍCIO do vídeo; quando o modelo copia a
+    pergunta no final da narração, a abertura fica duplicada e o trecho da
+    última imagem passa a existir duas vezes no texto, desalinhando os cortes.
     """
-    hook = (roteiro.get("hook") or "").strip()
+    hook = (roteiro.get("pergunta") or "").strip()
     texto = (roteiro.get("texto_video") or "").rstrip()
     if not hook or not texto:
         return
@@ -1520,7 +1628,7 @@ def _aparar_hook_final(roteiro: dict) -> None:
     if novo:
         roteiro["texto_video"] = novo
         print(
-            "[roteiro] Hook repetido no fim do texto removido "
+            "[roteiro] Pergunta de abertura repetida no fim do texto removida "
             "(o loop emenda no reinício, não dentro da narração)."
         )
 
@@ -1668,22 +1776,24 @@ def gerar_roteiro(
             f"{'mais curta' if estourou else 'mais completa'}..."
         )
         preservar = (
-            "mantenha o hook, as quatro óticas, o payload de carreira e o "
-            "fechamento com o que observar"
+            "mantenha a pergunta de abertura, as quatro óticas, o payload de "
+            "carreira e a conclusão com o que observar"
             if longo
-            else "mantenha o hook, a implicação única e o corte final em tensão"
+            else "mantenha a pergunta de abertura, a consequência única e a "
+            "conclusão em tensão que emenda de volta na pergunta"
         )
         cortar = (
-            "cortando detalhe secundário dos blocos O QUE ACONTECEU e AS "
-            "QUATRO ÓTICAS"
+            "cortando detalhe secundário dos blocos CONTEXTUALIZAÇÃO e "
+            "DESENVOLVIMENTO"
             if longo
-            else "cortando detalhes do FATO"
+            else "cortando detalhes do DESENVOLVIMENTO"
         )
         acrescentar = (
             "acrescentando dado CONCRETO do material recebido (número, nome, "
-            "empresa, prazo) às quatro óticas"
+            "empresa, prazo) às quatro óticas do DESENVOLVIMENTO"
             if longo
-            else "acrescentando detalhes CONCRETOS ao FATO (número, nome, cena)"
+            else "acrescentando detalhes CONCRETOS ao DESENVOLVIMENTO (número, "
+            "nome, mecanismo)"
         )
         pedido = (
             (
@@ -1744,7 +1854,8 @@ def gerar_roteiro(
                 "estar no texto, e o vídeo fecha com o próximo marco a "
                 "observar, sem CTA. "
                 if longo
-                else "; assunto de nicho ganha âncora logo após o hook. "
+                else "; a narração abre com a pergunta esquisita e a responde "
+                "no fim, e assunto de nicho ganha âncora na contextualização. "
             )
             + "Mantenha o texto_video na faixa de "
             f"{minimo} a {limite} palavras faladas.\nProblemas:\n- "
@@ -1787,10 +1898,10 @@ def gerar_roteiro(
     print(f"[roteiro] Título: {roteiro['titulo']}")
     if roteiro.get("comentario"):
         print(f"[roteiro] Comentário de abertura: {roteiro['comentario']}")
-    if roteiro.get("hook"):
-        print(f"[roteiro] Hook: {roteiro['hook']}")
-    if roteiro.get("implicacao"):
-        print(f"[roteiro] Implicação: {roteiro['implicacao']}")
+    if roteiro.get("pergunta"):
+        print(f"[roteiro] Pergunta de abertura: {roteiro['pergunta']}")
+    if roteiro.get("consequencia"):
+        print(f"[roteiro] Consequência: {roteiro['consequencia']}")
     if roteiro.get("tese"):
         print(f"[roteiro] Tese: {roteiro['tese']}")
     if roteiro.get("impacto_carreira"):

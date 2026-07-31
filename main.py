@@ -1,24 +1,30 @@
-"""Automação de vídeos de notícias de geopolítica, inteligência, IA e tech
-a partir das trends do X.
+"""Automação de vídeos de análise sobre tecnologia, inteligência artificial,
+mercado de trabalho e mercado financeiro, a partir das trends do X.
 
 Fluxo:
 1. X API coleta os posts das últimas 24h da lista fixa de contas (CONTAS_PADRAO
-   em config.py, ou X_ACCOUNTS no .env) e o GPT os sumariza nas 10 trends mais
-   quentes (notícias, novidades, tretas).
+   em config.py, ou X_ACCOUNTS no .env) por dois caminhos — busca por
+   relevância e TIMELINE cronológica de um subconjunto rotativo das contas, que
+   é o que enxerga o post fresco (vazamento, comunicado) ainda sem engajamento
+   — e o GPT os sumariza nas 10 trends mais quentes, ordenadas pelo VALOR DA
+   INFORMAÇÃO (vazamento, exclusivo, urgência, número inédito) antes do
+   engajamento.
 2. GPT classifica cada candidata (macrotema + imagem mental) — sem filtro
    nem score: todas as candidatas seguem vivas para a seleção.
-3. GPT escolhe a trend guiado SOMENTE pela audiência: recebe os últimos
-   vídeos publicados do canal com as métricas reais (views/likes, YouTube
-   Data API) e os campeões de retenção (YouTube Analytics) e escolhe a
-   candidata com a maior chance de performar com esse público. Regras duras:
-   o mesmo macrotema não emenda mais de 4 vídeos seguidos, e a escolhida
-   passa por uma verificação anti-repetição (GPT confere se ela cobriria o
-   mesmo fato de um vídeo publicado nas últimas 36h; se sim, sai da disputa
-   e a seleção refaz). Define também uma consulta de notícias.
+3. GPT escolhe a trend: primeiro corte pelo VALOR DA INFORMAÇÃO (vazamento,
+   exclusivo, urgência, número inédito), e entre as elegíveis decide pela
+   audiência — recebe os últimos vídeos publicados do canal com as métricas
+   reais (views/likes, YouTube Data API) e os campeões de retenção (YouTube
+   Analytics). Regra dura: a escolhida passa por uma verificação
+   anti-repetição (GPT confere se ela cobriria o mesmo fato de um vídeo
+   publicado nas últimas 36h; se sim, sai da disputa e a seleção refaz).
+   Define também uma consulta de notícias.
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
 5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
-   citando as fontes (contas do X e veículos das notícias), com HOOK -> FATO
-   -> IMPLICAÇÃO -> CORTE emendando no hook para rodar em loop.
+   citando as fontes (contas do X e veículos das notícias), na estrutura
+   PERGUNTA ESQUISITA -> CONTEXTUALIZAÇÃO -> DESENVOLVIMENTO -> CONSEQUÊNCIA
+   -> CONCLUSÃO, com a conclusão respondendo a pergunta de um jeito que emenda
+   de volta nela quando o Short reinicia (loop).
 6. X API baixa um POOL de clipes de vídeo dos posts originais da trend (mais
    do que os 3 que entram na montagem, como folga para a auditoria), junto das
    fotos dos posts, que alimentam as cartelas. Imagem estática nunca ocupa a
@@ -30,7 +36,9 @@ Fluxo:
    MARCADO como representação visual (dessaturado + etiqueta na tela). Zero
    clipe aprovado = SystemExit (o formato longo exige um piso maior). Roda
    antes do TTS para a reprovação não custar créditos.
-8. ElevenLabs narra o texto (TTS) e o pipeline corta os silêncios da narração.
+8. ElevenLabs narra o texto (TTS), o pipeline acelera a narração conforme o
+   formato (o Short é acelerado, o longo roda em velocidade normal) e corta os
+   silêncios; os timestamps do alinhamento acompanham as duas coisas.
 9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
    o momento exato da narração (citações do texto -> timestamps do
    alinhamento).
@@ -40,22 +48,29 @@ Fluxo:
 11. Cartelas de imagem nos momentos-chave: foto do post da trend ou og:image
     da notícia, auditada igual aos clipes, emoldurada por cima do clipe quando
     a narração nomeia o que ela mostra (nunca em cima de um infográfico).
+11b. Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
+    infográfico, diagrama ou cartaz DESENHADO a partir dos números que a
+    narração diz — ancorado na citação literal do trecho, e só com dado que a
+    narração falou. Cartelas e figuras sobem de baixo do quadro e saem por
+    cima.
 12. ffmpeg monta: fundo = o próprio clipe borrado (cobertura total, sem
     instante vazio) + clipe nítido centrado + crossfade curto + legendas
     grandes (Archivo Black) + crédito de reprodução no canto superior direito
-    ("Reprodução Imagem: X" + conta do post) + cartelas + infográficos
-    (+ trilha).
+    ("Reprodução Imagem: X" + conta do post) + cartelas + figuras +
+    infográficos. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução).
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
-- padrão: Short vertical 1080x1920 de ~35s, com legendas queimadas.
+- padrão: Short vertical 1080x1920 de ~60s, com legendas queimadas e narração
+  ACELERADA (VIDEO_VELOCIDADE).
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 90 a 120 segundos,
-  SEM legendas, para os dois canais (combina com `-usa`). O roteiro explica um
-  acontecimento contemporâneo cruzando geopolítica, tecnologia/IA, negócios e
-  mercado de trabalho, e o payload é o que aquilo muda para quem procura
-  emprego ou está em transição de carreira. Usa até 8 clipes do X, até 4
-  infográficos, e a descrição sai com a lista de fontes reais.
+  SEM legendas e em velocidade NORMAL, para os dois canais (combina com
+  `-usa`). O roteiro explica um acontecimento contemporâneo cruzando
+  tecnologia/IA, negócios, mercado de trabalho e mercado financeiro, e o
+  payload é o que aquilo muda para quem procura emprego ou está em transição de
+  carreira. Usa até 8 clipes do X, até 4 infográficos, até 4 figuras geradas, e
+  a descrição sai com a lista de fontes reais.
 """
 
 import argparse
@@ -83,6 +98,7 @@ from pipeline.edicao import (
     montar_video,
 )
 from pipeline.escritor import gerar_roteiro, selecionar_trend
+from pipeline.figuras import gerar_figuras
 from pipeline.grafico import gerar_graficos
 from pipeline.legendas import gerar_legendas
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
@@ -347,6 +363,24 @@ def main() -> None:
         ocupadas=[(g["inicio_s"], g["inicio_s"] + g["dur_s"]) for g in graficos],
     )
 
+    # Figuras geradas (gpt-image-2): gráfico, tabela, infográfico, diagrama ou
+    # cartaz DESENHADO a partir dos números que a narração diz. Entra por
+    # último na fila de sobreposições porque é a camada mais cara — o que já
+    # está marcado pelos infográficos e pelas cartelas é desviado aqui.
+    ocupadas = [
+        (c["inicio_s"], c["inicio_s"] + c["dur_s"]) for c in graficos + cartelas
+    ]
+    figuras = gerar_figuras(
+        cfg,
+        roteiro["texto_video"],
+        trend_video,
+        noticias,
+        alinhamento,
+        duracao,
+        pasta,
+        ocupadas=ocupadas,
+    )
+
     video_final = montar_video(
         narracao,
         sobreposicoes,
@@ -356,6 +390,7 @@ def main() -> None:
         legendas=legendas,
         graficos=graficos,
         cartelas=cartelas,
+        figuras=figuras,
         publico=cfg.publico,
         formato=cfg.formato,
     )
