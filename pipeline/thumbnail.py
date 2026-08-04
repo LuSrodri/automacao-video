@@ -6,9 +6,12 @@ propósito: um quadro do vídeo já pronto (portanto com a sala e a TV, coerente
 com o que a pessoa vai ver), escurecido, com uma frase de 2 a 5 palavras em
 Archivo Black ocupando a base.
 
-O texto vem do GPT a partir do título e da narração, com uma regra dura: ele
-tem que dizer o FATO, não provocar. "TRUMP PAUSA ATAQUES" chama mais atenção do
-que "VOCÊ NÃO VAI ACREDITAR" e não queima a confiança de quem clica.
+O texto vem do GPT a partir do título e da narração, com duas regras duras: ele
+tem que dizer o FATO, não provocar ("GOOGLE CORTA 8 MIL VAGAS" chama mais
+atenção do que "VOCÊ NÃO VAI ACREDITAR" e não queima a confiança de quem
+clica), e tem que sair no IDIOMA DO CANAL — português no canal brasileiro,
+inglês no americano —, que é dado do pipeline (``cfg.publico``) e não coisa a
+deduzir do título.
 
 Falha aqui NÃO aborta: o vídeo já está montado e publicar sem capa customizada
 é muito melhor do que não publicar.
@@ -31,6 +34,66 @@ MAX_BYTES = 2_000_000
 
 MAX_PALAVRAS = 5
 MAX_CARACTERES = 34  # acima disso a fonte encolhe demais para ler no celular
+
+# IDIOMA DA CAPA — determinado pelo CANAL, nunca inferido (2026-08-04).
+# O prompt antigo era escrito em português e pedia "no MESMO IDIOMA do título
+# que receber": o modelo tinha que deduzir o idioma de um sinal fraco (o
+# título) contra um sinal forte (o prompt inteiro em português) e, com o
+# TEXT_MODEL menor que roda em produção, deduziu errado — o último vídeo longo
+# do canal americano saiu com a capa "GOOGLE LEVA ROBÔS AO CORPO" em cima de um
+# vídeo narrado em inglês. Idioma do canal é dado do pipeline (cfg.publico),
+# não coisa a adivinhar: agora ele entra explícito na instrução e o texto
+# devolvido é verificado em código (`_idioma_plausivel`).
+IDIOMAS = {
+    "brasil": {
+        "nome": "PORTUGUÊS DO BRASIL",
+        "regra": (
+            "Escreva EXCLUSIVAMENTE em PORTUGUÊS DO BRASIL. Uma capa em "
+            "inglês neste canal está ERRADA, mesmo que o assunto seja "
+            "americano e mesmo que o título tenha nomes em inglês."
+        ),
+        "exemplos": (
+            '"GOOGLE CORTA 8 MIL VAGAS", "PETRÓLEO CAI 11%", '
+            '"APPLE PASSA A NVIDIA"'
+        ),
+    },
+    "usa": {
+        "nome": "AMERICAN ENGLISH",
+        "regra": (
+            "Write EXCLUSIVELY in AMERICAN ENGLISH. A Portuguese cover on "
+            "this channel is WRONG, no matter what language the source posts "
+            "or the news articles were written in."
+        ),
+        "exemplos": (
+            '"GOOGLE CUTS 8,000 JOBS", "OIL DROPS 11%", '
+            '"APPLE PASSES NVIDIA"'
+        ),
+    },
+}
+
+# Palavras funcionais curtas e exclusivas de cada idioma, usadas só para pegar
+# a capa escrita no idioma errado (não para julgar qualidade do texto). A
+# checagem é grosseira de propósito: ela precisa acertar o caso "a frase INTEIRA
+# saiu no idioma errado", que é o defeito real, e nunca reprovar um nome próprio
+# estrangeiro isolado ("APPLE", "NVIDIA") — que é legítimo nos dois canais.
+# Os dois conjuntos são DISJUNTOS de propósito: palavra que existe nos dois
+# idiomas ("a", "as", "no", "e") não distingue nada e só geraria falso positivo.
+_MARCAS_PT = {
+    "de", "da", "do", "dos", "das", "em", "para", "com", "que", "não", "por",
+    "sobre", "após", "até", "mais", "vagas", "bilhões", "milhões", "mil",
+    "anos", "ao", "aos", "na", "nas", "uma", "seu", "sua", "pelo", "pela",
+    "contra", "entre", "já", "vai", "tem", "é", "são", "corta", "cai", "sobe",
+}
+_MARCAS_EN = {
+    "the", "of", "in", "to", "for", "with", "and", "on", "at", "from", "jobs",
+    "billion", "million", "cuts", "hits", "over", "after", "its", "by", "is",
+    "are", "new", "his", "her", "their", "into", "than", "drops", "rises",
+    "beats", "wins", "loses", "says", "adds", "buys", "pays",
+}
+_MARCAS_IDIOMA = {
+    "brasil": (_MARCAS_PT, _MARCAS_EN),
+    "usa": (_MARCAS_EN, _MARCAS_PT),
+}
 
 ESCURECER = 0.45  # brilho do quadro sob o texto (1.0 = original)
 TEXTO_FRAC = 0.115  # altura da fonte como fração da altura da capa
@@ -56,11 +119,14 @@ ESQUEMA = {
     },
 }
 
-INSTRUCOES = f"""\
+INSTRUCOES = """\
 Você escreve o texto da CAPA (thumbnail) de um vídeo de notícias.
 
-Devolva de 2 a {MAX_PALAVRAS} palavras, no máximo {MAX_CARACTERES} caracteres,
-em MAIÚSCULAS, no MESMO IDIOMA do título que receber.
+IDIOMA — A REGRA QUE MANDA EM TODAS AS OUTRAS: o canal deste vídeo publica em
+{idioma}. {regra}
+
+Devolva de 2 a {max_palavras} palavras, no máximo {max_caracteres} caracteres,
+em MAIÚSCULAS.
 
 O texto tem que dizer O FATO, de forma que alguém que não conhece o assunto
 entenda o que aconteceu só de bater o olho. Nome próprio conhecido ajuda, e
@@ -70,35 +136,100 @@ NÃO use: pergunta, reticências, "veja", "urgente", "chocante", "você não vai
 acreditar", nem qualquer promessa que a capa não cumpra. Curiosidade fabricada
 traz clique e perde a audiência no primeiro segundo — o que retém é o fato.
 
-Exemplos do que funciona: "TRUMP PAUSA ATAQUES AO IRÃ", "PETRÓLEO CAI 11%",
-"APPLE PASSA A NVIDIA".
+Exemplos do que funciona neste canal: {exemplos}.
 Exemplos do que NÃO funciona: "O QUE NINGUÉM TE CONTOU", "ISSO MUDA TUDO",
 "ATENÇÃO: URGENTE".
 
-Responda somente com o JSON pedido.\
+Responda somente com o JSON pedido, com o texto em {idioma}.\
 """
 
 
+def _instrucoes(publico: str) -> str:
+    idioma = IDIOMAS.get(publico, IDIOMAS["brasil"])
+    return INSTRUCOES.format(
+        idioma=idioma["nome"],
+        regra=idioma["regra"],
+        exemplos=idioma["exemplos"],
+        max_palavras=MAX_PALAVRAS,
+        max_caracteres=MAX_CARACTERES,
+    )
+
+
+def _idioma_plausivel(texto: str, publico: str) -> bool:
+    """False quando a capa saiu claramente no idioma do OUTRO canal.
+
+    Regra de comportamento nunca fica só no prompt (mesma lição que criou a
+    auditoria pró-leigo em escritor.py). Só reprova quando o texto tem marca do
+    idioma alheio e NENHUMA marca do idioma do canal — uma capa de nomes
+    próprios ("APPLE PASSA A NVIDIA", "GOOGLE CUTS JOBS") não tem marca nenhuma
+    e passa nos dois canais, que é o comportamento certo: o defeito que isto
+    existe para pegar é a frase INTEIRA no idioma errado.
+    """
+    proprias, alheias = _MARCAS_IDIOMA.get(publico, _MARCAS_IDIOMA["brasil"])
+    palavras = {p.strip(".,;:!?\"'").lower() for p in texto.split()}
+    return not (palavras & alheias) or bool(palavras & proprias)
+
+
 def _texto_da_capa(cfg: Config, titulo: str, narracao: str) -> str:
-    """Frase curta para a capa; cai no título quando o GPT falha."""
+    """Frase curta para a capa, no idioma do CANAL; cai no título se o GPT falha.
+
+    O idioma vem de ``cfg.publico`` (o canal), nunca da inferência do modelo —
+    ver o comentário de IDIOMAS. Quando a resposta sai no idioma errado, uma
+    segunda chamada cobra a correção; se ela também sair errada, o título do
+    vídeo (que já está no idioma certo, garantido por FOCO_USA/FOCO_BRASIL no
+    escritor) vira a capa.
+    """
     reserva = " ".join(titulo.split()[:MAX_PALAVRAS]).upper()
+    instrucoes = _instrucoes(cfg.publico)
+    conteudo = (
+        f"{AVISO_DADOS_EXTERNOS}\n\nTÍTULO: {titulo}\n\nNARRAÇÃO:\n{narracao}"
+    )
     try:
         cliente = OpenAI(api_key=cfg.openai_api_key)
+        mensagens = [
+            {"role": "system", "content": instrucoes},
+            {"role": "user", "content": conteudo},
+        ]
         resposta = cliente.chat.completions.create(
             model=cfg.text_model,
-            messages=[
-                {"role": "system", "content": INSTRUCOES},
-                {
-                    "role": "user",
-                    "content": (
-                        f"{AVISO_DADOS_EXTERNOS}\n\nTÍTULO: {titulo}\n\n"
-                        f"NARRAÇÃO:\n{narracao}"
-                    ),
-                },
-            ],
+            messages=mensagens,
             response_format={"type": "json_schema", "json_schema": ESQUEMA},
         )
         texto = json.loads(resposta.choices[0].message.content)["texto"]
+
+        if texto and not _idioma_plausivel(texto, cfg.publico):
+            idioma = IDIOMAS.get(cfg.publico, IDIOMAS["brasil"])["nome"]
+            print(
+                f"[thumbnail] aviso: capa \"{texto}\" saiu fora do idioma do "
+                f"canal ({idioma}); pedindo correção."
+            )
+            resposta = cliente.chat.completions.create(
+                model=cfg.text_model,
+                messages=mensagens
+                + [
+                    {
+                        "role": "assistant",
+                        "content": resposta.choices[0].message.content,
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"O texto saiu no idioma errado. Reescreva a capa "
+                            f"em {idioma}, mantendo o mesmo fato."
+                        ),
+                    },
+                ],
+                response_format={"type": "json_schema", "json_schema": ESQUEMA},
+            )
+            corrigido = json.loads(resposta.choices[0].message.content)["texto"]
+            if corrigido and _idioma_plausivel(corrigido, cfg.publico):
+                texto = corrigido
+            else:
+                print(
+                    "[thumbnail] aviso: a correção também saiu fora do idioma; "
+                    "usando o título do vídeo."
+                )
+                return reserva
     except Exception as erro:  # noqa: BLE001 — capa não vale abortar publicação
         print(f"[thumbnail] aviso: GPT falhou ({erro}); usando o título.")
         return reserva

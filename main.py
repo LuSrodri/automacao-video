@@ -42,35 +42,42 @@ Fluxo:
 9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
    o momento exato da narração (citações do texto -> timestamps do
    alinhamento).
-10. Infográficos animados: o GPT escolhe até 2 números reais da história e o
-    pipeline renderiza contadores/barras minimalistas (Pillow) que sobem da
-    base do vídeo para o terço superior.
-11. Cartelas de imagem nos momentos-chave: foto do post da trend ou og:image
+10. Cartelas de imagem nos momentos-chave: foto do post da trend ou og:image
     da notícia, auditada igual aos clipes, emoldurada por cima do clipe quando
-    a narração nomeia o que ela mostra (nunca em cima de um infográfico).
-11b. Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
+    a narração nomeia o que ela mostra.
+11. Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
     infográfico, diagrama ou cartaz DESENHADO a partir dos números que a
     narração diz — ancorado na citação literal do trecho, e só com dado que a
-    narração falou. Cartelas e figuras sobem de baixo do quadro e saem por
-    cima.
+    narração falou. São a ÚNICA fonte de "big number" na tela: os infográficos
+    que o ffmpeg montava a partir de PNGs do Pillow foram removidos em
+    2026-08-04. Cartelas e figuras sobem de baixo do quadro e saem por cima, e
+    enquanto estão na tela o fundo entra e sai de foco em rampa suave.
 12. ffmpeg monta: fundo = o próprio clipe borrado (cobertura total, sem
     instante vazio) + clipe nítido centrado + crossfade curto + legendas
-    grandes (Archivo Black) + crédito de reprodução no canto superior direito
-    ("Reprodução Imagem: X" + conta do post) + cartelas + figuras +
-    infográficos. SEM música de fundo.
+    grandes (Archivo Black, altura levemente reduzida) + crédito de reprodução
+    no canto superior direito ("Reprodução Imagem: X" + conta do post) +
+    cartelas + figuras. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução).
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - padrão: Short vertical 1080x1920 de ~60s, com legendas queimadas e narração
-  ACELERADA (VIDEO_VELOCIDADE).
-- `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 90 a 120 segundos,
-  SEM legendas e em velocidade NORMAL, para os dois canais (combina com
-  `-usa`). O roteiro explica um acontecimento contemporâneo cruzando
-  tecnologia/IA, negócios, mercado de trabalho e mercado financeiro, e o
-  payload é o que aquilo muda para quem procura emprego ou está em transição de
-  carreira. Usa até 8 clipes do X, até 4 infográficos, até 4 figuras geradas, e
-  a descrição sai com a lista de fontes reais.
+  ACELERADA (VIDEO_VELOCIDADE). PISO DURO de 50 segundos: Short mais curto que
+  isso não é publicado, a execução aborta. Os Shorts INTERCALAM temas — o
+  macrotema do Short anterior sai da disputa da seleção.
+- `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 120 a 150 segundos
+  (o piso de 120s é duro: abaixo dele a execução aborta), SEM legendas e em
+  velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
+  explica um acontecimento contemporâneo cobrindo de 3 a 5 TÓPICOS,
+  tipicamente pelas quatro óticas do canal (tecnologia/IA, negócios, mercado de
+  trabalho, mercado financeiro), e o payload é o que aquilo muda para quem
+  procura emprego ou está em transição de carreira. Usa até 8 clipes do X, até
+  4 cartelas, até 4 figuras geradas, e a descrição sai com a lista de fontes
+  reais.
+
+Idioma: o canal decide, nunca o modelo. Canal brasileiro publica TUDO em
+português (título, descrição, narração, capa); canal americano (`-usa`), TUDO
+em inglês.
 """
 
 import argparse
@@ -84,6 +91,7 @@ from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
 from pipeline.classificacao import classificar_trends
 from pipeline.config import (
+    CURTO_MIN_S,
     LONGO_MAX_S,
     LONGO_MIN_CLIPES_APROVADOS,
     LONGO_MIN_S,
@@ -99,7 +107,6 @@ from pipeline.edicao import (
 )
 from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.figuras import gerar_figuras
-from pipeline.grafico import gerar_graficos
 from pipeline.legendas import gerar_legendas
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.noticias import buscar_noticias
@@ -263,12 +270,38 @@ def main() -> None:
     largura, altura = cfg.video_largura, cfg.video_altura
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
-    # A duração final é a da narração: no formato longo ela precisa cair na
-    # faixa pedida (90-120s). A faixa de palavras do roteirista já mira nisso;
-    # este aviso existe porque o ritmo do TTS varia de narração para narração.
-    if cfg.formato == "longo" and not LONGO_MIN_S <= duracao <= LONGO_MAX_S:
+    # PISO DURO DE DURAÇÃO (2026-08-04, pedido do usuário): Short abaixo de
+    # CURTO_MIN_S e vídeo longo abaixo de LONGO_MIN_S estão PROIBIDOS — não
+    # saem, em vez de sair curtos como vinha acontecendo (o canal americano
+    # publicou Shorts de 17 a 35 segundos com duração-alvo de 60).
+    #
+    # A conferência é aqui, e não só na faixa de palavras do roteiro, porque
+    # palavra não é segundo: o ritmo real do TTS varia ~25% de narração para
+    # narração, e só depois de narrar e cortar os silêncios se sabe a duração
+    # de verdade. Custa a narração já paga — e é o preço certo, porque o
+    # roteirista já teve TENTATIVAS_FAIXA_PALAVRAS chances de acertar o
+    # tamanho, e o que sobra aqui é um vídeo que não deveria ir ao ar.
+    #
+    # O teto NÃO aborta: vídeo comprido demais é um defeito de retenção, não de
+    # formato, e jogar fora uma execução inteira por 3 segundos de fala a mais
+    # seria caro sem ninguém ganhar nada.
+    piso_duracao = LONGO_MIN_S if cfg.formato == "longo" else CURTO_MIN_S
+    if duracao < piso_duracao:
+        raise SystemExit(
+            f"Narração de {duracao:.1f}s abaixo do piso de {piso_duracao}s do "
+            f"formato {cfg.formato} — vídeo mais curto que isso está proibido; "
+            "abortando sem publicar. O roteiro saiu curto demais mesmo depois "
+            "das tentativas de ajuste: as alavancas são subir "
+            + (
+                "LONG_DURACAO (alvo dentro da faixa) "
+                if cfg.formato == "longo"
+                else "VIDEO_DURACAO "
+            )
+            + "ou usar um TEXT_MODEL que respeite melhor o piso de palavras."
+        )
+    if cfg.formato == "longo" and duracao > LONGO_MAX_S:
         print(
-            f"[aviso] Narração de {duracao:.1f}s fora da faixa do formato "
+            f"[aviso] Narração de {duracao:.1f}s acima do teto do formato "
             f"longo ({LONGO_MIN_S}-{LONGO_MAX_S}s); o vídeo segue, mas vale "
             "ajustar LONG_DURACAO se isso virar rotina."
         )
@@ -343,15 +376,8 @@ def main() -> None:
             intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
         )
 
-    # Infográficos animados: contadores/barras com os números reais da
-    # história, no terço superior, subindo da base.
-    graficos = gerar_graficos(
-        cfg, roteiro["texto_video"], noticias, alinhamento, duracao, pasta
-    )
-
     # Cartelas: a imagem do momento-chave (foto do post da trend ou og:image da
-    # notícia) entra emoldurada por cima do clipe. Recebe as janelas dos
-    # infográficos para não haver duas sobreposições ao mesmo tempo.
+    # notícia) entra emoldurada por cima do clipe.
     cartelas = gerar_cartelas(
         cfg,
         roteiro["texto_video"],
@@ -360,16 +386,15 @@ def main() -> None:
         alinhamento,
         duracao,
         pasta,
-        ocupadas=[(g["inicio_s"], g["inicio_s"] + g["dur_s"]) for g in graficos],
     )
 
     # Figuras geradas (gpt-image-2): gráfico, tabela, infográfico, diagrama ou
-    # cartaz DESENHADO a partir dos números que a narração diz. Entra por
-    # último na fila de sobreposições porque é a camada mais cara — o que já
-    # está marcado pelos infográficos e pelas cartelas é desviado aqui.
-    ocupadas = [
-        (c["inicio_s"], c["inicio_s"] + c["dur_s"]) for c in graficos + cartelas
-    ]
+    # cartaz DESENHADO a partir dos números que a narração diz. São a ÚNICA
+    # fonte de "big number" na tela desde 2026-08-04 — os infográficos que o
+    # ffmpeg montava a partir de PNGs do Pillow (grafico.py) foram removidos a
+    # pedido do usuário. Entra por último na fila de sobreposições porque é a
+    # camada mais cara: o que já está marcado pelas cartelas é desviado aqui.
+    ocupadas = [(c["inicio_s"], c["inicio_s"] + c["dur_s"]) for c in cartelas]
     figuras = gerar_figuras(
         cfg,
         roteiro["texto_video"],
@@ -388,7 +413,6 @@ def main() -> None:
         largura,
         altura,
         legendas=legendas,
-        graficos=graficos,
         cartelas=cartelas,
         figuras=figuras,
         publico=cfg.publico,

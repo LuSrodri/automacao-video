@@ -300,8 +300,15 @@ def _montar_cartao(m: dict, largura: int, altura: int, publico: str):
     from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
     vertical = altura > largura
-    larg_alvo = round(largura * (0.62 if vertical else 0.34))
-    alt_max = round(altura * (0.42 if vertical else 0.56))
+    # Tamanho AUMENTADO em 2026-08-04 (pedido do usuário): a cartela era um
+    # cartão pequeno no meio de um clipe em movimento e perdia a disputa pela
+    # atenção justamente no segundo em que a narração nomeia o que ela mostra.
+    # Os tetos foram escolhidos contra o quadro real: no vertical a largura
+    # deixa folga para a sombra (que é desenhada fora do cartão) e a altura
+    # somada à posição de leitura para acima da faixa das legendas queimadas;
+    # no 16:9 não há legenda, e o limite é só o quadro.
+    larg_alvo = round(largura * (0.78 if vertical else 0.48))
+    alt_max = round(altura * (0.50 if vertical else 0.66))
 
     with Image.open(m["caminho"]) as bruta:
         foto = bruta.convert("RGB")
@@ -372,9 +379,11 @@ def _renderizar_frames(
 
     destino.mkdir(parents=True, exist_ok=True)
     cartao = _montar_cartao(m, largura, altura, publico)
-    # Vertical: acima da faixa das legendas queimadas. 16:9 (sem legendas):
-    # centro da tela.
-    cy_final = round(altura * 0.44) if altura > largura else altura // 2
+    # Vertical: acima da faixa das legendas queimadas. Subiu de 0.44 para 0.38
+    # junto com o aumento do cartão — com o cartão maior, a posição antiga
+    # levava a base dele para dentro da faixa das legendas. 16:9 (sem
+    # legendas): centro da tela.
+    cy_final = round(altura * 0.38) if altura > largura else altura // 2
     cx = largura // 2
     cy_baixo = altura + cartao.height // 2
     cy_cima = -cartao.height // 2

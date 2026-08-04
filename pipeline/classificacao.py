@@ -23,15 +23,17 @@ from openai import OpenAI
 
 from .config import AVISO_DADOS_EXTERNOS, Config
 
-# Macrotemas do canal: a seleção em escritor.py impede que o mesmo macrotema
-# emende mais vídeos seguidos que o teto configurado lá, garantindo um mínimo
-# de variabilidade sem impor preferência editorial.
-# Macrotemas do canal. "guerra-geopolitica" saiu em 2026-07-30 junto com as
+# Macrotemas do canal. No formato CURTO eles voltaram a ter efeito de regra: o
+# RODÍZIO de temas dos Shorts (2026-08-04, escritor.py) veta as candidatas cujo
+# macrotema é o dos últimos Shorts publicados, para que cada Short saia de um
+# tema diferente do anterior. No formato longo eles seguem só como contexto.
+# "guerra-geopolitica" saiu em 2026-07-30 junto com as
 # contas de inteligência/defesa: o canal deixou de cobrir o assunto, e manter o
 # rótulo só serviria para rotular como "outro" disfarçado o que já não é pauta.
 # "mercado-financeiro" entrou no lugar, com o novo foco do canal.
 MACROTEMAS = [
     "ia",
+    "criacoes-ia",
     "dev-software",
     "hardware-chips",
     "bigtech-negocios",
@@ -41,8 +43,19 @@ MACROTEMAS = [
     "outro",
 ]
 
+# "criacoes-ia" entrou em 2026-08-04 (pedido do usuário). Ele é o oposto de
+# "ia": "ia" é a notícia sobre o LABORATÓRIO (modelo lançado, rodada de
+# investimento, benchmark), "criacoes-ia" é a notícia sobre o QUE FOI FEITO com
+# a ferramenta — o vídeo, a música, a imagem, o curta, o personagem, o app
+# gerado. É o macrotema do vídeo que mostra o resultado na tela, e é o que
+# melhor casa com um formato montado só de clipes: a criação é o clipe.
 MACROTEMAS_DESCRICAO = """\
-- ia: modelos, produtos, pesquisas e empresas de IA
+- ia: modelos, produtos, pesquisas e empresas de IA (o lado do laboratório:
+  lançamento, benchmark, investimento, disputa entre labs)
+- criacoes-ia: CRIAÇÕES FEITAS COM IA — vídeo, curta, animação, música, imagem,
+  arte, personagem, jogo, site ou app gerados por IA; o trabalho de quem usa as
+  ferramentas generativas e o resultado que dá para ver ou ouvir na tela. Se a
+  notícia é sobre a OBRA gerada (e não sobre o modelo que a gerou), é aqui
 - dev-software: desenvolvimento de software, linguagens, frameworks, ferramentas
 - hardware-chips: chips, GPUs, dispositivos, robôs, data centers
 - bigtech-negocios: negócios, aquisições, disputas e resultados das big techs

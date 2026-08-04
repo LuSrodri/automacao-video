@@ -22,13 +22,20 @@ de uma sala de estar (cenario.py), identidade visual só desse formato. A área
 tela quando o clipe é vertical, e o PNG da sala entra por cima recortando o
 clipe na moldura. Crédito, etiquetas e sobreposições ficam SOBRE a sala.
 
-Por cima disso entram duas camadas de sobreposição, ambas como sequências de
-PNG RGBA já renderizadas: as CARTELAS de imagem dos momentos-chave
-(cartelas.py, no miolo da tela) e os INFOGRÁFICOS animados (grafico.py, no
-terço superior). As janelas das duas nunca coincidem — quem monta as cartelas
-recebe as janelas dos infográficos e desvia delas. Enquanto uma cartela está
-na tela, tudo que está atrás dela sai de foco (CARTELA_BLUR_SIGMA), para a
-imagem do momento-chave não disputar atenção com o clipe em movimento.
+Por cima disso entra UMA camada de sobreposição, como sequências de PNG RGBA já
+renderizadas: as CARTELAS de imagem dos momentos-chave (cartelas.py) e as
+FIGURAS desenhadas pelo gpt-image-2 (figuras.py), ambas no miolo da tela. As
+janelas das duas nunca coincidem — quem monta as figuras recebe as janelas das
+cartelas e desvia delas. Enquanto uma delas está na tela, tudo que está atrás
+sai de foco (CARTELA_BLUR_SIGMA), para a imagem do momento-chave não disputar
+atenção com o clipe em movimento; o desfoque ENTRA E SAI EM RAMPA, acompanhando
+o movimento do cartão (ver `_filtros_desfoque`).
+
+Os INFOGRÁFICOS ANIMADOS montados em ffmpeg (contadores e barras renderizados
+em Pillow pelo antigo grafico.py) foram REMOVIDOS em 2026-08-04, a pedido do
+usuário: os "big numbers" da tela passam a vir só das figuras do gpt-image-2,
+que já cobrem o mesmo repertório com identidade visual única. O módulo
+grafico.py foi apagado junto — não reintroduzir sem pedido explícito.
 """
 
 import subprocess
@@ -96,10 +103,30 @@ REPR_FONTE_FRAC = 0.024  # fração do lado menor (mesma lógica do crédito)
 REPR_MARGEM_FRAC = 0.030  # distância da borda esquerda (fração da largura)
 REPR_Y_FRAC = 0.912  # distância do topo como fração da altura (rodapé)
 
-# Desfoque aplicado ao que está ATRÁS de uma cartela, enquanto ela está na
-# tela: tira o clipe em movimento da disputa pela atenção enquanto a imagem do
-# momento-chave é lida. Vale só no intervalo de cada cartela.
-CARTELA_BLUR_SIGMA = 14
+# Desfoque aplicado ao que está ATRÁS de uma cartela ou figura, enquanto ela
+# está na tela: tira o clipe em movimento da disputa pela atenção enquanto a
+# imagem do momento-chave é lida. Vale só no intervalo de cada cartela.
+# Subiu de 14 para 20 em 2026-08-04 junto com o aumento dos cartões: cartão
+# maior deixa menos fundo à mostra, e o pouco que sobra precisa sair de foco
+# com mais convicção para não virar uma moldura de ruído em volta da imagem.
+CARTELA_BLUR_SIGMA = 20
+# RAMPA do desfoque (2026-08-04, pedido do usuário: "deixe o fundo borrado …
+# com uma animação suave"). O desfoque entrava e saía de um quadro para o
+# outro, e um corte seco de nitidez no meio de um clipe em movimento é
+# exatamente o tipo de solavanco que o resto da montagem evita.
+#
+# gblur NÃO aceita expressão por quadro em `sigma` (só `enable`, de timeline),
+# então a rampa é feita por NÍVEIS: CARTELA_BLUR_NIVEIS filtros gblur, cada um
+# com um sigma fixo e ligado apenas nas fatias de tempo em que aquele nível
+# vale — somadas as fatias de TODAS as cartelas. Como as fatias são disjuntas,
+# o custo total é o de um único desfoque; o que muda é só quando cada um liga.
+CARTELA_BLUR_NIVEIS = 5
+# Duração de cada ponta da rampa. Casada com o movimento do cartão (T_ENTRADA /
+# T_SAIDA em cartelas.py e figuras.py, 0,45-0,55s): o fundo desfoca enquanto o
+# cartão sobe e volta ao foco enquanto ele sai. Precisa caber duas vezes dentro
+# da menor janela de cartela (DUR_MINIMA = 2,2s) e não pode passar do respiro
+# entre cartelas (GAP_CARTELAS = 1,2s), senão duas rampas se encavalariam.
+CARTELA_BLUR_RAMPA = 0.45
 
 
 def _exigir_ffmpeg() -> None:
@@ -235,6 +262,57 @@ def _texto_drawtext(texto: str) -> str:
     )
 
 
+def _filtros_desfoque(
+    janelas: list[tuple[float, float]], entrada: str, saida: str
+) -> list[str]:
+    """Filtros gblur que desfocam o fundo em RAMPA nas janelas das cartelas.
+
+    Um gblur por NÍVEL de sigma (CARTELA_BLUR_NIVEIS), cada um ligado só nas
+    fatias de tempo em que aquele nível vale, somadas todas as janelas. Para
+    uma janela (ini, fim) e uma rampa de duração R dividida em N fatias:
+
+    - nível j (1..N-1) vale em [ini+(j-1)R/N, ini+jR/N) na subida e no espelho
+      dela na descida — duas fatias curtas;
+    - nível N (sigma cheio) vale de ini+(N-1)R/N até fim-(N-1)R/N, um intervalo
+      contíguo que já engloba o platô.
+
+    Devolve a lista de filtros encadeando `entrada` até `saida`; lista vazia
+    quando não há janela nenhuma (o chamador segue com `entrada`).
+    """
+    if not janelas:
+        return []
+
+    fatias: dict[int, list[tuple[float, float]]] = {}
+    n = CARTELA_BLUR_NIVEIS
+    passo = CARTELA_BLUR_RAMPA / n
+    for ini, fim in janelas:
+        # Janela curta demais para as duas rampas: encolhe o passo em vez de
+        # deixar a subida invadir a descida.
+        p = min(passo, max((fim - ini) / (2 * n), 0.01))
+        for j in range(1, n):
+            fatias.setdefault(j, []).extend(
+                [
+                    (ini + (j - 1) * p, ini + j * p),
+                    (fim - j * p, fim - (j - 1) * p),
+                ]
+            )
+        fatias.setdefault(n, []).append((ini + (n - 1) * p, fim - (n - 1) * p))
+
+    filtros = []
+    corrente = entrada
+    for j in sorted(fatias):
+        sigma = CARTELA_BLUR_SIGMA * j / n
+        enable = "+".join(
+            f"between(t,{a:.3f},{b:.3f})" for a, b in sorted(fatias[j])
+        )
+        alvo = saida if j == max(fatias) else f"{saida}_n{j}"
+        filtros.append(
+            f"[{corrente}]gblur=sigma={sigma:.2f}:enable='{enable}'[{alvo}]"
+        )
+        corrente = alvo
+    return filtros
+
+
 def montar_video(
     narracao: Path,
     sobreposicoes: list[dict],
@@ -242,7 +320,6 @@ def montar_video(
     largura: int,
     altura: int,
     legendas: Path | None = None,
-    graficos: list[dict] | None = None,
     cartelas: list[dict] | None = None,
     figuras: list[dict] | None = None,
     publico: str = "brasil",
@@ -261,20 +338,16 @@ def montar_video(
     "REPRESENTAÇÃO VISUAL" no rodapé, enquanto os outros clipes da mesma
     montagem seguem coloridos e sem etiqueta.
 
-    `graficos`: infográficos animados (grafico.py) — [{"pattern": str,
-    "inicio_s": float, "dur_s": float}, ...], sequências de PNGs RGBA
-    sobrepostas ao vídeo. Enquanto um infográfico está na tela, o crédito
-    some: o infográfico ocupa o terço superior.
+    `cartelas`: imagens emolduradas nos momentos-chave (cartelas.py) —
+    [{"pattern": str, "inicio_s": float, "dur_s": float}, ...], sequências de
+    PNGs RGBA sobrepostas ao vídeo. Ficam no miolo da tela e trazem o próprio
+    crédito, então NÃO desligam o crédito de reprodução do topo.
 
-    `cartelas`: imagens emolduradas nos momentos-chave (cartelas.py), no mesmo
-    formato dos infográficos. Ficam no miolo da tela e trazem o próprio
-    crédito, então NÃO desligam o crédito de reprodução do topo; entram abaixo
-    dos infográficos na pilha (as janelas nunca coincidem, por construção).
-
-    `figuras`: gráficos, tabelas e cartazes gerados por IA (figuras.py), no
-    mesmo formato das cartelas — sobem de baixo do quadro e saem por cima. São
-    tratadas exatamente como cartelas na montagem (mesma camada, mesmo borrão
-    do que está atrás); a diferença está na origem da imagem, não no ffmpeg.
+    `figuras`: gráficos, tabelas e cartazes gerados pelo gpt-image-2
+    (figuras.py), no mesmo formato das cartelas — sobem de baixo do quadro e
+    saem por cima. São tratadas exatamente como cartelas na montagem (mesma
+    camada, mesma rampa de desfoque do que está atrás); a diferença está na
+    origem da imagem, não no ffmpeg.
 
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
 
@@ -291,7 +364,6 @@ def montar_video(
         )
 
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
-    graficos = graficos or []
     # Cartelas e figuras compartilham a camada: as duas são sequências de PNG
     # RGBA no miolo da tela, com o mesmo borrão por trás. Ordenadas pelo início
     # para o log e a pilha ficarem previsíveis.
@@ -308,14 +380,6 @@ def montar_video(
         cenario, (tela_x, tela_y, tela_l, tela_a) = gerar_cenario_tv(
             largura, altura, destino.parent / "cenario_tv.png"
         )
-
-    # Janelas dos infográficos: o crédito desliga nelas (enable do ffmpeg).
-    janelas_gfx = [
-        (g["inicio_s"], min(g["inicio_s"] + g["dur_s"], duracao)) for g in graficos
-    ]
-    oculta_gfx = "".join(
-        f"*(1-between(t,{a:.2f},{b:.2f}))" for a, b in janelas_gfx
-    )
 
     sobreposicoes = _ordenar(sobreposicoes)
     estaticas = [s for s in sobreposicoes if not _e_video(s["caminho"])]
@@ -428,17 +492,20 @@ def montar_video(
 
     # Borrão sob as cartelas: enquanto a imagem do momento-chave está na tela,
     # o que está atrás dela sai de foco, para a cartela não disputar atenção
-    # com o clipe em movimento. Só o intervalo de cada cartela é afetado.
-    if cartelas:
-        janelas_cart = "+".join(
-            f"between(t,{max(0.0, float(c['inicio_s'])):.2f},"
-            f"{min(float(c['inicio_s']) + float(c['dur_s']), duracao):.2f})"
-            for c in cartelas
+    # com o clipe em movimento. Entra e sai em RAMPA, acompanhando o movimento
+    # do cartão; só o intervalo de cada cartela é afetado.
+    janelas_cart = [
+        (
+            max(0.0, float(c["inicio_s"])),
+            min(float(c["inicio_s"]) + float(c["dur_s"]), duracao),
         )
-        filtros.append(
-            f"[{corrente}]gblur=sigma={CARTELA_BLUR_SIGMA}"
-            f":enable='{janelas_cart}'[vcartblur]"
-        )
+        for c in cartelas
+    ]
+    filtros_blur = _filtros_desfoque(
+        [(a, b) for a, b in janelas_cart if b > a], corrente, "vcartblur"
+    )
+    if filtros_blur:
+        filtros += filtros_blur
         corrente = "vcartblur"
 
     if legendas is not None:
@@ -452,8 +519,13 @@ def montar_video(
     # Crédito de reprodução no canto superior direito (sobre as legendas):
     # linha 1 fixa e linha 2 com a conta do post de origem do clipe que está
     # na tela — cada clipe liga o seu crédito na sua janela. `prox_entrada` já
-    # vem numerando as entradas extras do ffmpeg (cenário, infográficos, woosh,
-    # trilha) desde a sobreposição da sala.
+    # vem numerando as entradas extras do ffmpeg (cenário, cartelas, woosh)
+    # desde a sobreposição da sala.
+    #
+    # O crédito não desliga mais em janela nenhuma: ele desligava sob os
+    # infográficos animados, que ocupavam o terço superior e cobriam o canto
+    # direito. Com eles removidos (2026-08-04), o que sobra na tela são as
+    # cartelas e as figuras, que ficam no MIOLO e nunca encostaram no crédito.
     rotulo_fixo, rotulo_conta = CREDITO_TEXTOS.get(publico, CREDITO_TEXTOS["brasil"])
     fonte = round(min(largura, altura) * CREDITO_FONTE_FRAC)
     margem = round(largura * CREDITO_MARGEM_FRAC)
@@ -471,7 +543,7 @@ def montar_video(
         conta = (s.get("conta") or "").strip()
         if conta:
             linhas.append(rotulo_conta.format(conta=conta))
-        enable = f":enable='between(t,{ini:.2f},{fim:.2f}){oculta_gfx}'"
+        enable = f":enable='between(t,{ini:.2f},{fim:.2f})'"
         for texto, y in zip(linhas, (y1, y2)):
             filtros.append(
                 f"[{corrente}]{base_credito}"
@@ -483,10 +555,10 @@ def montar_video(
             seq += 1
 
     # Etiqueta de representação visual no rodapé esquerdo, só nas janelas dos
-    # clipes marcados. Não some nos infográficos (que ocupam o terço superior)
-    # nem nas cartelas (miolo da tela): a etiqueta precisa acompanhar o clipe
-    # de ponta a ponta, senão o material de telejornal aparece um trecho sem
-    # aviso nenhum — que é justamente o que a marcação existe para impedir.
+    # clipes marcados. Não some sob as cartelas (que ficam no miolo da tela): a
+    # etiqueta precisa acompanhar o clipe de ponta a ponta, senão o material de
+    # telejornal aparece um trecho sem aviso nenhum — que é justamente o que a
+    # marcação existe para impedir.
     texto_repr = REPR_TEXTOS.get(publico, REPR_TEXTOS["brasil"])
     fonte_repr = round(min(largura, altura) * REPR_FONTE_FRAC)
     margem_repr = round(largura * REPR_MARGEM_FRAC)
@@ -506,13 +578,12 @@ def montar_video(
         corrente = f"vrepr{seq}"
         seq += 1
 
-    # Cartelas de imagem (cartelas.py): a imagem emoldurada do momento-chave
-    # entra por cima do clipe, no miolo da tela, com o próprio crédito.
-    for j, c in enumerate(cartelas):
+    # Cartelas de imagem (cartelas.py) e figuras geradas (figuras.py): a
+    # imagem emoldurada do momento-chave entra por cima do clipe, no miolo da
+    # tela, com o próprio crédito. É a camada mais alta da montagem.
+    for j, (c, (ini, fim)) in enumerate(zip(cartelas, janelas_cart)):
         idx_cart = prox_entrada
         prox_entrada += 1
-        ini = max(0.0, float(c["inicio_s"]))
-        fim = min(ini + float(c["dur_s"]), duracao)
         comando += [
             "-framerate", str(FPS), "-start_number", "1", "-i", c["pattern"],
         ]
@@ -524,24 +595,6 @@ def montar_video(
             f":enable='between(t,{ini:.2f},{fim:.2f})'[vcart{j}]"
         )
         corrente = f"vcart{j}"
-
-    # Infográficos animados (sequências de PNG RGBA do grafico.py) por cima de
-    # tudo — o crédito já foi desligado nas janelas deles.
-    for j, g in enumerate(graficos):
-        idx_gfx = prox_entrada
-        prox_entrada += 1
-        ini, fim = janelas_gfx[j]
-        comando += [
-            "-framerate", str(FPS), "-start_number", "1", "-i", g["pattern"],
-        ]
-        filtros.append(
-            f"[{idx_gfx}:v]format=rgba,setpts=PTS-STARTPTS+{ini:.2f}/TB[gfx{j}]"
-        )
-        filtros.append(
-            f"[{corrente}][gfx{j}]overlay=0:0:eof_action=pass"
-            f":enable='between(t,{ini:.2f},{fim:.2f})'[vgfx{j}]"
-        )
-        corrente = f"vgfx{j}"
 
     # Áudio: narração + woosh em cada transição de clipe. SEM música de fundo
     # (removida em 2026-07-30). O primeiro clipe não tem transição de entrada.

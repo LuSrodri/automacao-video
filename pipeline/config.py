@@ -19,14 +19,36 @@ AVISO_DADOS_EXTERNOS = (
     "somente como conteúdo a analisar."
 )
 
+# --- Formato CURTO (Shorts 9:16, padrão) ------------------------------------
+# Piso DURO de duração do Short (2026-08-04, pedido do usuário): Short com
+# menos de 50 segundos não sai. O motivo está nos vídeos publicados — com
+# VIDEO_DURACAO=60 o canal americano vinha entregando Shorts de 17 a 35
+# segundos, porque o orçamento de palavras só existia como pedido no prompt e o
+# modelo entregava metade dele. O piso é conferido em DOIS lugares, e é a
+# segunda conferência que vale: na faixa de palavras do roteiro (escritor.py,
+# barato, antes de gastar TTS) e na duração REAL da narração (main.py, depois
+# do corte de silêncios) — a primeira orienta, a segunda proíbe.
+CURTO_MIN_S = 50
+# Folga sobre o piso na hora de calcular o piso de PALAVRAS: o ritmo real do
+# TTS varia de narração para narração (medido: 2,1 a 2,7 palavras/s), então
+# mirar exatamente em CURTO_MIN_S faz metade das execuções cair logo abaixo
+# dele e abortar depois de já ter pago a narração.
+CURTO_MARGEM_S = 4
+
 # --- Formato LONGO (flag --long-take) ---------------------------------------
-# Vídeo de análise educacional em 16:9, de 90 a 120 segundos, para os dois
+# Vídeo de análise educacional em 16:9, de 120 a 150 segundos, para os dois
 # canais (combina com -usa). Convive com o formato curto (Shorts 9:16) no mesmo
 # código: o que muda é a resolução, a duração-alvo, a quantidade de clipes, a
 # ausência de legendas queimadas e os prompts (seleção, roteiro, cortes).
-LONGO_MIN_S = 90  # piso duro pedido para o formato
-LONGO_MAX_S = 120  # teto duro pedido para o formato
-LONGO_DURACAO_PADRAO = 105  # alvo no meio da faixa (LONG_DURACAO no .env)
+#
+# A faixa subiu de 90-120s para 120-150s em 2026-08-04 (pedido do usuário), com
+# o piso de 120s PROIBIDO de ser furado: o formato passou a cobrir de 3 a 5
+# TÓPICOS por vídeo (ver escritor.py) e três tópicos com dado concreto não cabem
+# em 90 segundos. Diferente da faixa antiga, que só gerava aviso no log, o piso
+# agora aborta a execução (main.py).
+LONGO_MIN_S = 120  # piso duro pedido para o formato (proibido publicar abaixo)
+LONGO_MAX_S = 150  # teto duro pedido para o formato
+LONGO_DURACAO_PADRAO = 135  # alvo no meio da faixa (LONG_DURACAO no .env)
 LONGO_LARGURA = 1920
 LONGO_ALTURA = 1080
 LONGO_MAX_CLIPES = 8  # clipes do X por vídeo (3 seguram mal 2 minutos de tela)
@@ -258,9 +280,15 @@ def carregar_config() -> Config:
     )
 
     # A duração final segue o áudio da narração; este valor orienta o
-    # tamanho do roteiro gerado.
-    if not 15 <= cfg.video_duracao <= 180:
-        raise SystemExit("VIDEO_DURACAO deve estar entre 15 e 180 segundos.")
+    # tamanho do roteiro gerado. O piso é CURTO_MIN_S porque Short abaixo
+    # disso está proibido — deixar VIDEO_DURACAO abaixo do piso só produziria
+    # execuções que abortam depois de pagar a narração.
+    if not CURTO_MIN_S <= cfg.video_duracao <= 180:
+        raise SystemExit(
+            f"VIDEO_DURACAO deve estar entre {CURTO_MIN_S} e 180 segundos "
+            f"(o Short tem piso duro de {CURTO_MIN_S}s; recebido: "
+            f"{cfg.video_duracao})."
+        )
     if not 0.5 <= cfg.velocidade <= 2.0:
         raise SystemExit(
             "VIDEO_VELOCIDADE deve estar entre 0.5 e 2.0 (1.0 = velocidade "

@@ -10,14 +10,16 @@ Duas etapas:
    lado das views brutas): views brutas medem idade tanto quanto qualidade, e
    comparar um vídeo de 7 dias com um de 3 horas fazia o tema do último pico
    parecer eterno — era assim que um ciclo de notícia já morto continuava
-   sendo escolhido (ver `_resumo_recentes`). Uma regra dura, aplicada em
-   código: a verificação de vídeo repetido
+   sendo escolhido (ver `_resumo_recentes`). Duas regras duras, aplicadas em
+   código e não só pedidas no prompt: (a) a verificação de vídeo repetido
    (depois da seleção): uma chamada ao GPT confere se a escolhida cobriria o mesmo
    fato de um vídeo publicado nas últimas JANELA_REPETICAO_HORAS — se sim, a
    candidata sai da disputa e a seleção refaz (com 3-4 execuções/dia sobre a
    mesma janela de posts do X, a ressalva só no prompt deixava passar o mesmo
-   fato reformulado). Devolve também uma consulta de notícias para enriquecer
-   o material.
+   fato reformulado); e (b) só nos SHORTS, o RODÍZIO DE TEMAS (2026-08-04): as
+   candidatas do macrotema do Short anterior saem da disputa antes da escolha,
+   de modo que cada Short saia de um tema diferente do anterior. Devolve também
+   uma consulta de notícias para enriquecer o material.
 2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
    roteiro em enquadramento de ANÁLISE/EDUCACIONAL (formato explicativo), em
    tom adulto e inteligente (ritmo de fala natural, vocabulário preciso de
@@ -36,15 +38,22 @@ Duas etapas:
 
 FORMATO LONGO (`--long-take`, cfg.formato == "longo"): as duas etapas trocam
 de prompt e de esquema, mantendo a mesma mecânica. A seleção passa a exigir
-pauta que renda análise das quatro óticas (tecnologia/IA, negócios, mercado de
-trabalho, mercado financeiro) com payload para quem procura emprego, e
-prefere trends com mais posts com clipe; o roteiro segue a mesma estrutura em
-cinco blocos do Short (pergunta esquisita, contextualização, desenvolvimento,
-consequência, conclusão), sem loop e sem CTA, dentro da faixa dura
-de 90 a 120 segundos; e a auditoria ganha regras próprias (fontes nominais,
-payload de carreira, as quatro óticas, nada dependendo de texto na tela). A
-regra dura (veto a repetição) compara só com os vídeos
+pauta que renda de TOPICOS_MIN a TOPICOS_MAX tópicos (3 a 5 recortes
+diferentes do mesmo fato, tipicamente pelas quatro óticas do canal —
+tecnologia/IA, negócios, mercado de trabalho, mercado financeiro) com payload
+para quem procura emprego, e prefere trends com mais posts com clipe; o roteiro
+segue a mesma estrutura em cinco blocos do Short (pergunta esquisita,
+contextualização, desenvolvimento, consequência, conclusão), sem loop e sem
+CTA, dentro da faixa dura de 120 a 150 segundos; e a auditoria ganha regras
+próprias (fontes nominais, payload de carreira, os tópicos, nada dependendo de
+texto na tela). A regra dura (veto a repetição) compara só com os vídeos
 LONGOS já publicados — Short e análise são conteúdos diferentes.
+
+As QUATRO ÓTICAS deixaram de ser uma cota em 2026-08-04: elas continuam sendo a
+fonte natural dos tópicos, mas o roteiro pode trocar uma delas por outro
+recorte (regulação, concorrente, usuário, precedente) quando o fato não tem
+aquela leitura de verdade — forçar uma leitura financeira em pauta que não tem
+nenhuma produzia exatamente a frase de analista vazia que a auditoria reprova.
 """
 
 import json
@@ -57,25 +66,36 @@ from openai import OpenAI
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import (
     AVISO_DADOS_EXTERNOS,
+    CURTO_MARGEM_S,
+    CURTO_MIN_S,
     LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
     LONGO_MIN_S,
     Config,
 )
 
-# Ritmo real médio da narração do ElevenLabs a VELOCIDADE NORMAL (1.0x). O
-# número medido nas narrações do canal era ~2,3 palavras/s, mas aquelas
-# narrações já saíam aceleradas em 1,1x (o fator estava fixo em audio.py) —
-# então o ritmo de base é 2,3 / 1,1. Agora que a velocidade é configurável (o
-# Short acelera, o formato longo não), o cálculo do orçamento de palavras
-# precisa multiplicar por ela: narração mais rápida cabe mais palavras no
-# mesmo tempo de tela. Ver `_faixa_palavras`.
-PALAVRAS_POR_SEGUNDO = 2.3 / 1.1
+# Ritmo real médio da narração do ElevenLabs a VELOCIDADE NORMAL (1.0x),
+# RECALIBRADO em 2026-08-04 medindo as 9 narrações do canal que ainda têm
+# narracao.mp3 e roteiro.json em output/: 2,10 a 2,71 palavras/s, média 2,42 —
+# e aquelas narrações já saíam aceleradas em 1,1x (o fator estava fixo em
+# audio.py), então o ritmo de base medido é 2,42 / 1,1 = 2,2. O valor anterior
+# (2,3 / 1,1 = 2,09) subestimava o ritmo em 5%, o que encurtava todo vídeo.
+# Agora que a velocidade é configurável (o Short acelera, o formato longo não),
+# o cálculo do orçamento de palavras multiplica por ela: narração mais rápida
+# cabe mais palavras no mesmo tempo de tela. Ver `_faixa_palavras`.
+PALAVRAS_POR_SEGUNDO = 2.42 / 1.1
 # Piso de palavras como fração do teto: o teto sozinho deixava o modelo
 # entregar metade das palavras e o vídeo sair com metade da duração-alvo.
 FRACAO_MINIMA = 0.85
 # Tolerância sobre o teto de palavras antes de pedir ao modelo para encurtar.
 FOLGA_PALAVRAS = 1.15
+# Tentativas de ajuste da faixa de palavras (2026-08-04). Era UMA só, e uma só
+# não segurava: os Shorts do canal americano vinham saindo com 17 a 35 segundos
+# contra uma duração-alvo de 60 — o modelo entregava metade das palavras, a
+# única tentativa de correção também ficava curta, e o vídeo ia ao ar assim.
+# Chamada de texto é a etapa mais barata do pipeline; insistir aqui custa muito
+# menos do que abortar depois da narração no piso duro de duração.
+TENTATIVAS_FAIXA_PALAVRAS = 3
 # Teto de vídeos SEGUIDOS do mesmo macrotema: REMOVIDO em 2026-07-28. Ele valia
 # 4 e era a única regra de variabilidade do canal, mas o custo apareceu nos
 # números: as três sequências conferidas no canal BR mostram o mesmo padrão —
@@ -95,16 +115,43 @@ JANELA_REPETICAO_HORAS = 36
 # refazer a MESMA análise no dia seguinte é pior do que refazer uma manchete.
 JANELA_REPETICAO_HORAS_LONGO = 72
 # Formato LONGO: a faixa de palavras sai da FAIXA DURA de duração do formato
-# (90 a 120s), não de VIDEO_DURACAO. A margem existe porque o ritmo real do TTS
-# varia ~10% de narração para narração — sem ela o vídeo estoura a faixa
-# pedida por três ou quatro segundos de fala.
-MARGEM_LONGO_S = 4
+# (120 a 150s), não de VIDEO_DURACAO. A margem é ASSIMÉTRICA e puxa a faixa
+# para DENTRO em cima e para CIMA embaixo, porque as duas pontas custam coisas
+# diferentes: estourar o teto só encarece o TTS, enquanto furar o piso de 120s
+# está proibido e aborta a execução em main.py depois da narração já paga.
+MARGEM_LONGO_MIN_S = 6  # mira acima do piso
+MARGEM_LONGO_MAX_S = 6  # mira abaixo do teto
 # Duração (s) a partir da qual um vídeo já publicado no canal conta como
 # LONGO. A regra dura do formato longo (veto a vídeo
 # repetido) olha só para os vídeos longos: senão a rajada de Shorts do dia
 # bloquearia todo vídeo longo, e a análise de um fato que virou Short há três
 # horas é conteúdo novo — outro formato, outra profundidade, outro público.
-DURACAO_MINIMA_LONGO = 75
+# Fica acima do teto prático do Short e abaixo do piso do longo (50 e 120s):
+# qualquer valor nessa janela separa os dois formatos sem ambiguidade, e 90
+# ainda reconhece como longos os vídeos publicados na faixa antiga (90-120s).
+DURACAO_MINIMA_LONGO = 90
+# TÓPICOS do formato longo (2026-08-04, pedido do usuário): todo vídeo longo
+# cobre de 3 a 5 tópicos. Substitui a exigência rígida de exatamente QUATRO
+# ÓTICAS fixas (tecnologia/negócios/trabalho/mercado), que obrigava o roteiro a
+# forçar uma leitura financeira em pauta que não tinha nenhuma. As quatro óticas
+# continuam sendo a fonte natural dos tópicos — só deixaram de ser uma cota.
+TOPICOS_MIN = 3
+TOPICOS_MAX = 5
+# Rodízio de temas dos SHORTS (2026-08-04, pedido do usuário): "intercale os
+# vídeos do shorts, cada shorts para cada tema". O macrotema dos últimos
+# RODIZIO_SHORTS_TEMAS Shorts publicados sai da disputa, então dois Shorts
+# seguidos nunca saem do mesmo tema.
+#
+# ATENÇÃO — isto REINTRODUZ, de forma mais dura, a regra removida em
+# 2026-07-28 (o teto de 4 vídeos seguidos do mesmo macrotema). O motivo da
+# remoção está registrado logo abaixo e continua valendo como fato: nas três
+# sequências conferidas, o teto trocava a melhor candidata pelo melhor de um
+# macrotema que a audiência ignorava (10 vídeos, 2.296 views somadas). O
+# rodízio de agora é uma decisão editorial explícita do usuário, tomada
+# sabendo desse custo — não uma reversão por esquecimento. Se as views dos
+# Shorts caírem, esta é a primeira alavanca a revisar (RODIZIO_SHORTS_TEMAS=0
+# desliga o rodízio inteiro).
+RODIZIO_SHORTS_TEMAS = 1
 
 ESQUEMA_SELECAO = {
     "name": "selecao_trend",
@@ -319,11 +366,47 @@ ESQUEMA_ROTEIRO_LONGO = {
             "tese": {
                 "type": "string",
                 "description": (
-                    "Em uma frase: a leitura que costura as quatro óticas "
-                    "(tecnologia/IA, negócios, mercado de trabalho e mercado "
-                    "financeiro) sobre este acontecimento. É o fio condutor do "
-                    "vídeo inteiro — decida antes de escrever a narração."
+                    "Em uma frase: a leitura que costura os tópicos do vídeo "
+                    "sobre este acontecimento. É o fio condutor do vídeo "
+                    "inteiro — decida antes de escrever a narração."
                 ),
+            },
+            "topicos": {
+                "type": "array",
+                "description": (
+                    f"De {TOPICOS_MIN} a {TOPICOS_MAX} TÓPICOS que o vídeo "
+                    "cobre, na ordem em que aparecem na narração. Cada tópico é "
+                    "um recorte DIFERENTE do mesmo acontecimento, com dado "
+                    "próprio — não é uma repetição do anterior com outras "
+                    "palavras. As quatro óticas do canal (tecnologia e IA, "
+                    "negócios, mercado de trabalho, mercado financeiro) são a "
+                    "fonte natural dos tópicos, mas não são uma cota: se o fato "
+                    "não tem leitura financeira real, cubra outro recorte (a "
+                    "regulação, o concorrente, o usuário, o precedente) em vez "
+                    "de inventar uma."
+                ),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "titulo": {
+                            "type": "string",
+                            "description": (
+                                "O tópico em até 6 palavras (ex.: 'quem paga a "
+                                "conta do data center')."
+                            ),
+                        },
+                        "dado": {
+                            "type": "string",
+                            "description": (
+                                "O dado concreto do material recebido que "
+                                "sustenta este tópico (número, nome, empresa, "
+                                "prazo) e a fonte nominal dele."
+                            ),
+                        },
+                    },
+                    "required": ["titulo", "dado"],
+                },
             },
             "impacto_carreira": {
                 "type": "string",
@@ -365,7 +448,7 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "2 a 4 frases em um único parágrafo, com hashtags "
                     "relevantes no final. É o RESUMO DO PAYLOAD, não teaser: "
                     "entrega o fato central concreto (número, nome, ação) com "
-                    "a fonte nominal, a leitura que une as quatro óticas e o "
+                    "a fonte nominal, a leitura que une os tópicos e o "
                     "impacto prático no mercado de trabalho. Mesmo TESTE DO "
                     "LEIGO do título. PROIBIDO: cauda de suspense, CTA ('veja "
                     "o que mudou', 'saiba mais') e frase de analista vazia."
@@ -377,7 +460,8 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "Texto/roteiro narrado do vídeo, no idioma definido nas "
                     "instruções, seguindo a ESTRUTURA EM CINCO BLOCOS das "
                     "instruções (PERGUNTA ESQUISITA → CONTEXTUALIZAÇÃO → "
-                    "DESENVOLVIMENTO NAS QUATRO ÓTICAS → CONSEQUÊNCIA PARA "
+                    "DESENVOLVIMENTO, COBRINDO TODOS OS TÓPICOS DE 'topicos' → "
+                    "CONSEQUÊNCIA PARA "
                     "QUEM TRABALHA → CONCLUSÃO, que responde a pergunta e "
                     "aponta o que observar). Ritmo de fala natural (frases de 8 a 18 "
                     "palavras, teto 22), vocabulário preciso de telejornal, "
@@ -395,6 +479,7 @@ ESQUEMA_ROTEIRO_LONGO = {
             "tema",
             "pergunta",
             "tese",
+            "topicos",
             "impacto_carreira",
             "o_que_observar",
             "titulo",
@@ -569,9 +654,11 @@ NARRAÇÃO:
    acontecimento muda para quem procura emprego ou muda de área (setor,
    função, habilidade, prazo, número). Conselho de coach ("se reinvente",
    "esteja preparado", "invista em você") e futurologia sem base REPROVAM.
-8. AS QUATRO ÓTICAS: tecnologia/IA, negócios, mercado de trabalho e mercado
-   financeiro precisam aparecer, costuradas por causa e efeito. Ótica ausente
-   ou lista de tópicos soltos REPROVA.
+8. OS TÓPICOS: a narração precisa cobrir de {topicos_min} a {topicos_max}
+   recortes DIFERENTES do acontecimento, cada um com dado próprio e costurados
+   por causa e efeito. REPROVAM: menos de {topicos_min} tópicos; dois tópicos
+   que dizem a mesma coisa com outras palavras; tópico sem nenhum dado
+   concreto; e lista de bullets falados no lugar do encadeamento.
 9. Nenhuma frase pode depender de texto na tela ("como você vê aqui", "no
    gráfico") — o vídeo não tem legendas.
 10. A PRIMEIRA frase é uma PERGUNTA concreta e específica, e a narração a
@@ -584,7 +671,7 @@ NARRAÇÃO:
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
 problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\
-"""
+""".format(topicos_min=TOPICOS_MIN, topicos_max=TOPICOS_MAX)
 
 ESQUEMA_MACROTEMAS_RECENTES = {
     "name": "macrotemas_videos_recentes",
@@ -660,12 +747,15 @@ NÚMEROS listados, não opinião editorial. Os vídeos com o maior VIEWS/H e os
 campeões de retenção mostram o tipo de tema, tensão e promessa que este
 público clica e assiste até o fim; os de VIEWS/H baixo mostram o que ele
 ignora. Compare cada candidata com esses dois grupos e escolha a que mais se
-parece com o que está performando. Repetir o tipo de conteúdo que está dando
-certo é BEM-VINDO e encorajado: se o macrotema campeão render 10 vídeos
-seguidos, faça os 10. NÃO aplique preferência própria por tema "nobre",
-equilíbrio de pauta, rodízio ou variedade — não existe cota de assunto neste
-canal, e trocar de tema só para variar é a forma mais rápida de queimar um
-vídeo.
+parece com o que está performando. NÃO aplique preferência própria por tema
+"nobre" nem equilíbrio de pauta: escolha entre as candidatas que você recebeu a
+que os números apontam, e nada mais.
+
+O RODÍZIO DE TEMAS JÁ FOI APLICADO ANTES DE VOCÊ: as candidatas do tema do
+Short anterior já foram removidas da lista pelo pipeline, porque o canal
+intercala os temas dos Shorts. Você não precisa (nem deve) gerenciar variedade:
+todas as candidatas que chegaram até aqui já estão liberadas nesse quesito, e
+entre elas o critério volta a ser só a audiência.
 
 CICLO DE NOTÍCIA ESFRIA — E É VOCÊ QUEM TEM QUE PERCEBER: um assunto quente
 (uma onda de demissões, um lançamento, uma queda de mercado) domina o canal por
@@ -706,10 +796,12 @@ qualidade, e o assunto de um ciclo já encerrado costuma exibir o maior número
 absoluto da lista muito depois de ter esfriado.
 
 O QUE O VÍDEO LONGO É: uma análise educacional que explica um acontecimento
-atual cruzando QUATRO ÓTICAS — tecnologia e IA, negócios, mercado de trabalho e
-mercado financeiro — e entrega valor prático para o espectador principal:
-o adulto que está PROCURANDO EMPREGO ou EM TRANSIÇÃO DE CARREIRA e quer
-entender para onde o mundo (e o trabalho dele) está indo.
+atual cobrindo de {topicos_min} a {topicos_max} TÓPICOS — recortes diferentes
+do mesmo fato, tipicamente pelas quatro óticas do canal (tecnologia e IA,
+negócios, mercado de trabalho e mercado financeiro) — e entrega valor prático
+para o espectador principal: o adulto que está PROCURANDO EMPREGO ou EM
+TRANSIÇÃO DE CARREIRA e quer entender para onde o mundo (e o trabalho dele)
+está indo.
 
 FORA DE ESCOPO: guerra, conflito armado, geopolítica militar, inteligência,
 espionagem e defesa. Candidata sobre isso não é elegível — escolha outra.
@@ -720,10 +812,12 @@ CRITÉRIOS, nesta ordem:
    prazo apertando (os campos VALOR INFORMATIVO e URGÊNCIA de cada candidata).
    Candidata marcada como "apenas repercussão, sem fato novo" só vence se todas
    as outras também forem.
-2. RENDE ANÁLISE DAS QUATRO ÓTICAS: o acontecimento tem causa, mecanismo e
-   consequência claros e toca — mesmo que indiretamente — dinheiro, empresas,
-   trabalho e mercado. Fato isolado e sem desdobramento (uma treta de rede
-   social, um vídeo curioso) NÃO vira vídeo longo, por mais quente que esteja.
+2. RENDE {topicos_min} TÓPICOS OU MAIS: o acontecimento tem causa, mecanismo e
+   consequência claros e dá pano para pelo menos {topicos_min} recortes
+   diferentes com dado próprio (empresa, dinheiro, trabalho, mercado,
+   regulação, concorrente, precedente). Fato isolado e sem desdobramento (uma
+   treta de rede social, um vídeo curioso) NÃO vira vídeo longo, por mais
+   quente que esteja: ele rende um tópico e depois só repetição.
 3. PAYLOAD DE CARREIRA: dá para dizer, com fato e não com achismo, o que isso
    muda para quem procura emprego ou está mudando de área (setor que contrata
    ou corta, habilidade que passa a valer, prazo). Prefira acontecimentos com
@@ -938,8 +1032,9 @@ Responda somente com o JSON pedido.\
 
 INSTRUCOES_ROTEIRO_LONGO = """\
 Você é roteirista de vídeos de ANÁLISE (formato longo, 16:9, {duracao}
-segundos) que explicam os grandes acontecimentos contemporâneos cruzando
-quatro óticas: TECNOLOGIA E IA, NEGÓCIOS, MERCADO DE TRABALHO e MERCADO
+segundos) que explicam os grandes acontecimentos contemporâneos cobrindo de
+{topicos_min} a {topicos_max} TÓPICOS, tipicamente pelas quatro óticas do
+canal: TECNOLOGIA E IA, NEGÓCIOS, MERCADO DE TRABALHO e MERCADO
 FINANCEIRO. Guerra, conflito armado, geopolítica militar, inteligência e
 espionagem estão FORA do canal — se a trend encostar nisso, escreva pelo ângulo
 de tecnologia, empresa, emprego ou mercado.
@@ -1004,16 +1099,22 @@ ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
    sentido, e o acontecimento em ordem "coisa concreta primeiro, detalhe
    depois", com número real, quem fez, quando, e a FONTE nominal. Se o assunto
    central for de nicho, é aqui que ele é ancorado em algo que o leigo conhece.
-3. DESENVOLVIMENTO — AS QUATRO ÓTICAS (~40s, o corpo do vídeo): explique o
-   acontecimento por TECNOLOGIA E IA (o que a tecnologia permite ou destrói
+3. DESENVOLVIMENTO — OS TÓPICOS (~65s, o corpo do vídeo): cubra de
+   {topicos_min} a {topicos_max} TÓPICOS, os mesmos que você listou no campo
+   `topicos` e na mesma ordem. Tópico é um recorte DIFERENTE do mesmo
+   acontecimento, com dado próprio — não é o anterior repetido com outras
+   palavras, e não é assunto de outra notícia. As quatro óticas do canal são a
+   fonte natural deles: TECNOLOGIA E IA (o que a tecnologia permite ou destrói
    aqui), NEGÓCIOS (dinheiro, empresas, investimento, quem paga a conta),
    MERCADO DE TRABALHO (o que acontece com as vagas) e MERCADO FINANCEIRO (o
-   que os investidores, a bolsa, os juros ou o crédito fazem com isso). Duas a
-   quatro frases por ótica, ENCADEADAS por causa e efeito ("por isso", "o
-   efeito disso", "e aí entra o dinheiro") — nunca uma lista de tópicos soltos.
-   Cada ótica carrega pelo menos um dado concreto do material recebido. A ordem
-   interna pode mudar se a lógica do fato pedir, mas as quatro precisam estar
-   lá, costuradas pela sua TESE.
+   que os investidores, a bolsa, os juros ou o crédito fazem com isso) — mas
+   elas NÃO são uma cota: se o fato não tem leitura financeira real, cubra
+   outro recorte (a regulação, o concorrente, o usuário, o precedente
+   histórico) em vez de inventar uma. Duas a quatro frases por tópico,
+   ENCADEADAS por causa e efeito ("por isso", "o efeito disso", "e aí entra o
+   dinheiro") — nunca uma lista de bullets falados. Cada tópico carrega pelo
+   menos um dado concreto do material recebido, e todos são costurados pela sua
+   TESE.
 4. CONSEQUÊNCIA — O QUE ISSO MUDA PARA QUEM TRABALHA (~25s): o payload.
    Concreto e verificável: que setor contrata ou corta, que tipo de função
    entra na linha de tiro, que habilidade passa a valer, em que prazo, com que
@@ -1038,8 +1139,9 @@ PROIBIDO NO TEXTO:
 - Opinião militante, torcida política e previsão inventada. Cenário só entra
   se estiver no material recebido e for apresentado como cenário.
 
-PAYLOAD OBRIGATÓRIO: o roteiro entrega o fato, as quatro leituras e uma
-consequência prática para o trabalho — tudo ancorado no material recebido.
+PAYLOAD OBRIGATÓRIO: o roteiro entrega o fato, os {topicos_min} a
+{topicos_max} tópicos e uma consequência prática para o trabalho — tudo
+ancorado no material recebido.
 
 TÍTULO — medido nos números do canal: título autossuficiente rende o dobro de
 views do título com nome de nicho. Regras: (1) ator + ação concreta, com uma
@@ -1050,18 +1152,22 @@ concreto; (3) PROIBIDO cauda de suspense ("— e o detalhe muda tudo", "here's
 why it matters", "e agora?").
 
 DESCRIÇÃO — resumo do payload, não teaser: 2 a 4 frases que entregam o fato
-central (com número/nome concreto e a fonte nominal), a leitura que une as
-quatro óticas e o impacto prático no mercado de trabalho, seguidas das
+central (com número/nome concreto e a fonte nominal), a leitura que une os
+tópicos e o impacto prático no mercado de trabalho, seguidas das
 hashtags. Mesmo teste do leigo do título. PROIBIDO CTA, cauda de suspense e
 frase de analista vazia.
 
 DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 {palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
-colchetes não contam). Os DOIS limites são DUROS — o formato do canal é de 90
-a 120 segundos. Se faltar espaço, corte detalhe secundário do bloco 2 ou 3 —
-nunca a pergunta, o bloco 4 (o payload de carreira) nem a conclusão. Se sobrar
-espaço, acrescente dado concreto do material recebido (número, nome, cena),
-nunca encha linguiça.
+colchetes não contam). Os DOIS limites são DUROS — o formato do canal é de
+{minimo_s} a {maximo_s} segundos, e vídeo abaixo de {minimo_s} segundos é
+DESCARTADO pelo pipeline, não publicado. Texto curto demais é o erro mais caro
+aqui: prefira errar para cima. Se faltar espaço, corte detalhe secundário do
+bloco 2 ou reduza um tópico ao essencial — nunca a pergunta, nunca o bloco 4 (o
+payload de carreira), nunca a conclusão, e nunca abaixo de {topicos_min}
+tópicos. Se sobrar espaço, cubra mais um tópico (até {topicos_max}) ou
+acrescente dado concreto do material recebido (número, nome, cena) — nunca
+encha linguiça.
 
 MATERIAL VISUAL — o corpo do vídeo é montado SOMENTE com os clipes de vídeo
 anexados aos posts do X da trend (até {max_clipes} clipes, nada de foto
@@ -1279,6 +1385,36 @@ def _somente_longos(videos_recentes: list[dict] | None) -> list[dict]:
     ]
 
 
+def _temas_a_evitar(
+    videos_recentes: list[dict] | None, macros_recentes: list[str]
+) -> list[str]:
+    """Macrotemas dos últimos SHORTS publicados, que o próximo Short deve evitar.
+
+    Implementa o rodízio pedido em 2026-08-04 ("intercale os vídeos do shorts,
+    cada shorts para cada tema"): com RODIZIO_SHORTS_TEMAS=1, o tema do Short
+    anterior sai da disputa e dois Shorts seguidos nunca saem do mesmo tema.
+
+    Olha só para os SHORTS: os vídeos longos são outro formato, saem 3x por
+    semana e não fazem parte do rodízio — deixá-los na conta faria a análise de
+    segunda-feira bloquear o Short da mesma tarde. "outro" também não entra: é
+    o rótulo de descarte da classificação, não um tema de verdade, e vetá-lo
+    derrubaria candidatas que não têm nada a ver entre si.
+    """
+    if RODIZIO_SHORTS_TEMAS <= 0:
+        return []
+    # `videos_recentes` vem do mais recente para o mais antigo, e
+    # `macros_recentes` está na mesma ordem (uma entrada por vídeo).
+    temas: list[str] = []
+    for video, macro in zip(videos_recentes or [], macros_recentes):
+        if (video.get("duracao_s") or 0) >= DURACAO_MINIMA_LONGO:
+            continue
+        if macro and macro != "outro" and macro not in temas:
+            temas.append(macro)
+        if len(temas) >= RODIZIO_SHORTS_TEMAS:
+            break
+    return temas
+
+
 def _candidata_por_nome(candidatas: list[dict], nome: str) -> dict:
     """A trend escolhida pela seleção (por nome, com folga p/ paráfrase)."""
     alvo = nome.strip().lower()
@@ -1369,14 +1505,18 @@ def selecionar_trend(
        JANELA_REPETICAO_HORAS; se ela cobriria o mesmo fato sem
        desenvolvimento novo, sai da disputa e a seleção refaz com as
        restantes.
-    Se alguma das regras zerar as candidatas do dia, aborta — melhor uma
-    execução sem vídeo do que vídeo clonado.
+    2. Só no formato CURTO, RODÍZIO DE TEMAS (2026-08-04): as candidatas do
+       macrotema do(s) último(s) Short publicado(s) saem da disputa, para que
+       cada Short saia de um tema diferente do anterior
+       (``_temas_a_evitar``). Este veto CEDE se zerar as candidatas — ver o
+       comentário no ponto de aplicação.
+    Se a regra 1 zerar as candidatas do dia, aborta — melhor uma execução sem
+    vídeo do que vídeo clonado.
 
-    NÃO há mais teto de macrotemas seguidos (removido em 2026-07-28, ver o
-    comentário no lugar da constante): rodar 8 vídeos seguidos de guerra é o
-    resultado CERTO quando é isso que a audiência está assistindo. A defesa
-    contra ficar preso a um assunto morto não é uma cota de variedade, é o
-    sinal de audiência chegar normalizado pela idade — o vídeo de guerra de 3
+    O teto de macrotemas SEGUIDOS segue removido (2026-07-28); o que voltou é
+    o rodízio dos Shorts acima, mais estreito e por pedido explícito. Para os
+    vídeos LONGOS nada mudou: a defesa contra ficar preso a um assunto morto
+    continua sendo o sinal de audiência normalizado pela idade — o vídeo de 3
     horas atrás com 40 views/h ao lado do de 7 dias atrás com 253 views/h diz
     ao modelo que o ciclo acabou, e ele troca de tema por conta própria.
     """
@@ -1448,13 +1588,43 @@ def selecionar_trend(
             )
         candidatas = com_material
 
+    # RODÍZIO DE TEMAS DOS SHORTS (2026-08-04): o macrotema do(s) último(s)
+    # Short(s) publicado(s) sai da disputa, para que cada Short saia de um tema
+    # diferente do anterior. Só no formato curto — o longo tem 3 execuções por
+    # semana e um rodízio ali só reduziria a escolha a nada.
+    #
+    # O veto CEDE quando zeraria as candidatas: intercalar temas é preferência
+    # editorial, e trocar um vídeo bom por nenhum vídeo é um preço que a
+    # preferência não paga. É o oposto do veto a repetição logo abaixo, esse
+    # sim absoluto — publicar o mesmo vídeo duas vezes é pior que não publicar.
+    if not longo:
+        evitar = _temas_a_evitar(videos_recentes, macros_recentes)
+        if evitar:
+            variadas = [t for t in candidatas if t.get("macrotema") not in evitar]
+            if variadas:
+                print(
+                    f"[rodizio] {len(candidatas) - len(variadas)} candidata(s) "
+                    f"do(s) tema(s) do(s) último(s) Short ({', '.join(evitar)}) "
+                    f"fora da disputa ({len(variadas)} seguem)."
+                )
+                candidatas = variadas
+            else:
+                print(
+                    f"[rodizio] todas as candidatas são do(s) tema(s) "
+                    f"{', '.join(evitar)}; o rodízio cede — melhor repetir o "
+                    "tema do que não publicar."
+                )
+
     janela_repeticao = (
         JANELA_REPETICAO_HORAS_LONGO if longo else JANELA_REPETICAO_HORAS
     )
     recentes_janela = _recentes_na_janela(recentes_regras, janela_repeticao)
     instrucoes_selecao = (
         INSTRUCOES_SELECAO_LONGO.format(
-            duracao=cfg.video_duracao, max_clipes=cfg.max_clipes
+            duracao=cfg.video_duracao,
+            max_clipes=cfg.max_clipes,
+            topicos_min=TOPICOS_MIN,
+            topicos_max=TOPICOS_MAX,
         )
         if longo
         else INSTRUCOES_SELECAO
@@ -1586,10 +1756,16 @@ def _resumo_estilo(
 def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     """Piso e teto de palavras faladas do roteiro, conforme o formato.
 
-    No formato curto a faixa sai de VIDEO_DURACAO (teto pela duração-alvo,
-    piso em FRACAO_MINIMA dela). No formato longo ela sai da FAIXA DURA do
-    próprio formato (90 a 120s), com MARGEM_LONGO_S de folga em cada ponta
-    para absorver a variação de ritmo do TTS.
+    No formato longo a faixa sai da FAIXA DURA do próprio formato (120 a 150s),
+    com as margens assimétricas de MARGEM_LONGO_MIN_S/MARGEM_LONGO_MAX_S para
+    absorver a variação de ritmo do TTS sem furar o piso.
+
+    No formato curto o teto vem da duração-alvo (VIDEO_DURACAO) e o piso é o
+    MAIOR entre a fração da duração-alvo e o que o PISO DURO do Short exige:
+    FRACAO_MINIMA sozinha autorizava um roteiro de 51 segundos com alvo de 60,
+    e qualquer variação de ritmo para baixo derrubava isso abaixo dos 50s
+    proibidos — o piso duro tem que entrar no orçamento de palavras, não só na
+    conferência do fim.
 
     A VELOCIDADE entra como multiplicador: a narração acelerada do Short cabe
     proporcionalmente mais palavras no mesmo tempo de tela, e sem isso o vídeo
@@ -1599,11 +1775,17 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     ritmo = PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
     if cfg.formato == "longo":
         return (
-            int((LONGO_MIN_S + MARGEM_LONGO_S) * ritmo),
-            int((LONGO_MAX_S - MARGEM_LONGO_S) * ritmo),
+            int((LONGO_MIN_S + MARGEM_LONGO_MIN_S) * ritmo),
+            int((LONGO_MAX_S - MARGEM_LONGO_MAX_S) * ritmo),
         )
     limite = int(cfg.video_duracao * ritmo)
-    return int(limite * FRACAO_MINIMA), limite
+    piso = max(
+        int(limite * FRACAO_MINIMA),
+        int((CURTO_MIN_S + CURTO_MARGEM_S) * ritmo),
+    )
+    # Alvo baixo demais (VIDEO_DURACAO perto do piso) deixaria o piso passar do
+    # teto e a faixa vazia; nesse caso o teto cede, porque o piso é a regra.
+    return piso, max(limite, piso)
 
 
 def _aparar_hook_final(roteiro: dict) -> None:
@@ -1750,6 +1932,10 @@ def gerar_roteiro(
     }
     if longo:
         formatacao["max_clipes"] = cfg.max_clipes
+        formatacao["topicos_min"] = TOPICOS_MIN
+        formatacao["topicos_max"] = TOPICOS_MAX
+        formatacao["minimo_s"] = LONGO_MIN_S
+        formatacao["maximo_s"] = LONGO_MAX_S
     instrucoes = modelo_instrucoes.format(**formatacao)
 
     resposta = cliente.chat.completions.create(
@@ -1765,18 +1951,31 @@ def gerar_roteiro(
     _aparar_hook_final(roteiro)
 
     # Faixa de palavras: o TTS cobra por caractere e vídeo longo mata a
-    # retenção; vídeo curto demais sai com metade da duração-alvo e o YouTube
-    # distribui menos. Fora da faixa, UMA nova tentativa pedindo ajuste.
+    # retenção; vídeo curto demais fura o piso duro do formato e a execução
+    # aborta depois da narração já paga. Fora da faixa, até
+    # TENTATIVAS_FAIXA_PALAVRAS novas tentativas pedindo ajuste — uma só não
+    # segurava (ver o comentário da constante).
     palavras = _contar_palavras(roteiro["texto_video"])
-    if palavras > limite * folga or palavras < minimo:
+
+    # Distância da faixa: 0 dentro dela, quantas palavras faltam/sobram fora.
+    # Aceitar a reescrita "porque melhorou na direção pedida" deixava passar um
+    # texto que despencava para o outro lado (de 120 palavras acima do teto
+    # para 50, abaixo do piso), então a régua é a distância, não a direção.
+    def _dist_faixa(n: int) -> int:
+        return max(minimo - n, n - int(limite * folga), 0)
+
+    for tentativa in range(1, TENTATIVAS_FAIXA_PALAVRAS + 1):
+        if minimo <= palavras <= limite * folga:
+            break
         estourou = palavras > limite * folga
         print(
             f"[roteiro] texto_video com {palavras} palavras faladas "
             f"(faixa {minimo}-{limite}); pedindo versão "
-            f"{'mais curta' if estourou else 'mais completa'}..."
+            f"{'mais curta' if estourou else 'mais completa'} "
+            f"({tentativa}/{TENTATIVAS_FAIXA_PALAVRAS})..."
         )
         preservar = (
-            "mantenha a pergunta de abertura, as quatro óticas, o payload de "
+            "mantenha a pergunta de abertura, os tópicos, o payload de "
             "carreira e a conclusão com o que observar"
             if longo
             else "mantenha a pergunta de abertura, a consequência única e a "
@@ -1784,13 +1983,14 @@ def gerar_roteiro(
         )
         cortar = (
             "cortando detalhe secundário dos blocos CONTEXTUALIZAÇÃO e "
-            "DESENVOLVIMENTO"
+            "DESENVOLVIMENTO (sem eliminar nenhum tópico)"
             if longo
             else "cortando detalhes do DESENVOLVIMENTO"
         )
         acrescentar = (
             "acrescentando dado CONCRETO do material recebido (número, nome, "
-            "empresa, prazo) às quatro óticas do DESENVOLVIMENTO"
+            "empresa, prazo) aos tópicos do DESENVOLVIMENTO — ou, se couber, "
+            f"cobrindo mais um tópico (até {TOPICOS_MAX})"
             if longo
             else "acrescentando detalhes CONCRETOS ao DESENVOLVIMENTO (número, "
             "nome, mecanismo)"
@@ -1824,16 +2024,19 @@ def gerar_roteiro(
         _aparar_hook_final(ajustado)
         ajustadas = _contar_palavras(ajustado["texto_video"])
 
-        # Aceita a versão ajustada somente se ela ficou MAIS PERTO da faixa —
-        # "melhorou na direção pedida" deixava passar um texto que despencou
-        # para o outro lado (ex.: de 120 palavras acima do teto para 50,
-        # abaixo do piso).
-        def _dist_faixa(n: int) -> int:
-            return max(minimo - n, n - int(limite * folga), 0)
-
+        # Só substitui se a reescrita ficou MAIS PERTO da faixa; a próxima
+        # tentativa continua de onde esta parou.
         if _dist_faixa(ajustadas) < _dist_faixa(palavras):
             roteiro = ajustado
         palavras = _contar_palavras(roteiro["texto_video"])
+    else:
+        if _dist_faixa(palavras) > 0:
+            print(
+                f"[aviso] texto_video ficou com {palavras} palavras faladas "
+                f"depois de {TENTATIVAS_FAIXA_PALAVRAS} tentativas (faixa "
+                f"{minimo}-{limite}); seguindo com a melhor versão — se ela "
+                "furar o piso de duração, a execução aborta depois da narração."
+            )
 
     # Auditoria pró-leigo (título + descrição + narração) com UMA reescrita:
     # aprova, ou lista as violações e pede o JSON corrigido; a nova versão só
@@ -1850,9 +2053,9 @@ def gerar_roteiro(
             "descrição entrega o fato com a fonte, sem teaser nem frase "
             "vazia; jargão ganha explicação de meia frase ou sai"
             + (
-                "; as quatro óticas e o payload de carreira concreto precisam "
-                "estar no texto, e o vídeo fecha com o próximo marco a "
-                "observar, sem CTA. "
+                f"; os {TOPICOS_MIN} a {TOPICOS_MAX} tópicos e o payload de "
+                "carreira concreto precisam estar no texto, e o vídeo fecha "
+                "com o próximo marco a observar, sem CTA. "
                 if longo
                 else "; a narração abre com a pergunta esquisita e a responde "
                 "no fim, e assunto de nicho ganha âncora na contextualização. "
@@ -1904,6 +2107,16 @@ def gerar_roteiro(
         print(f"[roteiro] Consequência: {roteiro['consequencia']}")
     if roteiro.get("tese"):
         print(f"[roteiro] Tese: {roteiro['tese']}")
+    if roteiro.get("topicos"):
+        topicos = roteiro["topicos"]
+        print(f"[roteiro] {len(topicos)} tópicos cobertos:")
+        for t in topicos:
+            print(f"  - {t.get('titulo', '')} — {t.get('dado', '')}")
+        if not TOPICOS_MIN <= len(topicos) <= TOPICOS_MAX:
+            print(
+                f"[aviso] O roteiro cobre {len(topicos)} tópicos, fora da "
+                f"faixa de {TOPICOS_MIN} a {TOPICOS_MAX} pedida ao formato."
+            )
     if roteiro.get("impacto_carreira"):
         print(f"[roteiro] Impacto na carreira: {roteiro['impacto_carreira']}")
     if roteiro.get("o_que_observar"):

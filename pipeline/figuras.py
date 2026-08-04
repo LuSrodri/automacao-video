@@ -389,8 +389,14 @@ def _montar_cartao(caminho: Path, largura: int, altura: int, publico: str):
     from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
     vertical = altura > largura
-    larg_alvo = round(largura * (0.72 if vertical else 0.40))
-    alt_max = round(altura * (0.52 if vertical else 0.66))
+    # Tamanho AUMENTADO em 2026-08-04 (pedido do usuário), pelo mesmo motivo
+    # das cartelas — e aqui pesa mais: a figura carrega TEXTO (rótulo, valor,
+    # título), e rótulo pequeno num cartão pequeno visto no celular não é
+    # lido, o que anula a razão de a figura existir. Os tetos deixam folga
+    # para a sombra na largura e, no vertical, mantêm a base do cartão acima
+    # da faixa das legendas queimadas.
+    larg_alvo = round(largura * (0.84 if vertical else 0.54))
+    alt_max = round(altura * (0.54 if vertical else 0.74))
 
     with Image.open(caminho) as bruta:
         figura = bruta.convert("RGB")
@@ -460,9 +466,11 @@ def _renderizar_frames(
 
     destino.mkdir(parents=True, exist_ok=True)
     cartao = _montar_cartao(imagem, largura, altura, publico)
-    # Vertical: um pouco acima do centro, longe da faixa das legendas queimadas.
+    # Vertical: acima do centro, longe da faixa das legendas queimadas. Subiu
+    # de 0.42 para 0.36 junto com o aumento do cartão — com o cartão maior, a
+    # posição antiga levava a base dele para dentro da faixa das legendas.
     # 16:9 (sem legendas): centro da tela.
-    cy_final = round(altura * 0.42) if altura > largura else altura // 2
+    cy_final = round(altura * 0.36) if altura > largura else altura // 2
     cx = largura // 2
     # Fora do quadro embaixo e fora do quadro em cima, com folga da sombra.
     cy_baixo = altura + cartao.height // 2

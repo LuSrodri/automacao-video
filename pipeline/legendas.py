@@ -6,7 +6,9 @@ tamanho final, com fade rápido — sem pop saltitante). Quando nenhum clipe est
 na tela, a palavra fica centralizada no meio; quando há clipe, ela vai para a
 parte de baixo (deixando o centro livre para o clipe). Tipografia Archivo
 Black (manchete de rede social), texto branco com contorno preto grosso e
-sombra suave.
+sombra suave, com a ALTURA do glifo levemente reduzida (ESCALA_Y) — o corpo da
+fonte é o mesmo, só a proporção fica mais baixa e condensada, que é o que dá o
+ar editorial e minimalista.
 """
 
 import re
@@ -14,10 +16,26 @@ from pathlib import Path
 
 MIN_EXIBICAO = 0.35  # segundos
 
-# Animação de entrada (carimbo editorial): a palavra surge a 112% do tamanho e
-# ASSENTA em 100% em 100 ms, com um fade rápido — entrada de manchete, sem o
+# ALTURA da tipografia (ScaleY do ASS), em porcentagem. O TAMANHO da fonte não
+# mudou (ver `gerar_legendas`): o que muda aqui é só a proporção do glifo, que
+# fica levemente mais baixo e mais condensado na vertical. Pedido do usuário em
+# 2026-08-04 — a Archivo Black em corpo grande e altura cheia ocupava a tela
+# como cartaz, e o achatamento discreto devolve o ar editorial e minimalista
+# sem perder a força de manchete (que vem da largura e do peso, não da altura).
+# Abaixo de ~88 a fonte começa a parecer distorcida em vez de condensada.
+ESCALA_Y = 92
+
+# Animação de entrada (carimbo editorial): a palavra surge 12% maior e ASSENTA
+# no tamanho final em 100 ms, com um fade rápido — entrada de manchete, sem o
 # pop saltitante que crescia do menor para o maior. Tags de override do ASS.
-ANIM = r"{\fscx112\fscy112\t(0,100,\fscx100\fscy100)\fad(50,30)}"
+#
+# \fscy é ABSOLUTO no ASS (não é um fator sobre o ScaleY do estilo), então os
+# dois valores da animação saem de ESCALA_Y: escrever \fscy100 aqui anularia o
+# achatamento em toda palavra legendada, que são todas.
+ANIM = (
+    r"{\fscx112\fscy" + str(round(ESCALA_Y * 1.12))
+    + r"\t(0,100,\fscx100\fscy" + str(ESCALA_Y) + r")\fad(50,30)}"
+)
 
 CABECALHO = """\
 [Script Info]
@@ -29,8 +47,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Centro,Archivo Black,{tam_centro},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,5,2,5,40,40,0,1
-Style: Inferior,Archivo Black,{tam_inferior},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,5,2,2,40,40,{margem_v},1
+Style: Centro,Archivo Black,{tam_centro},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,{escala_y},0,0,1,5,2,5,40,40,0,1
+Style: Inferior,Archivo Black,{tam_inferior},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,{escala_y},0,0,1,5,2,2,40,40,{margem_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -157,6 +175,8 @@ def gerar_legendas(
 
     # Tamanhos generosos (formato de manchete): a legenda é o elemento de
     # leitura principal do vídeo — palavra grande segura a atenção no mudo.
+    # Estes valores NÃO mudaram em 2026-08-04: o pedido foi manter o tamanho da
+    # tipografia e baixar só a altura, que é o ScaleY (ESCALA_Y) do estilo.
     tam_centro = max(64, round(largura * 0.165))
     tam_inferior = max(48, round(largura * 0.135))
     corpo = CABECALHO.format(
@@ -164,6 +184,7 @@ def gerar_legendas(
         altura=altura,
         tam_centro=tam_centro,
         tam_inferior=tam_inferior,
+        escala_y=ESCALA_Y,
         margem_v=round(altura * 0.26),
     )
 
