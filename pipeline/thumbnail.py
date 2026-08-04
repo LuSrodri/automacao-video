@@ -77,9 +77,12 @@ IDIOMAS = {
 # saiu no idioma errado", que é o defeito real, e nunca reprovar um nome próprio
 # estrangeiro isolado ("APPLE", "NVIDIA") — que é legítimo nos dois canais.
 # Os dois conjuntos são DISJUNTOS de propósito: palavra que existe nos dois
-# idiomas ("a", "as", "no", "e") não distingue nada e só geraria falso positivo.
+# idiomas não distingue nada e só geraria falso positivo. Ficaram de fora, por
+# isso: "a", "as", "no", "e" e — pego na primeira execução real — "do", que é
+# artigo em português e verbo em inglês ("GOOGLE ROBOTS DO FULL-BODY TASKS"
+# tinha sido reprovado como se fosse português).
 _MARCAS_PT = {
-    "de", "da", "do", "dos", "das", "em", "para", "com", "que", "não", "por",
+    "de", "da", "dos", "das", "em", "para", "com", "que", "não", "por",
     "sobre", "após", "até", "mais", "vagas", "bilhões", "milhões", "mil",
     "anos", "ao", "aos", "na", "nas", "uma", "seu", "sua", "pelo", "pela",
     "contra", "entre", "já", "vai", "tem", "é", "são", "corta", "cai", "sobe",
