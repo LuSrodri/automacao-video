@@ -81,6 +81,22 @@ LONGO_MIN_CLIPES_APROVADOS = 3
 # material igual ao piso raramente sobrevive inteiro.
 LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 
+# --- Fallback de tema (2026-08-05) ------------------------------------------
+# Candidatas tentadas por execução antes de desistir do vídeo. A trend é
+# escolhida por um sinal INDIRETO de material (quantos posts dela têm clipe
+# nativo), e esse sinal erra: o clipe pode não baixar, ou a auditoria pode
+# reprovar tudo por telejornal/impertinência. Quando isso acontecia a execução
+# inteira ia embora, com a coleta e a classificação já pagas e outras
+# candidatas vivas na lista — sair com exit 1 tendo material na mão era jogar
+# fora o mais caro para economizar o mais barato.
+#
+# O laço vive em main.py e só cobre as falhas de MATERIAL, que acontecem antes
+# do TTS: cada tentativa extra custa notícias + roteiro + visão, e nenhuma
+# delas custa narração. 3 é o teto porque a terceira candidata já é a terceira
+# escolha de audiência do modelo — abaixo disso a chance de o vídeo valer a
+# publicação cai mais rápido do que a chance de ele existir.
+TENTATIVAS_TREND = 3
+
 # Contas fixas do X que alimentam a coleta. X_ACCOUNTS no .env, quando
 # preenchido, substitui esta lista inteira.
 #

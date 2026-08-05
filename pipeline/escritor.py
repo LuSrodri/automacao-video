@@ -1499,6 +1499,7 @@ def selecionar_trend(
     trends: list[dict],
     videos_recentes: list[dict] | None = None,
     campeoes: list[dict] | None = None,
+    excluir: list[dict] | None = None,
 ) -> dict:
     """Escolhe a trend guiada SOMENTE pelo que a audiência está assistindo.
 
@@ -1526,6 +1527,11 @@ def selecionar_trend(
        comentário no ponto de aplicação.
     Se a regra 1 zerar as candidatas do dia, aborta — melhor uma execução sem
     vídeo do que vídeo clonado.
+
+    `excluir` são as trends que já foram tentadas e não deram vídeo (material
+    que não baixou, auditoria abaixo do piso). Elas saem da disputa antes de
+    tudo, para que a nova seleção não devolva a mesma candidata que acabou de
+    falhar — ver o laço de fallback em main.py.
 
     O teto de macrotemas SEGUIDOS segue removido (2026-07-28); o que voltou é
     o rodízio dos Shorts acima, mais estreito e por pedido explícito. Para os
@@ -1555,6 +1561,24 @@ def selecionar_trend(
         )
     else:
         recentes_regras = list(videos_recentes or [])
+
+    # Candidatas já tentadas nesta execução (o material não deu vídeo) saem
+    # antes de qualquer outra regra: reescolher a mesma trend gastaria roteiro
+    # e notícias para falhar no mesmo ponto.
+    if excluir:
+        tentadas = {id(t) for t in excluir}
+        nomes = {(t.get("trend") or "").strip().lower() for t in excluir}
+        trends = [
+            t for t in trends
+            if id(t) not in tentadas
+            and (t.get("trend") or "").strip().lower() not in nomes
+        ]
+        if not trends:
+            raise SystemExit(
+                f"As {len(excluir)} candidata(s) tentadas hoje não renderam "
+                "material aproveitável e não sobrou nenhuma para tentar — "
+                "execução sem vídeo."
+            )
 
     # O formato do canal é montado só com clipes dos posts do X: candidata
     # sem nenhum post com vídeo nativo não tem material e sai da disputa.

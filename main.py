@@ -33,9 +33,12 @@ Fluxo:
    clipe, o veto duro derruba material de telejornal e imagem com selo de
    emissora, e uma nota de pertinência (1-5) derruba o clipe que não mostra o
    que a narração diz. No formato longo o telejornal não é vetado: entra
-   MARCADO como representação visual (dessaturado + etiqueta na tela). Zero
-   clipe aprovado = SystemExit (o formato longo exige um piso maior). Roda
+   MARCADO como representação visual (dessaturado + etiqueta na tela). Roda
    antes do TTS para a reprovação não custar créditos.
+   FALLBACK DE TEMA: ficar abaixo do piso de clipes aprovados (1 no curto,
+   LONGO_MIN_CLIPES_APROVADOS no longo) — ou não conseguir baixar clipe
+   nenhum — não aborta mais a execução: a candidata sai da disputa e os passos
+   4 a 7 refazem com a próxima trend, até TENTATIVAS_TREND candidatas.
 8. ElevenLabs narra o texto (TTS), o pipeline acelera a narração conforme o
    formato (o Short é acelerado, o longo roda em velocidade normal) e corta os
    silêncios; os timestamps do alinhamento acompanham as duas coisas.
@@ -95,6 +98,7 @@ from pipeline.config import (
     LONGO_MAX_S,
     LONGO_MIN_CLIPES_APROVADOS,
     LONGO_MIN_S,
+    TENTATIVAS_TREND,
     ativar_formato_longo,
     carregar_config,
 )
@@ -195,71 +199,111 @@ def main() -> None:
 
     trends = classificar_trends(cfg, coletar_trends(cfg))
 
-    selecao = selecionar_trend(
-        cfg, trends, videos_recentes=recentes, campeoes=campeoes
-    )
-    noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
-    roteiro = gerar_roteiro(
-        cfg, selecao, trends, noticias,
-        videos_recentes=recentes, campeoes=campeoes,
-    )
-
-    marca = "_longo" if cfg.formato == "longo" else ""
-    pasta = (
-        cfg.output_dir
-        / f"{datetime.now():%Y-%m-%d}{marca}_{_slug(roteiro['titulo'])}"
-    )
-    pasta.mkdir(parents=True, exist_ok=True)
-    (pasta / "roteiro.json").write_text(
-        json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-    # O OBJETO da trend vem da própria seleção (selecionar_trend) — é o mesmo
-    # que o roteiro usou, então os clipes baixados são sempre da trend certa.
-    trend_video = selecao["trend_obj"]
-
-    # Busca ABERTA por clipes do assunto (só no formato longo): as 50 contas do
-    # canal raramente têm vários clipes do MESMO fato, que é o que 90-120s de
-    # tela pedem. Entra depois da seleção porque buscar para cada candidata
-    # custaria uma consulta por candidata — em troca, a busca não socorre uma
-    # candidata que já tenha sido barrada no portão da seleção.
-    extras = buscar_posts_com_video(cfg, selecao.get("consulta_noticias", ""))
-    if extras:
-        urls = trend_video.get("posts") or []
-        # `posts` vem com os posts de vídeo na frente (x_client), e o lookup de
-        # mídias corta a lista no teto — então os achados entram logo depois
-        # deles, antes dos posts só de texto, senão seriam cortados fora.
-        n_video = trend_video.get("posts_com_video") or 0
-        novos = [u for u in extras if u not in urls]
-        trend_video["posts"] = urls[:n_video] + novos + urls[n_video:]
-        trend_video["posts_com_video"] = n_video + len(novos)
-
-    clipes, fotos = baixar_midias_posts(cfg, trend_video.get("posts") or [], pasta)
-    if not clipes:
-        raise SystemExit(
-            "Nenhum clipe de vídeo baixado dos posts da trend — o formato é "
-            "montado só com clipes do X (imagem estática é proibida); "
-            "abortando."
+    # FALLBACK DE TEMA (2026-08-05): a trend é escolhida por um sinal INDIRETO
+    # de material — quantos posts dela têm clipe nativo —, e esse sinal erra:
+    # o clipe pode não baixar e a auditoria pode reprovar tudo. Quando isso
+    # acontecia a execução morria com exit 1, tendo pago a coleta e a
+    # classificação e com outras candidatas vivas na lista. Agora a candidata
+    # que não rende material sai da disputa e a próxima é tentada, até
+    # TENTATIVAS_TREND.
+    #
+    # O laço fecha ANTES do TTS de propósito: as falhas cobertas aqui são as de
+    # material, e refazê-las custa notícias + roteiro + visão, nunca narração.
+    # O piso de duração continua abortando seco lá embaixo — narração curta é
+    # defeito do roteiro, e trocar de tema não conserta isso, só paga o
+    # ElevenLabs de novo.
+    tentadas: list[dict] = []
+    for tentativa in range(1, TENTATIVAS_TREND + 1):
+        selecao = selecionar_trend(
+            cfg, trends, videos_recentes=recentes, campeoes=campeoes,
+            excluir=tentadas,
+        )
+        noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
+        roteiro = gerar_roteiro(
+            cfg, selecao, trends, noticias,
+            videos_recentes=recentes, campeoes=campeoes,
         )
 
-    # AUDITORIA do material visual, antes do ElevenLabs: o GPT com visão
-    # descreve e classifica cada clipe do pool, o veto duro derruba material de
-    # telejornal/emissora e a nota de pertinência derruba o clipe que não
-    # mostra o que a narração diz. Rodar aqui (e não depois da narração, como
-    # a descrição das mídias rodava) faz a reprovação custar zero crédito de
-    # TTS.
-    laudos = descrever_midias(cfg, clipes)
-    clipes = auditar_midias(
-        cfg, roteiro["texto_video"], clipes, laudos,
-        limite=cfg.max_clipes, rotulo="clipe", pasta=pasta,
-    )
-    piso = LONGO_MIN_CLIPES_APROVADOS if cfg.formato == "longo" else 1
-    if len(clipes) < piso:
+        marca = "_longo" if cfg.formato == "longo" else ""
+        pasta = (
+            cfg.output_dir
+            / f"{datetime.now():%Y-%m-%d}{marca}_{_slug(roteiro['titulo'])}"
+        )
+        pasta.mkdir(parents=True, exist_ok=True)
+        (pasta / "roteiro.json").write_text(
+            json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        # O OBJETO da trend vem da própria seleção (selecionar_trend) — é o
+        # mesmo que o roteiro usou, então os clipes baixados são sempre da
+        # trend certa.
+        trend_video = selecao["trend_obj"]
+
+        # Busca ABERTA por clipes do assunto (só no formato longo): as 50
+        # contas do canal raramente têm vários clipes do MESMO fato, que é o
+        # que 90-120s de tela pedem. Entra depois da seleção porque buscar para
+        # cada candidata custaria uma consulta por candidata — em troca, a
+        # busca não socorre uma candidata que já tenha sido barrada no portão
+        # da seleção.
+        extras = buscar_posts_com_video(cfg, selecao.get("consulta_noticias", ""))
+        if extras:
+            urls = trend_video.get("posts") or []
+            # `posts` vem com os posts de vídeo na frente (x_client), e o
+            # lookup de mídias corta a lista no teto — então os achados entram
+            # logo depois deles, antes dos posts só de texto, senão seriam
+            # cortados fora.
+            n_video = trend_video.get("posts_com_video") or 0
+            novos = [u for u in extras if u not in urls]
+            trend_video["posts"] = urls[:n_video] + novos + urls[n_video:]
+            trend_video["posts_com_video"] = n_video + len(novos)
+
+        clipes, fotos = baixar_midias_posts(
+            cfg, trend_video.get("posts") or [], pasta
+        )
+        piso = LONGO_MIN_CLIPES_APROVADOS if cfg.formato == "longo" else 1
+        if not clipes:
+            recusa = (
+                "nenhum clipe de vídeo baixou dos posts da trend (o formato é "
+                "montado só com clipes do X, imagem estática é proibida)"
+            )
+        else:
+            # AUDITORIA do material visual, antes do ElevenLabs: o GPT com
+            # visão descreve e classifica cada clipe do pool, o veto duro
+            # derruba material de telejornal/emissora e a nota de pertinência
+            # derruba o clipe que não mostra o que a narração diz. Rodar aqui
+            # (e não depois da narração, como a descrição das mídias rodava)
+            # faz a reprovação custar zero crédito de TTS.
+            laudos = descrever_midias(cfg, clipes)
+            clipes = auditar_midias(
+                cfg, roteiro["texto_video"], clipes, laudos,
+                limite=cfg.max_clipes, rotulo="clipe", pasta=pasta,
+            )
+            recusa = ""
+            if len(clipes) < piso:
+                recusa = (
+                    f"a auditoria aprovou {len(clipes)} clipe(s), abaixo do "
+                    f"piso de {piso} do formato {cfg.formato} — o vídeo sairia "
+                    "mostrando material de telejornal ou cena que não condiz "
+                    f"com a narração (detalhe em "
+                    f"{pasta / 'auditoria_clipe.json'})"
+                )
+        if not recusa:
+            break
+
+        tentadas.append(trend_video)
+        print(
+            f"[fallback] Tentativa {tentativa}/{TENTATIVAS_TREND} descartada — "
+            f"'{selecao['trend']}': {recusa}."
+        )
+        if tentativa < TENTATIVAS_TREND:
+            print("[fallback] Escolhendo outra trend com o material restante.")
+    else:
         raise SystemExit(
-            f"Auditoria aprovou {len(clipes)} clipe(s), abaixo do piso de "
-            f"{piso} para o formato {cfg.formato} — o vídeo sairia mostrando "
-            "material de telejornal ou cena que não condiz com a narração; "
-            f"abortando. O detalhe está em {pasta / 'auditoria_clipe.json'}."
+            f"As {TENTATIVAS_TREND} candidatas tentadas hoje não renderam "
+            "material aproveitável — nenhuma passou do piso de clipes "
+            "auditados; abortando sem publicar. Se isso virar rotina, as "
+            "alavancas são alargar JANELA_HORAS, subir X_MAX_POSTS ou revisar "
+            "as contas acompanhadas."
         )
 
     narracao, alinhamento = gerar_narracao(

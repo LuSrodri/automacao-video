@@ -5,8 +5,10 @@ estática nunca entra em tela cheia). Download via X API oficial v2 em modo
 pay-per-use (~US$ 0,005 por post/mídia lida): um único GET /2/tweets com
 `expansions=attachments.media_keys,author_id` resolve todos os posts da trend
 de uma vez. Vídeos vêm como variantes MP4, das quais baixamos a de maior
-bitrate; a conta do autor (@usuario) segue junto de cada mídia para o crédito
-de reprodução exibido na tela ("Reprodução Imagem: X / Conta @...").
+bitrate QUE CABE em MAX_VIDEO_BYTES — as versões 4K do X passam de 2 GB, e
+antes descartá-las descartava o clipe; a conta do autor (@usuario) segue junto
+de cada mídia para o crédito de reprodução exibido na tela ("Reprodução
+Imagem: X / Conta @...").
 
 Baixamos um POOL maior que o necessário (`max_clipes + pool_extra_clipes`):
 a auditoria (auditoria.py) reprova material de telejornal e clipe que não
@@ -58,15 +60,22 @@ def _ids_dos_posts(urls: list[str], max_posts: int = MAX_POSTS) -> list[str]:
     return list(dict.fromkeys(ids))[:max_posts]
 
 
-def _melhor_variante(variantes: list[dict]) -> str | None:
-    """URL do MP4 de maior bitrate (as demais variantes são HLS/baixa qualidade)."""
+def _variantes_mp4(variantes: list[dict]) -> list[str]:
+    """URLs MP4 do mesmo clipe, da maior para a menor qualidade.
+
+    Devolve a LISTA, e não só a melhor: o X serve o mesmo clipe em várias
+    resoluções e a de cima às vezes é 4K. Em 2026-08-05 o único candidato de
+    uma execução era um 3840x2160 de 2,9 GB — muito acima de MAX_VIDEO_BYTES —
+    e descartá-lo derrubou o vídeo inteiro, com as versões menores do MESMO
+    clipe disponíveis na mesma resposta. Quem baixa desce a lista até uma
+    caber (`_baixar_melhor_variante`).
+    """
     mp4s = [
         v for v in variantes
         if v.get("content_type") == "video/mp4" and v.get("url")
     ]
-    if not mp4s:
-        return None
-    return max(mp4s, key=lambda v: v.get("bit_rate") or 0)["url"]
+    mp4s.sort(key=lambda v: v.get("bit_rate") or 0, reverse=True)
+    return [v["url"] for v in mp4s]
 
 
 def _baixar_arquivo(url: str, destino: Path, teto: int = MAX_VIDEO_BYTES) -> Path | None:
@@ -93,6 +102,27 @@ def _baixar_arquivo(url: str, destino: Path, teto: int = MAX_VIDEO_BYTES) -> Pat
         print(f"[aviso] Falha ao baixar mídia {url}: {erro}")
         destino.unlink(missing_ok=True)
         return None
+
+
+def _baixar_melhor_variante(urls: list[str], destino: Path) -> Path | None:
+    """Baixa a melhor variante do clipe que couber no teto, descendo a lista.
+
+    A variante de cima estourar MAX_VIDEO_BYTES não diz nada sobre o clipe —
+    só sobre aquela resolução. Antes um 4K de 2,9 GB descartava o clipe
+    inteiro; agora ele custa uma requisição perdida e o download segue na
+    resolução de baixo.
+    """
+    for k, url in enumerate(urls, 1):
+        caminho = _baixar_arquivo(url, destino)
+        if caminho:
+            if k > 1:
+                print(
+                    f"[midia-x] {destino.name}: baixado na variante {k} de "
+                    f"{len(urls)} (as de cima não couberam no teto de "
+                    f"{MAX_VIDEO_BYTES // 1_000_000} MB)"
+                )
+            return caminho
+    return None
 
 
 def baixar_midias_posts(
@@ -191,10 +221,10 @@ def baixar_midias_posts(
 
     clipes: list[dict] = []
     for k, m in enumerate(brutos[:pool], 1):
-        url_mp4 = _melhor_variante(m.get("variants") or [])
-        if not url_mp4:
+        urls_mp4 = _variantes_mp4(m.get("variants") or [])
+        if not urls_mp4:
             continue
-        caminho = _baixar_arquivo(url_mp4, pasta / f"clipe_x_{k}.mp4")
+        caminho = _baixar_melhor_variante(urls_mp4, pasta / f"clipe_x_{k}.mp4")
         if not caminho:
             continue
         try:
