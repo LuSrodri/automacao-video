@@ -30,10 +30,18 @@ AVISO_DADOS_EXTERNOS = (
 # do corte de silêncios) — a primeira orienta, a segunda proíbe.
 CURTO_MIN_S = 50
 # Folga sobre o piso na hora de calcular o piso de PALAVRAS: o ritmo real do
-# TTS varia de narração para narração (medido: 2,1 a 2,7 palavras/s), então
-# mirar exatamente em CURTO_MIN_S faz metade das execuções cair logo abaixo
-# dele e abortar depois de já ter pago a narração.
-CURTO_MARGEM_S = 4
+# TTS varia de narração para narração, então mirar exatamente em CURTO_MIN_S
+# faz metade das execuções cair logo abaixo dele e abortar depois de já ter
+# pago a narração.
+#
+# Subiu de 4 para 7 em 2026-08-05. Com 4 a margem cobria a variação medida
+# sobre o áudio BRUTO, mas o piso duro mede o áudio FINAL, e a variação lá é
+# maior: nas 8 narrações reais dos crons o ritmo final foi de 3,09 a 3,84
+# palavras/s (±11% em torno da média). Para o piso segurar na ponta RÁPIDA —
+# que é a que fura — a mira precisa de 6s de folga; o 7º segundo é cushion,
+# porque são só 8 medições e errar para baixo custa a narração inteira já paga,
+# enquanto errar para cima só entrega um Short alguns segundos mais longo.
+CURTO_MARGEM_S = 7
 
 # --- Formato LONGO (flag --long-take) ---------------------------------------
 # Vídeo de análise educacional em 16:9, de 120 a 150 segundos, para os dois

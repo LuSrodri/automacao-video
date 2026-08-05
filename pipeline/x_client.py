@@ -42,6 +42,15 @@ USERS_ENDPOINT = "https://api.x.com/2/users/by"
 TIMELINE_ENDPOINT = "https://api.x.com/2/users/{id}/tweets"
 
 MAX_QUERY = 512  # limite de caracteres da query do search/recent
+# Sufixos que o pipeline concatena nas queries de lote. O de busca vale para
+# TODA consulta; o de vídeo só para a segunda passada (`has:videos`), mas os
+# lotes são montados uma vez e reaproveitados pelas duas — então o espaço dos
+# DOIS tem que ser reservado na montagem. Sem essa reserva os lotes fechavam
+# em 512 caracteres cravados e a passada `has:videos` os empurrava para 523,
+# estourando o limite: 3 dos 8 lotes voltavam 400 em toda execução e um terço
+# das contas nunca era varrido atrás de clipe (2026-08-05).
+SUFIXO_BUSCA = " -is:retweet -is:reply"
+SUFIXO_VIDEO = " has:videos"
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 MIN_RESULTS_TIMELINE = 5  # mínimo aceito por max_results em /2/users/:id/tweets
 
@@ -85,18 +94,28 @@ def _get(token: str, url: str, params: dict) -> dict:
 
 
 def _lotes_de_query(contas: list[str]) -> list[str]:
-    """Agrupa as contas em queries `from:a OR from:b ...` de até 512 caracteres."""
-    sufixo = " -is:retweet -is:reply"
+    """Agrupa as contas em queries `from:a OR from:b ...` de até 512 caracteres.
+
+    O orçamento de caracteres reserva o espaço de SUFIXO_VIDEO além do de
+    SUFIXO_BUSCA, porque o mesmo lote é reusado na passada `has:videos`. Com as
+    192 contas atuais a reserva sai de graça: continuam 8 lotes, agora com o
+    maior deles em 511 caracteres no pior caso, em vez de 523.
+    """
+    reserva = len(SUFIXO_BUSCA) + len(SUFIXO_VIDEO)
     lotes, atual = [], []
     for conta in contas:
         candidato = "(" + " OR ".join(f"from:{c}" for c in atual + [conta]) + ")"
-        if atual and len(candidato) + len(sufixo) > MAX_QUERY:
-            lotes.append("(" + " OR ".join(f"from:{c}" for c in atual) + ")" + sufixo)
+        if atual and len(candidato) + reserva > MAX_QUERY:
+            lotes.append(
+                "(" + " OR ".join(f"from:{c}" for c in atual) + ")" + SUFIXO_BUSCA
+            )
             atual = [conta]
         else:
             atual.append(conta)
     if atual:
-        lotes.append("(" + " OR ".join(f"from:{c}" for c in atual) + ")" + sufixo)
+        lotes.append(
+            "(" + " OR ".join(f"from:{c}" for c in atual) + ")" + SUFIXO_BUSCA
+        )
     return lotes
 
 
@@ -348,9 +367,10 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
         novos: list[dict] = []
         for query in lotes:
             # `has:videos` cobre vídeo nativo e GIF animado, que é exatamente o
-            # que o pipeline consegue baixar e montar.
+            # que o pipeline consegue baixar e montar. O espaço deste sufixo já
+            # foi reservado em _lotes_de_query — ver SUFIXO_VIDEO.
             for post in _consultar(
-                token, f"{query} has:videos", inicio, por_lote_video
+                token, f"{query}{SUFIXO_VIDEO}", inicio, por_lote_video
             ):
                 if post["url"] not in vistos:
                     vistos.add(post["url"])

@@ -74,16 +74,24 @@ from .config import (
     Config,
 )
 
-# Ritmo real médio da narração do ElevenLabs a VELOCIDADE NORMAL (1.0x),
-# RECALIBRADO em 2026-08-04 medindo as 9 narrações do canal que ainda têm
-# narracao.mp3 e roteiro.json em output/: 2,10 a 2,71 palavras/s, média 2,42 —
-# e aquelas narrações já saíam aceleradas em 1,1x (o fator estava fixo em
-# audio.py), então o ritmo de base medido é 2,42 / 1,1 = 2,2. O valor anterior
-# (2,3 / 1,1 = 2,09) subestimava o ritmo em 5%, o que encurtava todo vídeo.
-# Agora que a velocidade é configurável (o Short acelera, o formato longo não),
-# o cálculo do orçamento de palavras multiplica por ela: narração mais rápida
-# cabe mais palavras no mesmo tempo de tela. Ver `_faixa_palavras`.
-PALAVRAS_POR_SEGUNDO = 2.42 / 1.1
+# Ritmo da narração em palavras por segundo do ÁUDIO FINAL, a VELOCIDADE
+# NORMAL (1.0x). "Final" é o ponto todo: é o áudio DEPOIS da aceleração e
+# DEPOIS do corte de silêncios (silencio.py) — exatamente o que o piso duro de
+# duração mede em main.py. A versão anterior media o áudio BRUTO e por isso
+# ignorava o corte de silêncio, que come de 4% a 19% da narração; com a
+# velocidade multiplicando por fora, o orçamento de palavras errava para baixo
+# em ~20% e o Short caía sistematicamente abaixo do piso de 50s.
+#
+# RECALIBRADO em 2026-08-05 sobre as 10 narrações reais dos crons do Render
+# (8 Shorts + 2 longos, os dois canais), dividindo palavras faladas pela
+# duração final e normalizando pela velocidade de cada formato:
+#
+#   curto (1.25x): 2,47 a 3,07 palavras/s, média 2,74
+#   longo (1.00x): 2,73 a 2,92 palavras/s, média 2,82
+#
+# Os dois formatos convergem, então uma constante só serve para ambos. O valor
+# anterior (2,2) ficava abaixo de TODAS as medições.
+PALAVRAS_POR_SEGUNDO = 2.76
 # Piso de palavras como fração do teto: o teto sozinho deixava o modelo
 # entregar metade das palavras e o vídeo sair com metade da duração-alvo.
 FRACAO_MINIMA = 0.85
@@ -119,7 +127,13 @@ JANELA_REPETICAO_HORAS_LONGO = 72
 # para DENTRO em cima e para CIMA embaixo, porque as duas pontas custam coisas
 # diferentes: estourar o teto só encarece o TTS, enquanto furar o piso de 120s
 # está proibido e aborta a execução em main.py depois da narração já paga.
-MARGEM_LONGO_MIN_S = 6  # mira acima do piso
+#
+# A margem de baixo subiu de 6 para 10 em 2026-08-05, junto com a recalibração
+# de PALAVRAS_POR_SEGUNDO: ela precisa cobrir a narração mais RÁPIDA (é a que
+# fura o piso), e com 6 o piso caía em 119s na ponta rápida das duas medições
+# de formato longo — reprovando por 1 segundo. São só duas medições, então a
+# margem aqui é mais generosa que a do Short de propósito.
+MARGEM_LONGO_MIN_S = 10  # mira acima do piso
 MARGEM_LONGO_MAX_S = 6  # mira abaixo do teto
 # Duração (s) a partir da qual um vídeo já publicado no canal conta como
 # LONGO. A regra dura do formato longo (veto a vídeo
@@ -1581,7 +1595,8 @@ def selecionar_trend(
                 "Nenhuma candidata de hoje tem os "
                 f"{LONGO_MIN_POSTS_VIDEO} posts com clipe que o formato longo "
                 "precisa para chegar ao piso da auditoria — o vídeo não teria "
-                "material para 90-120s de tela; abortando antes de gastar "
+                f"material para {LONGO_MIN_S}-{LONGO_MAX_S}s de tela; "
+                "abortando antes de gastar "
                 "roteiro e narração. Se isso virar rotina, as alavancas são "
                 "alargar JANELA_HORAS, subir X_MAX_POSTS ou revisar as contas "
                 "acompanhadas."
@@ -1771,6 +1786,11 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     proporcionalmente mais palavras no mesmo tempo de tela, e sem isso o vídeo
     sairia mais curto que a duração pedida — que foi exatamente o bug do piso
     de palavras em 2026-07-16, por outro caminho.
+
+    Os SEGUNDOS aqui são sempre segundos do áudio FINAL, porque é isso que
+    PALAVRAS_POR_SEGUNDO mede desde 2026-08-05 (depois da aceleração e do corte
+    de silêncios). Não há nada a descontar por fora: o corte de silêncio já
+    está dentro da constante.
     """
     ritmo = PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
     if cfg.formato == "longo":
