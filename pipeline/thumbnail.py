@@ -24,7 +24,13 @@ from pathlib import Path
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
-from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
+from .config import (
+    AVISO_DADOS_EXTERNOS,
+    RAIZ,
+    Config,
+    idioma_plausivel,
+    nome_do_idioma,
+)
 
 FONTE = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 
@@ -43,10 +49,12 @@ MAX_CARACTERES = 34  # acima disso a fonte encolhe demais para ler no celular
 # do canal americano saiu com a capa "GOOGLE LEVA ROBÔS AO CORPO" em cima de um
 # vídeo narrado em inglês. Idioma do canal é dado do pipeline (cfg.publico),
 # não coisa a adivinhar: agora ele entra explícito na instrução e o texto
-# devolvido é verificado em código (`_idioma_plausivel`).
+# devolvido é verificado em código (`idioma_plausivel`, em config.py).
+#
+# O nome do idioma e a checagem vivem em config.py porque valem para o canal
+# inteiro; aqui ficam só a regra e os exemplos ESPECÍFICOS da capa.
 IDIOMAS = {
     "brasil": {
-        "nome": "PORTUGUÊS DO BRASIL",
         "regra": (
             "Escreva EXCLUSIVAMENTE em PORTUGUÊS DO BRASIL. Uma capa em "
             "inglês neste canal está ERRADA, mesmo que o assunto seja "
@@ -58,7 +66,6 @@ IDIOMAS = {
         ),
     },
     "usa": {
-        "nome": "AMERICAN ENGLISH",
         "regra": (
             "Write EXCLUSIVELY in AMERICAN ENGLISH. A Portuguese cover on "
             "this channel is WRONG, no matter what language the source posts "
@@ -69,33 +76,6 @@ IDIOMAS = {
             '"APPLE PASSES NVIDIA"'
         ),
     },
-}
-
-# Palavras funcionais curtas e exclusivas de cada idioma, usadas só para pegar
-# a capa escrita no idioma errado (não para julgar qualidade do texto). A
-# checagem é grosseira de propósito: ela precisa acertar o caso "a frase INTEIRA
-# saiu no idioma errado", que é o defeito real, e nunca reprovar um nome próprio
-# estrangeiro isolado ("APPLE", "NVIDIA") — que é legítimo nos dois canais.
-# Os dois conjuntos são DISJUNTOS de propósito: palavra que existe nos dois
-# idiomas não distingue nada e só geraria falso positivo. Ficaram de fora, por
-# isso: "a", "as", "no", "e" e — pego na primeira execução real — "do", que é
-# artigo em português e verbo em inglês ("GOOGLE ROBOTS DO FULL-BODY TASKS"
-# tinha sido reprovado como se fosse português).
-_MARCAS_PT = {
-    "de", "da", "dos", "das", "em", "para", "com", "que", "não", "por",
-    "sobre", "após", "até", "mais", "vagas", "bilhões", "milhões", "mil",
-    "anos", "ao", "aos", "na", "nas", "uma", "seu", "sua", "pelo", "pela",
-    "contra", "entre", "já", "vai", "tem", "é", "são", "corta", "cai", "sobe",
-}
-_MARCAS_EN = {
-    "the", "of", "in", "to", "for", "with", "and", "on", "at", "from", "jobs",
-    "billion", "million", "cuts", "hits", "over", "after", "its", "by", "is",
-    "are", "new", "his", "her", "their", "into", "than", "drops", "rises",
-    "beats", "wins", "loses", "says", "adds", "buys", "pays",
-}
-_MARCAS_IDIOMA = {
-    "brasil": (_MARCAS_PT, _MARCAS_EN),
-    "usa": (_MARCAS_EN, _MARCAS_PT),
 }
 
 ESCURECER = 0.45  # brilho do quadro sob o texto (1.0 = original)
@@ -150,27 +130,12 @@ Responda somente com o JSON pedido, com o texto em {idioma}.\
 def _instrucoes(publico: str) -> str:
     idioma = IDIOMAS.get(publico, IDIOMAS["brasil"])
     return INSTRUCOES.format(
-        idioma=idioma["nome"],
+        idioma=nome_do_idioma(publico),
         regra=idioma["regra"],
         exemplos=idioma["exemplos"],
         max_palavras=MAX_PALAVRAS,
         max_caracteres=MAX_CARACTERES,
     )
-
-
-def _idioma_plausivel(texto: str, publico: str) -> bool:
-    """False quando a capa saiu claramente no idioma do OUTRO canal.
-
-    Regra de comportamento nunca fica só no prompt (mesma lição que criou a
-    auditoria pró-leigo em escritor.py). Só reprova quando o texto tem marca do
-    idioma alheio e NENHUMA marca do idioma do canal — uma capa de nomes
-    próprios ("APPLE PASSA A NVIDIA", "GOOGLE CUTS JOBS") não tem marca nenhuma
-    e passa nos dois canais, que é o comportamento certo: o defeito que isto
-    existe para pegar é a frase INTEIRA no idioma errado.
-    """
-    proprias, alheias = _MARCAS_IDIOMA.get(publico, _MARCAS_IDIOMA["brasil"])
-    palavras = {p.strip(".,;:!?\"'").lower() for p in texto.split()}
-    return not (palavras & alheias) or bool(palavras & proprias)
 
 
 def _texto_da_capa(cfg: Config, titulo: str, narracao: str) -> str:
@@ -200,8 +165,8 @@ def _texto_da_capa(cfg: Config, titulo: str, narracao: str) -> str:
         )
         texto = json.loads(resposta.choices[0].message.content)["texto"]
 
-        if texto and not _idioma_plausivel(texto, cfg.publico):
-            idioma = IDIOMAS.get(cfg.publico, IDIOMAS["brasil"])["nome"]
+        if texto and not idioma_plausivel(texto, cfg.publico):
+            idioma = nome_do_idioma(cfg.publico)
             print(
                 f"[thumbnail] aviso: capa \"{texto}\" saiu fora do idioma do "
                 f"canal ({idioma}); pedindo correção."
@@ -225,7 +190,7 @@ def _texto_da_capa(cfg: Config, titulo: str, narracao: str) -> str:
                 response_format={"type": "json_schema", "json_schema": ESQUEMA},
             )
             corrigido = json.loads(resposta.choices[0].message.content)["texto"]
-            if corrigido and _idioma_plausivel(corrigido, cfg.publico):
+            if corrigido and idioma_plausivel(corrigido, cfg.publico):
                 texto = corrigido
             else:
                 print(

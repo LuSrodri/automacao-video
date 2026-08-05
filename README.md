@@ -105,8 +105,9 @@ crédito de reprodução no canto superior direito — com outra direção edito
   porque curiosidade fabricada traz clique e perde a audiência no primeiro
   segundo. A segunda, o **idioma do CANAL** — português no canal brasileiro,
   inglês no americano —, que entra explícito na instrução (`cfg.publico`) e é
-  **conferido em código** depois da resposta, com uma segunda chamada cobrando a
-  correção e o título do vídeo como reserva. Antes o prompt era escrito em
+  **conferido em código** depois da resposta (`config.idioma_plausivel`, a mesma
+  checagem usada pelas figuras), com uma segunda chamada cobrando a correção e o
+  título do vídeo como reserva. Antes o prompt era escrito em
   português e só pedia "no mesmo idioma do título": o modelo tinha que deduzir o
   idioma de um sinal fraco contra um prompt inteiro em português e deduziu
   errado — o último vídeo longo do canal americano saiu com a capa "GOOGLE LEVA
@@ -298,6 +299,7 @@ O `pipeline/figuras.py` desenha, com o **gpt-image-2**, todo o repertório de in
 - **De onde vêm os dados** — **exclusivamente da narração**. Um GPT lê o texto narrado e devolve, para cada figura, a **citação literal** do trecho em que o dado é dito, o **tipo** de figura, o título e os pares rótulo/valor. Número que está nas notícias mas não foi falado **não** entra: a tela mostrando um valor que ninguém disse é o pior defeito possível nesta camada.
 - **Como são desenhadas** — o estilo visual é **fixo em código** (fundo branco, tipografia grotesca pesada, preto quase puro + um único laranja de destaque, sem 3D, sem sombra, sem marca d'água), porque identidade visual não pode variar de vídeo para vídeo. O prompt lista os rótulos exatos e proíbe qualquer texto além deles — o modelo ainda erra tipografia quando o cartaz é cheio, e figura enxuta é figura legível.
 - **Como aparecem** — cartão branco com sombra, etiquetado como **infográfico do canal** (`CHANNEL GRAPHIC` no `-usa`) para o espectador não confundir com gráfico publicado por terceiro, do mesmo jeito que o crédito de reprodução distingue o clipe de terceiro. **Sobem de baixo do quadro**, ficam ~4s paradas e **saem por cima do quadro**. **Aumentadas em 2026-08-04** (84% da largura no vertical, 54% no 16:9, contra 72%/40% antes), e aqui pesa mais que nas cartelas: a figura carrega **texto** (rótulo, valor, título), e rótulo pequeno num cartão pequeno visto no celular não é lido — o que anula a razão de a figura existir.
+- **Em que idioma** — no **idioma do CANAL** (`cfg.publico`), como todo o resto: título, rótulos e valores em português no canal brasileiro e em inglês no americano, com a notação de cada um (`21 mil` / `US$ 2 bi` contra `21K` / `$2B`). O idioma entra **explícito** na instrução e nos exemplos do esquema, e o texto devolvido é **conferido em código** (`config.idioma_plausivel`): uma reescrita é cobrada, e a figura que continuar no idioma errado é **descartada** — texto errado aqui sai queimado na imagem e não tem conserto depois de publicado. Até 2026-08-05 este era o último lugar do pipeline que **inferia** o idioma ("no idioma da narração", com exemplos em português dentro de um prompt em português), o mesmo sinal fraco que já tinha posto uma capa em português no canal americano.
 - **Onde não aparecem** — nos 3 primeiros segundos (gancho limpo) e em cima de uma cartela (as janelas nunca coincidem).
 - **Quantas** — até `MAX_FIGURAS` (2; 4 no `--long-take`). O plano fica em `figuras.json`. A ancoragem na narração é conferida **antes** da geração da imagem, que é a única etapa cara aqui. `MAX_FIGURAS=0` desliga; qualquer falha só deixa o vídeo sem figuras.
 

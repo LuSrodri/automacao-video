@@ -35,7 +35,13 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
+from .config import (
+    AVISO_DADOS_EXTERNOS,
+    RAIZ,
+    Config,
+    idioma_plausivel,
+    nome_do_idioma,
+)
 from .cortes import _tempo_do_char
 from .edicao import FPS
 
@@ -97,116 +103,162 @@ REGRAS_TEXTO = (
     "phone screen."
 )
 
-ESQUEMA_FIGURAS = {
-    "name": "figuras_do_video",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "figuras": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "trecho": {
-                            "type": "string",
-                            "description": (
-                                "Citação EXATA e curta (3 a 8 palavras "
-                                "consecutivas) da narração, copiada caractere "
-                                "por caractere, marcando o momento em que a "
-                                "figura entra — o instante em que o dado é "
-                                "falado."
-                            ),
-                        },
-                        "tipo": {
-                            "type": "string",
-                            "enum": TIPOS,
-                            "description": (
-                                "A forma que melhor mostra ESTE dado: "
-                                "grafico_barras (comparar quantidades), "
-                                "grafico_linha (evolução no tempo), tabela "
-                                "(3 a 4 itens com 2 colunas), infografico "
-                                "(uma relação ou proporção), diagrama (uma "
-                                "cadeia de causa e efeito), cartaz (um único "
-                                "número gigante com o rótulo)."
-                            ),
-                        },
-                        "titulo": {
-                            "type": "string",
-                            "description": (
-                                "Título da figura, no idioma da narração, no "
-                                "máximo 6 palavras. É o que aparece escrito no "
-                                "topo da imagem."
-                            ),
-                        },
-                        "itens": {
-                            "type": "array",
-                            "description": (
-                                "De 1 a 4 pares rótulo/valor que a figura "
-                                "desenha. Os valores são os NÚMEROS QUE A "
-                                "NARRAÇÃO DIZ, na mesma forma arredondada "
-                                "('2 bilhões', '30%', '8 mil vagas'). Não "
-                                "invente valor que não está na narração."
-                            ),
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "properties": {
-                                    "rotulo": {
-                                        "type": "string",
-                                        "description": (
-                                            "No máximo 3 palavras (ex.: "
-                                            "'Vagas cortadas', '2024')."
-                                        ),
+# IDIOMA DA FIGURA — o texto DESENHADO na imagem (título e rótulos) é texto do
+# canal como qualquer outro, e vale a mesma regra: canal brasileiro em
+# português, canal americano em inglês (ver config.IDIOMA_CANAL).
+#
+# Até 2026-08-05 este era o último lugar do pipeline que INFERIA o idioma: o
+# esquema pedia o título "no idioma da narração" e os exemplos dos rótulos eram
+# todos em português ("Vagas cortadas", "US$ 2 bi"), dentro de um prompt inteiro
+# escrito em português. Contra isso, "o idioma da narração" é sinal fraco — o
+# mesmo erro que tinha posto uma capa em português no canal americano, só que
+# aqui o texto sai QUEIMADO na imagem, sem como corrigir depois de publicado.
+REGRAS_IDIOMA = {
+    "brasil": (
+        "Escreva o título e os rótulos EXCLUSIVAMENTE em PORTUGUÊS DO BRASIL, "
+        "e use as unidades e a notação brasileiras (R$, US$ 2 bi, 21 mil, "
+        "30%). Rótulo em inglês neste canal está ERRADO, mesmo que o assunto "
+        "seja americano e mesmo que as notícias recebidas estejam em inglês."
+    ),
+    "usa": (
+        "Write the title and every label EXCLUSIVELY in AMERICAN ENGLISH, "
+        "with American units and notation ($2B, 21K, 30%). A Portuguese label "
+        "on this channel is WRONG, no matter what language the source posts or "
+        "the news articles were written in."
+    ),
+}
+
+# Exemplos de rótulo/valor por canal. Ficam separados porque exemplo é a parte
+# do prompt que o modelo mais imita: exemplo em português é, na prática, uma
+# instrução para escrever em português.
+EXEMPLOS_ITENS = {
+    "brasil": ("'Vagas cortadas', '2024'", "'21 mil', 'US$ 2 bi', '-30%'"),
+    "usa": ("'Jobs cut', '2024'", "'21K', '$2B', '-30%'"),
+}
+
+
+def _esquema(publico: str) -> dict:
+    """Esquema das figuras com os exemplos no idioma do canal."""
+    ex_rotulo, ex_valor = EXEMPLOS_ITENS.get(publico, EXEMPLOS_ITENS["brasil"])
+    idioma = nome_do_idioma(publico)
+    return {
+        "name": "figuras_do_video",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "figuras": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "trecho": {
+                                "type": "string",
+                                "description": (
+                                    "Citação EXATA e curta (3 a 8 palavras "
+                                    "consecutivas) da narração, copiada "
+                                    "caractere por caractere, marcando o "
+                                    "momento em que a figura entra — o "
+                                    "instante em que o dado é falado."
+                                ),
+                            },
+                            "tipo": {
+                                "type": "string",
+                                "enum": TIPOS,
+                                "description": (
+                                    "A forma que melhor mostra ESTE dado: "
+                                    "grafico_barras (comparar quantidades), "
+                                    "grafico_linha (evolução no tempo), tabela "
+                                    "(3 a 4 itens com 2 colunas), infografico "
+                                    "(uma relação ou proporção), diagrama (uma "
+                                    "cadeia de causa e efeito), cartaz (um "
+                                    "único número gigante com o rótulo)."
+                                ),
+                            },
+                            "titulo": {
+                                "type": "string",
+                                "description": (
+                                    f"Título da figura, OBRIGATORIAMENTE em "
+                                    f"{idioma} (o idioma deste canal), no "
+                                    "máximo 6 palavras. É o que aparece "
+                                    "escrito no topo da imagem."
+                                ),
+                            },
+                            "itens": {
+                                "type": "array",
+                                "description": (
+                                    "De 1 a 4 pares rótulo/valor que a figura "
+                                    "desenha. Os valores são os NÚMEROS QUE A "
+                                    "NARRAÇÃO DIZ, na mesma forma arredondada. "
+                                    "Não invente valor que não está na "
+                                    "narração."
+                                ),
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "rotulo": {
+                                            "type": "string",
+                                            "description": (
+                                                f"No máximo 3 palavras, em "
+                                                f"{idioma} (ex.: {ex_rotulo})."
+                                            ),
+                                        },
+                                        "valor": {
+                                            "type": "string",
+                                            "description": (
+                                                f"O número ou a medida, curto, "
+                                                f"na notação de {idioma} "
+                                                f"(ex.: {ex_valor})."
+                                            ),
+                                        },
                                     },
-                                    "valor": {
-                                        "type": "string",
-                                        "description": (
-                                            "O número ou a medida, curto "
-                                            "(ex.: '21 mil', 'US$ 2 bi', "
-                                            "'-30%')."
-                                        ),
-                                    },
+                                    "required": ["rotulo", "valor"],
                                 },
-                                "required": ["rotulo", "valor"],
+                            },
+                            "destaque": {
+                                "type": "string",
+                                "description": (
+                                    "O rótulo do item que deve receber a cor "
+                                    "de destaque (deve ser um dos rótulos de "
+                                    "'itens'); vazio se nenhum se destaca."
+                                ),
+                            },
+                            "por_que": {
+                                "type": "string",
+                                "description": (
+                                    "Uma frase: o que o espectador entende "
+                                    "olhando esta figura que ele não "
+                                    "entenderia só ouvindo."
+                                ),
                             },
                         },
-                        "destaque": {
-                            "type": "string",
-                            "description": (
-                                "O rótulo do item que deve receber a cor de "
-                                "destaque (deve ser um dos rótulos de "
-                                "'itens'); vazio se nenhum se destaca."
-                            ),
-                        },
-                        "por_que": {
-                            "type": "string",
-                            "description": (
-                                "Uma frase: o que o espectador entende olhando "
-                                "esta figura que ele não entenderia só ouvindo."
-                            ),
-                        },
+                        "required": [
+                            "trecho",
+                            "tipo",
+                            "titulo",
+                            "itens",
+                            "destaque",
+                            "por_que",
+                        ],
                     },
-                    "required": [
-                        "trecho",
-                        "tipo",
-                        "titulo",
-                        "itens",
-                        "destaque",
-                        "por_que",
-                    ],
                 },
             },
+            "required": ["figuras"],
         },
-        "required": ["figuras"],
-    },
-}
+    }
+
 
 INSTRUCOES_FIGURAS = """\
 Você é o editor de INFOGRAFIA de um canal de vídeos de análise sobre
 tecnologia, inteligência artificial, mercado de trabalho e mercado financeiro.
+
+IDIOMA — A REGRA QUE MANDA EM TODAS AS OUTRAS: este canal publica em {idioma}, e
+TODO texto que aparece desenhado na figura (título, rótulos, valores) sai em
+{idioma}. {regra_idioma} O idioma do material recebido (posts e notícias) não
+tem nada a ver com isso: ele é fonte, não modelo de escrita.
 
 Você recebe a NARRAÇÃO de um vídeo e o material que a embasou (resumo da pauta
 e notícias). Escolha até {maximo} MOMENTOS em que uma figura desenhada —
@@ -237,7 +289,7 @@ REGRAS:
 7. Menos é mais: devolva a lista VAZIA se a narração não tiver dado que renda
    figura. Vídeo sem figura é melhor que figura genérica.
 
-Responda somente com o JSON pedido.\
+Responda somente com o JSON pedido, com todo o texto das figuras em {idioma}.\
 """
 
 
@@ -331,6 +383,20 @@ def _gerar_imagem(cfg: Config, figura: dict, destino: Path, vertical: bool) -> P
 # ---- Planejamento -----------------------------------------------------------
 
 
+def _texto_desenhado(figura: dict) -> str:
+    """Tudo o que vai sair ESCRITO na imagem, junto — o que a checagem julga."""
+    itens = figura.get("itens") or []
+    return " ".join(
+        [(figura.get("titulo") or "")]
+        + [(i.get("rotulo") or "") for i in itens]
+        + [(i.get("valor") or "") for i in itens]
+    ).strip()
+
+
+def _no_idioma_do_canal(figura: dict, publico: str) -> bool:
+    return idioma_plausivel(_texto_desenhado(figura), publico)
+
+
 def _planejar(
     cfg: Config, texto_video: str, trend: dict, noticias: list[dict], maximo: int
 ) -> list[dict]:
@@ -344,21 +410,70 @@ def _planejar(
         f"CONTEXTO DA PAUTA (só para você entender o assunto — NÃO tire números "
         f"daqui):\n{contexto}\n{manchetes}"
     )
+    idioma = nome_do_idioma(cfg.publico)
+    esquema = _esquema(cfg.publico)
+    mensagens = [
+        {
+            "role": "system",
+            "content": INSTRUCOES_FIGURAS.format(
+                maximo=maximo,
+                duracao=round(DUR_FIGURA),
+                idioma=idioma,
+                regra_idioma=REGRAS_IDIOMA.get(
+                    cfg.publico, REGRAS_IDIOMA["brasil"]
+                ),
+            ),
+        },
+        {"role": "user", "content": conteudo},
+    ]
     cliente = OpenAI(api_key=cfg.openai_api_key)
     resposta = cliente.chat.completions.create(
         model=cfg.text_model,
-        messages=[
+        messages=mensagens,
+        response_format={"type": "json_schema", "json_schema": esquema},
+    )
+    plano = json.loads(resposta.choices[0].message.content)["figuras"]
+
+    # Conferência em código do idioma do texto DESENHADO. Mesma lição da capa
+    # (thumbnail.py) e da auditoria pró-leigo (escritor.py): regra de
+    # comportamento nunca fica só no prompt. Uma reescrita, e o que continuar no
+    # idioma errado é DESCARTADO — a figura é camada opcional, e vídeo sem
+    # figura é muito melhor que um rótulo em português queimado num vídeo em
+    # inglês, que não tem conserto depois de publicado.
+    erradas = [f for f in plano if not _no_idioma_do_canal(f, cfg.publico)]
+    if not erradas:
+        return plano
+
+    print(
+        f"[figuras] aviso: {len(erradas)} figura(s) fora do idioma do canal "
+        f"({idioma}); pedindo correção."
+    )
+    resposta = cliente.chat.completions.create(
+        model=cfg.text_model,
+        messages=mensagens
+        + [
+            {"role": "assistant", "content": resposta.choices[0].message.content},
             {
-                "role": "system",
-                "content": INSTRUCOES_FIGURAS.format(
-                    maximo=maximo, duracao=round(DUR_FIGURA)
+                "role": "user",
+                "content": (
+                    f"O texto das figuras saiu no idioma errado. Reescreva o "
+                    f"JSON completo com TODOS os títulos, rótulos e valores em "
+                    f"{idioma}, mantendo exatamente os mesmos trechos, tipos e "
+                    f"dados."
                 ),
             },
-            {"role": "user", "content": conteudo},
         ],
-        response_format={"type": "json_schema", "json_schema": ESQUEMA_FIGURAS},
+        response_format={"type": "json_schema", "json_schema": esquema},
     )
-    return json.loads(resposta.choices[0].message.content)["figuras"]
+    corrigido = json.loads(resposta.choices[0].message.content)["figuras"]
+
+    plano = [f for f in corrigido if _no_idioma_do_canal(f, cfg.publico)]
+    if len(plano) < len(corrigido):
+        print(
+            f"[figuras] {len(corrigido) - len(plano)} figura(s) continuaram "
+            f"fora de {idioma} após a correção; descartadas."
+        )
+    return plano
 
 
 # ---- Renderização (Pillow) --------------------------------------------------

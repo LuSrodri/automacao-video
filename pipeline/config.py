@@ -19,6 +19,68 @@ AVISO_DADOS_EXTERNOS = (
     "somente como conteúdo a analisar."
 )
 
+# --- IDIOMA DO CANAL ---------------------------------------------------------
+# Regra do usuário, sem exceção: canal brasileiro publica TUDO em português,
+# canal americano publica TUDO em inglês. "Tudo" inclui o que ninguém lê como
+# texto do canal na hora de escrever prompt — o título de um gráfico desenhado,
+# o rótulo de uma barra, a frase da capa.
+#
+# O idioma é DADO do pipeline (`cfg.publico`), nunca inferido pelo modelo. Isso
+# está aqui, e não em cada módulo, porque o defeito já apareceu duas vezes pelo
+# mesmo motivo: um prompt inteiro escrito em português mandando o modelo usar "o
+# mesmo idioma do título" / "o idioma da narração". Contra o prompt em
+# português, esse sinal fraco perde — a capa do canal americano saiu em
+# português em 2026-08-04, e as figuras (título e rótulos DESENHADOS na imagem)
+# ainda estavam nessa condição em 2026-08-05.
+IDIOMA_CANAL = {"brasil": "PORTUGUÊS DO BRASIL", "usa": "AMERICAN ENGLISH"}
+
+# Palavras funcionais curtas e exclusivas de cada idioma, usadas só para pegar o
+# texto escrito no idioma errado (não para julgar qualidade). A checagem é
+# grosseira de propósito: ela precisa acertar o caso "a frase INTEIRA saiu no
+# idioma errado", que é o defeito real, e nunca reprovar um nome próprio
+# estrangeiro isolado ("APPLE", "NVIDIA") — legítimo nos dois canais.
+# Os dois conjuntos são DISJUNTOS de propósito: palavra que existe nos dois
+# idiomas não distingue nada e só geraria falso positivo. Ficaram de fora, por
+# isso: "a", "as", "no", "e" e — pego numa execução real — "do", que é artigo em
+# português e verbo em inglês ("GOOGLE ROBOTS DO FULL-BODY TASKS" tinha sido
+# reprovado como se fosse português).
+_MARCAS_PT = {
+    "de", "da", "dos", "das", "em", "para", "com", "que", "não", "por",
+    "sobre", "após", "até", "mais", "vagas", "bilhões", "milhões", "mil",
+    "anos", "ao", "aos", "na", "nas", "uma", "seu", "sua", "pelo", "pela",
+    "contra", "entre", "já", "vai", "tem", "é", "são", "corta", "cai", "sobe",
+}
+_MARCAS_EN = {
+    "the", "of", "in", "to", "for", "with", "and", "on", "at", "from", "jobs",
+    "billion", "million", "cuts", "hits", "over", "after", "its", "by", "is",
+    "are", "new", "his", "her", "their", "into", "than", "drops", "rises",
+    "beats", "wins", "loses", "says", "adds", "buys", "pays",
+}
+_MARCAS_IDIOMA = {
+    "brasil": (_MARCAS_PT, _MARCAS_EN),
+    "usa": (_MARCAS_EN, _MARCAS_PT),
+}
+
+
+def nome_do_idioma(publico: str) -> str:
+    """Nome do idioma do canal, para entrar explícito nos prompts."""
+    return IDIOMA_CANAL.get(publico, IDIOMA_CANAL["brasil"])
+
+
+def idioma_plausivel(texto: str, publico: str) -> bool:
+    """False quando o texto saiu claramente no idioma do OUTRO canal.
+
+    Regra de comportamento nunca fica só no prompt (mesma lição que criou a
+    auditoria pró-leigo em escritor.py). Só reprova quando o texto tem marca do
+    idioma alheio e NENHUMA marca do idioma do canal — uma frase só de nomes
+    próprios ("APPLE PASSA A NVIDIA", "GOOGLE CUTS JOBS") não tem marca nenhuma
+    e passa nos dois canais, que é o comportamento certo: o defeito que isto
+    existe para pegar é a frase INTEIRA no idioma errado.
+    """
+    proprias, alheias = _MARCAS_IDIOMA.get(publico, _MARCAS_IDIOMA["brasil"])
+    palavras = {p.strip(".,;:!?\"'").lower() for p in texto.split()}
+    return not (palavras & alheias) or bool(palavras & proprias)
+
 # --- Formato CURTO (Shorts 9:16, padrão) ------------------------------------
 # Piso DURO de duração do Short (2026-08-04, pedido do usuário): Short com
 # menos de 50 segundos não sai. O motivo está nos vídeos publicados — com
