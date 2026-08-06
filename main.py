@@ -62,6 +62,12 @@ Fluxo:
     cartelas + figuras. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução).
+14. TikTok (opcional, TIKTOK_PUBLICAR=1, só no canal brasileiro): o MESMO
+    arquivo é publicado no TikTok na mesma execução, sem gerar nada de novo —
+    o custo adicional é zero. A publicação passa pelo Zernio (zernio.py), que
+    é um cliente auditado do TikTok e por isso consegue postar PÚBLICO; falar
+    direto com a API do TikTok exigiria auditoria do próprio app. Falha aqui
+    só avisa, porque o vídeo já está no ar no YouTube quando isso roda.
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - padrão: Short vertical 1080x1920 de ~60s, com legendas queimadas e narração
@@ -118,6 +124,8 @@ from pipeline.registro import registrar
 from pipeline.silencio import aparar_silencios
 from pipeline.thumbnail import gerar_thumbnail
 from pipeline.x_client import buscar_posts_com_video, coletar_trends
+from pipeline.zernio import credenciais_ausentes as zernio_credenciais_ausentes
+from pipeline.zernio import publicar as publicar_tiktok
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
 from pipeline.youtube import top_retencao, ultimos_publicados
@@ -178,7 +186,6 @@ def main() -> None:
     if args.auth_youtube or args.auth_youtube_usa:
         autenticar_youtube(cfg, usa=args.auth_youtube_usa)
         return
-
     if args.usa:
         cfg.publico = "usa"
         print("[config] Modo USA: conteúdo em inglês para o público americano")
@@ -190,6 +197,31 @@ def main() -> None:
             f"(16:9), alvo de {cfg.video_duracao}s (faixa {LONGO_MIN_S}-"
             f"{LONGO_MAX_S}s), até {cfg.max_clipes} clipes, sem legendas"
         )
+
+    # O TikTok é publicação SECUNDÁRIA do canal BRASILEIRO: o mesmo vídeo que
+    # vai para o YouTube é postado lá na mesma execução (custo adicional zero,
+    # nada é gerado de novo). A conta @lusrodri é brasileira, e idioma é regra
+    # de canal — então no `-usa`, que narra em inglês, a publicação não acontece
+    # mesmo que a env var esteja ligada por engano no cron errado.
+    postar_tiktok = cfg.tiktok_publicar and cfg.publico == "brasil"
+    if cfg.tiktok_publicar and cfg.publico != "brasil":
+        print(
+            "[config] TIKTOK_PUBLICAR está ligado, mas esta execução é do canal "
+            "em inglês e a conta do TikTok é a brasileira (@"
+            f"{cfg.tiktok_usuario}) — nada será postado lá."
+        )
+    # Credencial do TikTok conferida AQUI, junto do fail-fast do YouTube: se
+    # falta token, é melhor abortar antes de gastar X, OpenAI e ElevenLabs do
+    # que descobrir isso na última linha da execução, com tudo já pago.
+    if postar_tiktok:
+        faltando = zernio_credenciais_ausentes(cfg)
+        if faltando:
+            raise SystemExit(
+                f"TIKTOK_PUBLICAR está ligado, mas falta {', '.join(faltando)} "
+                "— a execução abortou antes de gastar qualquer chamada paga. "
+                "Pegue a chave em https://zernio.com (a conta do TikTok precisa "
+                "estar conectada lá), ou desligue TIKTOK_PUBLICAR."
+            )
 
     # Leituras do canal PRIMEIRO (fail-fast): se as credenciais do YouTube
     # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
@@ -491,11 +523,29 @@ def main() -> None:
         comentario=roteiro.get("comentario"),
     )
 
+    # TikTok: o MESMO arquivo, na mesma execução. Roda depois do YouTube de
+    # propósito — o YouTube é o canal principal e a falha dele aborta; aqui
+    # falha só avisa, porque a essa altura o vídeo já está no ar.
+    url_tiktok = ""
+    if postar_tiktok:
+        url_tiktok = publicar_tiktok(
+            cfg,
+            video_final,
+            roteiro["titulo"],
+            # A descrição CRUA, sem a lista de fontes que o formato longo anexa:
+            # link não é clicável na legenda do TikTok, e dez URLs comeriam o
+            # espaço da frase que explica o vídeo.
+            roteiro["descricao"],
+            tags=roteiro.get("tags"),
+        )
+
     print("\nConcluído!")
     print(f"  Vídeo final: {video_final}")
     print(f"  Título: {roteiro['titulo']}")
     print(f"  Descrição: {roteiro['descricao']}")
     print(f"  YouTube: {url_youtube}")
+    if url_tiktok:
+        print(f"  TikTok: {url_tiktok}")
 
 
 if __name__ == "__main__":

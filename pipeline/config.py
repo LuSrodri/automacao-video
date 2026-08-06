@@ -7,6 +7,32 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 RAIZ = Path(__file__).resolve().parent.parent
+ENV_PATH = RAIZ / ".env"
+
+
+def atualizar_env(chave: str, valor: str) -> None:
+    """Cria ou atualiza ``chave=valor`` no arquivo ``.env``.
+
+    Mora aqui (e não no módulo de publicação) porque os dois fluxos de
+    autorização gravam token de longa duração no mesmo arquivo: o do YouTube e
+    o do TikTok.
+    """
+    linhas = (
+        ENV_PATH.read_text(encoding="utf-8").splitlines()
+        if ENV_PATH.exists()
+        else []
+    )
+    nova = f"{chave}={valor}"
+    for i, linha in enumerate(linhas):
+        if linha.strip().startswith(f"{chave}="):
+            linhas[i] = nova
+            break
+    else:
+        if linhas and linhas[-1].strip():
+            linhas.append("")
+        linhas.append(nova)
+    ENV_PATH.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+
 
 # Prefixo padrão dos prompts que recebem material coletado de terceiros (posts
 # do X, notícias, descrições de mídia). O conteúdo externo alimenta chamadas
@@ -159,6 +185,16 @@ LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 # publicação cai mais rápido do que a chance de ele existir.
 TENTATIVAS_TREND = 3
 
+# Privacidades que a Content Posting API do TikTok aceita. Quais valem para a
+# conta é o creator-info que diz — em 2026-08-06 a do canal aceitava
+# PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS e SELF_ONLY.
+PRIVACIDADES_TIKTOK = {
+    "PUBLIC_TO_EVERYONE",
+    "MUTUAL_FOLLOW_FRIENDS",
+    "FOLLOWER_OF_CREATOR",
+    "SELF_ONLY",
+}
+
 # Contas fixas do X que alimentam a coleta. X_ACCOUNTS no .env, quando
 # preenchido, substitui esta lista inteira.
 #
@@ -291,6 +327,28 @@ class Config:
     youtube_refresh_token_usa: str = ""
     youtube_privacy: str = "public"  # public | unlisted | private
     youtube_category_id: str = "28"  # 28 = Science & Technology
+    # --- TikTok via Zernio (publicação secundária, só no canal brasileiro) --
+    # O mesmo vídeo que vai para o YouTube é postado no TikTok na MESMA
+    # execução: nada é gerado de novo, então o custo adicional é zero. Ligado
+    # por TIKTOK_PUBLICAR nos crons do canal BR (ver zernio.py).
+    #
+    # A publicação passa pelo Zernio, e não pela API do TikTok direto, porque
+    # o TikTok só libera post PÚBLICO para app que passou pela auditoria dele —
+    # e a auditoria exige site, política de privacidade e vídeo de demonstração
+    # de uma interface que este pipeline não tem. O Zernio já é auditado.
+    tiktok_publicar: bool = False
+    zernio_api_key: str = ""
+    # Só é necessário se houver mais de uma conta de TikTok no Zernio; vazio
+    # faz o pipeline descobrir a única conectada.
+    zernio_account_id: str = ""
+    tiktok_usuario: str = "lusrodri"
+    # PUBLIC_TO_EVERYONE confirmado como disponível na conta em 2026-08-06
+    # (creator-info do Zernio). SELF_ONLY serve para testar sem publicar.
+    tiktok_privacy: str = "PUBLIC_TO_EVERYONE"
+    # Rótulo de conteúdo gerado por IA (videoMadeWithAi). Vale True porque a
+    # narração é sintetizada (ElevenLabs) e as figuras da tela são desenhadas
+    # por modelo de imagem — o TikTok pede o rótulo nesse caso.
+    tiktok_aigc: bool = True
     output_dir: Path = field(default_factory=lambda: RAIZ / "output")
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
@@ -363,6 +421,16 @@ def carregar_config() -> Config:
         youtube_refresh_token_usa=os.getenv("YOUTUBE_REFRESH_TOKEN_USA", ""),
         youtube_privacy=os.getenv("YOUTUBE_PRIVACY", "public"),
         youtube_category_id=os.getenv("YOUTUBE_CATEGORY_ID", "28"),
+        tiktok_publicar=os.getenv("TIKTOK_PUBLICAR", "0").strip().lower()
+        in ("1", "true", "sim", "yes"),
+        zernio_api_key=os.getenv("ZERNIO_API_KEY", ""),
+        zernio_account_id=os.getenv("ZERNIO_ACCOUNT_ID", ""),
+        tiktok_usuario=os.getenv("TIKTOK_USUARIO", "lusrodri"),
+        tiktok_privacy=os.getenv(
+            "TIKTOK_PRIVACY", "PUBLIC_TO_EVERYONE"
+        ).strip().upper(),
+        tiktok_aigc=os.getenv("TIKTOK_AIGC", "1").strip().lower()
+        in ("1", "true", "sim", "yes"),
     )
 
     # A duração final segue o áudio da narração; este valor orienta o
@@ -379,6 +447,11 @@ def carregar_config() -> Config:
         raise SystemExit(
             "VIDEO_VELOCIDADE deve estar entre 0.5 e 2.0 (1.0 = velocidade "
             f"normal; recebido: {cfg.velocidade})."
+        )
+    if cfg.tiktok_privacy not in PRIVACIDADES_TIKTOK:
+        raise SystemExit(
+            f"TIKTOK_PRIVACY inválida ({cfg.tiktok_privacy}). Valores aceitos: "
+            f"{', '.join(sorted(PRIVACIDADES_TIKTOK))}."
         )
 
     cfg.output_dir.mkdir(exist_ok=True)

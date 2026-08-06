@@ -25,7 +25,7 @@ from pathlib import Path
 
 import requests
 
-from .config import RAIZ, Config
+from .config import Config, atualizar_env
 
 # Todos os escopos da YouTube Data API v3, conforme a lista oficial da Google
 # (https://developers.google.com/identity/protocols/oauth2/scopes#youtube).
@@ -57,26 +57,10 @@ PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 COMMENT_THREADS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
 ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
-ENV_PATH = RAIZ / ".env"
 
 # Piso de views para o ranking de retenção: vídeo com pouquíssimas views tem
 # retenção estatisticamente sem valor (3 amigos assistindo até o fim = 100%).
 VIEWS_MINIMO_RETENCAO = 50
-
-
-def _atualizar_env(chave: str, valor: str) -> None:
-    """Cria ou atualiza ``chave=valor`` no arquivo ``.env``."""
-    linhas = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
-    nova = f"{chave}={valor}"
-    for i, linha in enumerate(linhas):
-        if linha.strip().startswith(f"{chave}="):
-            linhas[i] = nova
-            break
-    else:
-        if linhas and linhas[-1].strip():
-            linhas.append("")
-        linhas.append(nova)
-    ENV_PATH.write_text("\n".join(linhas) + "\n", encoding="utf-8")
 
 
 def _refresh_token_do_publico(cfg: Config) -> str:
@@ -634,7 +618,7 @@ def autenticar(cfg: Config, usa: bool = False) -> None:
             "https://myaccount.google.com/permissions e tente de novo."
         )
 
-    _atualizar_env(var_token, refresh)
+    atualizar_env(var_token, refresh)
     os.environ[var_token] = refresh
     print(
         f"[youtube] Refresh token de longa duração do canal {canal} salvo em "

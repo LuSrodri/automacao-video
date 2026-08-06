@@ -53,6 +53,8 @@ python main.py --long-take        # vídeo longo de análise (16:9), em portugu�
 python main.py --long-take -usa   # vídeo longo de análise (16:9), em inglês
 ```
 
+Autorizações (uma vez só, não geram vídeo): `--auth-youtube` e `--auth-youtube-usa`.
+
 Com `-usa`, todo o material — escolha do tema, título, descrição, texto narrado e hashtags — é produzido em inglês americano e direcionado 100% ao público dos EUA (a coleta também prioriza o que está dominando a conversa por lá), e a narração usa a voz americana configurada em `ELEVENLABS_VOICE_ID_USA`.
 
 O resultado fica em uma pasta por execução (o formato longo marca a pasta com
@@ -227,6 +229,43 @@ python main.py --auth-youtube-usa
 Os dois usam o mesmo `YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` — muda só qual canal você seleciona no consentimento.
 
 O pipeline é **fail-fast**: credenciais ausentes/quebradas, falha ao ler os últimos vídeos ou os campeões de retenção, classificação indisponível, verificação de vídeo repetido indisponível e falha no upload — tudo isso derruba a execução com erro explícito (para o agendador poder alertar), em vez de seguir e degradar o vídeo em silêncio. As leituras do canal acontecem logo no início, antes de qualquer chamada paga (X/OpenAI). **Exceção (Firecrawl)**: falha na busca de notícias só gera aviso no log e a execução segue (o roteiro sai do resumo/posts do X). Já os clipes são obrigatórios: se nenhum clipe dos posts da trend puder ser baixado, a execução aborta (o formato não admite imagem estática). Se o upload falhar, o vídeo continua salvo em `output/` e registrado em `videos.txt` para publicação manual.
+
+## Publicação automática no TikTok (via Zernio)
+
+O **mesmo arquivo** que vai para o YouTube é publicado no TikTok na mesma execução. Nada é gerado de novo: sem coleta extra, sem roteiro extra, sem narração extra — o **custo adicional é zero**. Vale só para o **canal brasileiro** (`python main.py`, sem `-usa`): a conta é brasileira e idioma é regra de canal, então numa execução em inglês a publicação não acontece nem se a variável estiver ligada.
+
+### Por que passa pelo Zernio, e não direto na API do TikTok
+
+O TikTok só libera publicação **pública** para app que passou pela **auditoria** dele. Sem auditoria, todo post sai forçado a `SELF_ONLY` (privado) — não é limitação do código, é regra da plataforma. E a auditoria exige site, termos de uso, política de privacidade, ícone e um vídeo demonstrando a integração numa interface que este pipeline não tem.
+
+O [Zernio](https://zernio.com) já é um cliente auditado: a conta do canal é conectada lá por OAuth e a publicação sai pública. No fim da linha é a **mesma Content Posting API oficial** — o que muda é de quem é o app auditado. Confirmado na conta real em 2026-08-06: os escopos incluem `video.publish` e o `creator-info` devolve `PUBLIC_TO_EVERYONE` entre as privacidades disponíveis.
+
+### Como funciona
+
+Três chamadas por vídeo (`pipeline/zernio.py`):
+
+1. `POST /v1/media/presign` devolve `uploadUrl` e `publicUrl`.
+2. `PUT uploadUrl` sobe o MP4 direto para o storage — **sem** cabeçalho de autorização, porque a URL já é assinada e mandar o Bearer junto faz o storage recusar.
+3. `POST /v1/posts` cria o post com `publishNow` e as configurações de TikTok.
+
+Como `publishNow` é assíncrono (a criação volta com status `publishing`), o pipeline **acompanha o post até o desfecho** — sem isso, uma recusa do TikTok (duração, formato, spam) passaria como sucesso no log.
+
+### Configuração
+
+1. Conecte a conta do TikTok em [zernio.com](https://zernio.com).
+2. Preencha `ZERNIO_API_KEY` no `.env` (formato `sk_` + 64 hex).
+3. Ligue com `TIKTOK_PUBLICAR=1` — no `.env` local e, em produção, na env var do cron job **`automacao-video`** (o Short BR, 9:16, que é o formato que o TikTok premia). O `automacao-video-longo` é 16:9 e cabe mal no feed; se quiser postar o longo lá também, basta ligar a variável nele.
+
+`ZERNIO_ACCOUNT_ID` só é necessário se você tiver **mais de uma** conta de TikTok no Zernio — vazio, o pipeline descobre sozinho a única conectada e **falha explicitamente** se houver ambiguidade (adivinhar em qual perfil publicar seria pior que falhar).
+
+**Para testar sem publicar de verdade**, use `TIKTOK_PRIVACY=SELF_ONLY`: o vídeo sobe visível só para você.
+
+A legenda é montada com título + descrição + até 5 hashtags, respeitando o limite de **2200 runas UTF-16** do TikTok (as hashtags são as primeiras a cair quando falta espaço; a lista de fontes que o formato longo anexa à descrição do YouTube **não** entra, porque link não é clicável na legenda).
+
+Duas coisas que valem registro:
+
+- **Rótulo de IA**: `TIKTOK_AIGC=1` por padrão, que vira `videoMadeWithAi` — a narração é sintetizada (ElevenLabs) e as figuras da tela são desenhadas por modelo de imagem, e o TikTok pede o rótulo nesse caso.
+- **Falha aqui NÃO derruba a execução** (diferente do YouTube): quando o TikTok roda, o vídeo já está no ar no YouTube. Falhar aqui vira aviso no log com o caminho do arquivo, igual à capa e ao comentário do YouTube. O que **aborta cedo** é a chave ausente — conferida no início da execução, antes de qualquer chamada paga.
 
 ## Como funciona o corte de silêncios
 
