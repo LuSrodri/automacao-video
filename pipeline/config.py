@@ -327,6 +327,18 @@ class Config:
     youtube_refresh_token_usa: str = ""
     youtube_privacy: str = "public"  # public | unlisted | private
     youtube_category_id: str = "28"  # 28 = Science & Technology
+    # SEO/GEO: panorama dos vídeos que outros canais publicaram HOJE sobre o
+    # mesmo assunto (seo.py), usado para calibrar título, descrição, tags e
+    # capa. A busca não gasta da cota de 10.000 unidades/dia — ela cai no balde
+    # separado de "Search Queries", com teto de 100 buscas/dia, e o pipeline
+    # faz UMA por execução. Desligar volta ao comportamento anterior a
+    # 2026-08-07 (metadados calibrados só pelo histórico do próprio canal).
+    seo_panorama: bool = True
+    seo_max_videos: int = 20  # vídeos do dia lidos por execução (teto da API: 50)
+    # Veto a clipe tomado por texto na tela, sobretudo texto PARADO, quando ele
+    # não é o assunto que a narração descreve (auditoria.py). Desligar aceita
+    # de volta o fundo de slide/print atrás das legendas queimadas.
+    veto_texto_denso: bool = True
     # --- TikTok via Zernio (publicação secundária, só no canal brasileiro) --
     # O mesmo vídeo que vai para o YouTube é postado no TikTok na MESMA
     # execução: nada é gerado de novo, então o custo adicional é zero. Ligado
@@ -421,6 +433,11 @@ def carregar_config() -> Config:
         youtube_refresh_token_usa=os.getenv("YOUTUBE_REFRESH_TOKEN_USA", ""),
         youtube_privacy=os.getenv("YOUTUBE_PRIVACY", "public"),
         youtube_category_id=os.getenv("YOUTUBE_CATEGORY_ID", "28"),
+        seo_panorama=os.getenv("SEO_PANORAMA", "1").strip().lower()
+        in ("1", "true", "sim", "yes"),
+        seo_max_videos=int(os.getenv("SEO_MAX_VIDEOS", "20")),
+        veto_texto_denso=os.getenv("VETO_TEXTO_DENSO", "1").strip().lower()
+        in ("1", "true", "sim", "yes"),
         tiktok_publicar=os.getenv("TIKTOK_PUBLICAR", "0").strip().lower()
         in ("1", "true", "sim", "yes"),
         zernio_api_key=os.getenv("ZERNIO_API_KEY", ""),

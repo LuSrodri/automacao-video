@@ -55,6 +55,10 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+# Busca pública (seo.py): o que MAIS GENTE publicou sobre o assunto hoje. Não
+# gasta da cota de 10.000 unidades/dia — cai no balde separado de "Search
+# Queries", de 100 buscas/dia.
+SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 COMMENT_THREADS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
 ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 

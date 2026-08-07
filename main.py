@@ -18,8 +18,13 @@ Fluxo:
    Analytics). Regra dura: a escolhida passa por uma verificação
    anti-repetição (GPT confere se ela cobriria o mesmo fato de um vídeo
    publicado nas últimas 36h; se sim, sai da disputa e a seleção refaz).
-   Define também uma consulta de notícias.
+   Define também uma consulta de notícias e uma consulta de busca do YouTube.
 4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
+4b. PANORAMA DO DIA (SEO/GEO, pipeline/seo.py): a YouTube Data API devolve os
+   vídeos que OUTROS canais publicaram sobre o mesmo assunto nas últimas
+   JANELA_HORAS, com views/hora e o vocabulário de tags deles. É a única
+   leitura do pipeline sobre a disputa FORA do canal, e alimenta título,
+   descrição, tags e capa. Falha aqui só avisa (SEO_PANORAMA=0 desliga).
 5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
    citando as fontes (contas do X e veículos das notícias), na estrutura
    PERGUNTA ESQUISITA -> CONTEXTUALIZAÇÃO -> DESENVOLVIMENTO -> CONSEQUÊNCIA
@@ -33,8 +38,13 @@ Fluxo:
    clipe, o veto duro derruba material de telejornal e imagem com selo de
    emissora, e uma nota de pertinência (1-5) derruba o clipe que não mostra o
    que a narração diz. No formato longo o telejornal não é vetado: entra
-   MARCADO como representação visual (dessaturado + etiqueta na tela). Roda
-   antes do TTS para a reprovação não custar créditos.
+   MARCADO como representação visual (dessaturado + etiqueta na tela). O veto
+   por TEXTO NA TELA entra aqui também: clipe tomado por texto — e, mais
+   ainda, por texto PARADO — sai, a não ser que aquele texto seja o assunto
+   que a narração descreve (o post citado, a tela do produto, o número
+   falado); o clipe fica embaixo das legendas queimadas, e texto sobre texto
+   não é lido por ninguém (VETO_TEXTO_DENSO=0 desliga). Roda antes do TTS para
+   a reprovação não custar créditos.
    FALLBACK DE TEMA: ficar abaixo do piso de clipes aprovados (1 no curto,
    LONGO_MIN_CLIPES_APROVADOS no longo) — ou não conseguir baixar clipe
    nenhum — não aborta mais a execução: a candidata sai da disputa e os passos
@@ -61,7 +71,11 @@ Fluxo:
     no canto superior direito ("Reprodução Imagem: X" + conta do post) +
     cartelas + figuras. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
-    YouTube (o horário de publicação é o do cronjob que dispara a execução).
+    YouTube (o horário de publicação é o do cronjob que dispara a execução)
+    com TAGS de busca (que iam vazias até 2026-08-07) e com a descrição
+    montada em pipeline/seo.py: parágrafo do payload, par P:/R: (a parte de
+    GEO — a frase autossuficiente que um buscador com IA consegue citar),
+    capítulos no formato longo, fontes reais e as hashtags por último.
 14. TikTok (opcional, TIKTOK_PUBLICAR=1, só no canal brasileiro): o MESMO
     arquivo é publicado no TikTok na mesma execução, sem gerar nada de novo —
     o custo adicional é zero. A publicação passa pelo Zernio (zernio.py), que
@@ -121,6 +135,12 @@ from pipeline.legendas import gerar_legendas
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
+from pipeline.seo import (
+    capitulos,
+    montar_descricao,
+    panorama_do_dia,
+    titulos_do_dia,
+)
 from pipeline.silencio import aparar_silencios
 from pipeline.thumbnail import gerar_thumbnail
 from pipeline.x_client import buscar_posts_com_video, coletar_trends
@@ -135,24 +155,6 @@ def _slug(texto: str, limite: int = 40) -> str:
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
     texto = re.sub(r"[^a-zA-Z0-9]+", "-", texto).strip("-").lower()
     return texto[:limite].rstrip("-") or "video"
-
-
-def _com_fontes(
-    descricao: str, trend: dict, noticias: list[dict], publico: str
-) -> str:
-    """Anexa à descrição os links reais que embasaram a análise (formato longo).
-
-    Só URLs que o pipeline realmente coletou (posts do X da trend escolhida e
-    notícias do Firecrawl) — nada gerado pelo modelo.
-    """
-    urls = list(dict.fromkeys(
-        [u for u in (trend.get("posts") or []) if u]
-        + [n.get("url", "") for n in noticias if n.get("url")]
-    ))[:10]
-    if not urls:
-        return descricao
-    titulo = "Sources:" if publico == "usa" else "Fontes:"
-    return descricao + "\n\n" + titulo + "\n" + "\n".join(f"- {u}" for u in urls)
 
 
 def main() -> None:
@@ -251,9 +253,20 @@ def main() -> None:
             excluir=tentadas,
         )
         noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
+
+        # SEO/GEO: quem MAIS publicou sobre este assunto hoje. É a única leitura
+        # do pipeline sobre o lado de fora do canal — os últimos publicados e os
+        # campeões de retenção calibram o tom com o próprio público, mas não
+        # dizem nada sobre a disputa da busca. Fica DENTRO do laço porque cada
+        # tentativa é outra pauta, e a concorrência de uma não serve para a
+        # outra. Falha aberta: sem panorama o roteiro sai como saía antes.
+        panorama = panorama_do_dia(
+            cfg, selecao.get("consulta_youtube") or selecao["trend"]
+        )
+
         roteiro = gerar_roteiro(
             cfg, selecao, trends, noticias,
-            videos_recentes=recentes, campeoes=campeoes,
+            videos_recentes=recentes, campeoes=campeoes, panorama=panorama,
         )
 
         marca = "_longo" if cfg.formato == "longo" else ""
@@ -495,12 +508,30 @@ def main() -> None:
         formato=cfg.formato,
     )
 
-    # No formato longo a descrição leva as fontes reais (posts do X e veículos
-    # das notícias que embasaram a análise): o vídeo é educacional e cita as
-    # fontes na narração — quem quiser conferir precisa dos links.
-    descricao = roteiro["descricao"]
+    # CAPÍTULOS (só no formato longo): cada tópico do roteiro trouxe uma citação
+    # literal do ponto da narração em que ele começa, e o alinhamento converte
+    # isso em carimbo de tempo. Publicados na descrição, viram os "momentos
+    # principais" do YouTube — que rendem posição na busca e deixam o
+    # espectador pular direto para o trecho que ele veio ver. Bloco inválido
+    # (poucos capítulos, trechos colados) volta vazio e simplesmente não sai.
+    marcos = []
     if cfg.formato == "longo":
-        descricao = _com_fontes(descricao, trend_video, noticias, cfg.publico)
+        marcos = capitulos(
+            roteiro, roteiro["texto_video"], alinhamento, duracao, cfg.publico
+        )
+
+    # A descrição publicada é montada aqui: o parágrafo do payload, o par P:/R:
+    # (a parte de GEO — a frase que um buscador com IA consegue citar sem ter
+    # assistido), os capítulos, as fontes reais do formato longo e, sempre por
+    # último, as hashtags.
+    descricao = montar_descricao(
+        roteiro,
+        cfg.publico,
+        formato=cfg.formato,
+        trend=trend_video,
+        noticias=noticias,
+        marcos=marcos,
+    )
 
     registrar(cfg, video_final, roteiro["titulo"], descricao)
 
@@ -510,7 +541,12 @@ def main() -> None:
     capa = None
     if cfg.formato == "longo":
         capa = gerar_thumbnail(
-            cfg, video_final, roteiro["titulo"], roteiro["texto_video"], pasta
+            cfg,
+            video_final,
+            roteiro["titulo"],
+            roteiro["texto_video"],
+            pasta,
+            titulos_do_dia=titulos_do_dia(panorama),
         )
 
     url_youtube = publicar_youtube(
@@ -542,7 +578,7 @@ def main() -> None:
     print("\nConcluído!")
     print(f"  Vídeo final: {video_final}")
     print(f"  Título: {roteiro['titulo']}")
-    print(f"  Descrição: {roteiro['descricao']}")
+    print(f"  Descrição:\n{descricao}")
     print(f"  YouTube: {url_youtube}")
     if url_tiktok:
         print(f"  TikTok: {url_tiktok}")

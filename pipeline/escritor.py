@@ -36,6 +36,17 @@ Duas etapas:
    reescrita — as regras só no prompt vazavam ("Kimi K3", "GPUs" em título;
    "veja o que mudou" em descrição).
 
+SEO e GEO (2026-08-07): a seleção devolve também uma `consulta_youtube` (no
+idioma do canal, linguagem de espectador), com a qual `seo.panorama_do_dia`
+lê da YouTube Data API os vídeos que OUTROS canais publicaram sobre o mesmo
+fato nas últimas horas. Esse panorama entra no material do roteirista ao lado
+da régua interna do canal, e com ele o roteiro passa a devolver dois campos
+novos: `tags` (que iam VAZIAS no upload desde sempre — o pipeline sempre leu
+`roteiro.get("tags")` e o esquema nunca teve o campo) e `resposta_curta` (a
+frase autossuficiente que a descrição publica num par P:/R:, para ser citável
+por buscador com IA). No formato longo cada tópico ganha ainda uma `citacao`
+literal, que vira o carimbo de tempo dos capítulos.
+
 FORMATO LONGO (`--long-take`, cfg.formato == "longo"): as duas etapas trocam
 de prompt e de esquema, mantendo a mesma mecânica. A seleção passa a exigir
 pauta que renda de TOPICOS_MIN a TOPICOS_MAX tópicos (3 a 5 recortes
@@ -73,6 +84,7 @@ from .config import (
     LONGO_MIN_S,
     Config,
 )
+from .seo import limpar_tags, resumo_para_prompt
 
 # Ritmo da narração em palavras por segundo do ÁUDIO FINAL, a VELOCIDADE
 # NORMAL (1.0x). "Final" é o ponto todo: é o áudio DEPOIS da aceleração e
@@ -200,8 +212,25 @@ ESQUEMA_SELECAO = {
                     "longa demais zera os resultados."
                 ),
             },
+            "consulta_youtube": {
+                "type": "string",
+                "description": (
+                    "Consulta de busca do YouTube, NO IDIOMA DO CANAL definido "
+                    "nas instruções: 2 a 5 palavras, como uma PESSOA "
+                    "procuraria este assunto na barra de busca (ex.: 'demissões "
+                    "inteligência artificial', 'nvidia corte preço chip'). É com "
+                    "ela que o pipeline descobre que outros vídeos sobre este "
+                    "fato já saíram hoje. Não é a mesma coisa que a consulta de "
+                    "notícias: aqui é linguagem de espectador, não de agência."
+                ),
+            },
         },
-        "required": ["trend", "motivo", "consulta_noticias"],
+        "required": [
+            "trend",
+            "motivo",
+            "consulta_noticias",
+            "consulta_youtube",
+        ],
     },
 }
 
@@ -230,6 +259,45 @@ COMENTARIO_PROPRIEDADE = {
         "(no máximo 1); hashtag; e pergunta de quiz com resposta certa — a "
         "pergunta existe para abrir briga civilizada, não para testar o "
         "espectador."
+    ),
+}
+
+# TAGS do vídeo (2026-08-07). Elas SEMPRE existiram na chamada de publicação
+# (`publicar(..., tags=roteiro.get("tags"))`) e NUNCA no esquema do roteiro —
+# ou seja, todo vídeo do canal subiu com a lista de tags vazia desde o começo.
+# É o único campo de metadados do YouTube em que cabe o nome próprio que o
+# título proíbe: tag não é lida pelo espectador, então o teste do leigo não se
+# aplica, e é por "Claude 4.5", "H200" ou "layoff" que procura quem já conhece
+# o assunto.
+TAGS_PROPRIEDADE = {
+    "type": "array",
+    "description": (
+        "De 8 a 15 termos de BUSCA no idioma do canal, do mais específico para "
+        "o mais geral, SEM '#'. Aqui NÃO vale o teste do leigo do título: é "
+        "onde entram os nomes próprios, modelos, siglas e produtos que o "
+        "título teve de traduzir. Use os termos do vocabulário de tags da "
+        "concorrência de hoje quando descreverem de verdade este vídeo. "
+        "PROIBIDO: tag que não tem relação com o conteúdo, nome de canal "
+        "concorrente e repetição do mesmo termo com outra caixa."
+    ),
+    "items": {"type": "string"},
+}
+
+# GEO (Generative Engine Optimization): a frase que um motor de resposta com IA
+# consegue CITAR sem ter assistido ao vídeo. A descrição escrita para gente
+# depende do vídeo ("isso significa que...") e por isso não é extraível; esta
+# repete o sujeito, o número, a data e a fonte dentro da própria frase.
+RESPOSTA_CURTA_PROPRIEDADE = {
+    "type": "string",
+    "description": (
+        "UMA frase, no idioma do canal, até 30 palavras, que RESPONDE a "
+        "pergunta de abertura e se sustenta sozinha fora do vídeo. Nomeia "
+        "por extenso quem fez o quê, com o número, a data e a fonte "
+        "('A Nvidia cortou o preço do H200 em 40% em 5 de agosto, segundo a "
+        "Reuters'). PROIBIDO começar com 'isso', 'ele', 'a empresa' ou "
+        "qualquer referência que só faça sentido depois de assistir; "
+        "proibido prometer sem responder; proibido dado que a narração não "
+        "diz."
     ),
 }
 
@@ -338,6 +406,8 @@ ESQUEMA_ROTEIRO = {
                     "pedir comentário — é fato com tensão, não convite."
                 ),
             },
+            "resposta_curta": RESPOSTA_CURTA_PROPRIEDADE,
+            "tags": TAGS_PROPRIEDADE,
             "comentario": COMENTARIO_PROPRIEDADE,
         },
         "required": [
@@ -346,6 +416,8 @@ ESQUEMA_ROTEIRO = {
             "consequencia",
             "titulo",
             "descricao",
+            "resposta_curta",
+            "tags",
             "texto_video",
             "comentario",
         ],
@@ -418,8 +490,19 @@ ESQUEMA_ROTEIRO_LONGO = {
                                 "prazo) e a fonte nominal dele."
                             ),
                         },
+                        "citacao": {
+                            "type": "string",
+                            "description": (
+                                "Trecho LITERAL de texto_video (5 a 12 "
+                                "palavras, copiado caractere por caractere, "
+                                "sem audio tags) onde este tópico COMEÇA na "
+                                "narração. Vira o carimbo de tempo do capítulo "
+                                "na descrição — trecho que não existir no "
+                                "texto simplesmente não vira capítulo."
+                            ),
+                        },
                     },
-                    "required": ["titulo", "dado"],
+                    "required": ["titulo", "dado", "citacao"],
                 },
             },
             "impacto_carreira": {
@@ -487,6 +570,8 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "'como você vê aqui' nem referência a imagem."
                 ),
             },
+            "resposta_curta": RESPOSTA_CURTA_PROPRIEDADE,
+            "tags": TAGS_PROPRIEDADE,
             "comentario": COMENTARIO_PROPRIEDADE,
         },
         "required": [
@@ -498,6 +583,8 @@ ESQUEMA_ROTEIRO_LONGO = {
             "o_que_observar",
             "titulo",
             "descricao",
+            "resposta_curta",
+            "tags",
             "texto_video",
             "comentario",
         ],
@@ -792,6 +879,11 @@ desenvolvimento novo (novo ataque, nova declaração, novo número) é bem-vinda
 Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
 nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
 longa e cheia de detalhes zera os resultados — seja enxuto.
+
+E uma consulta de busca do YOUTUBE, no IDIOMA DO CANAL, com 2 a 5 palavras, do
+jeito que um espectador digitaria na barra de busca. Ela serve para descobrir
+que outros vídeos sobre este fato já saíram hoje — então use o nome PÚBLICO do
+assunto, não o jargão do comunicado.
 Responda somente com o JSON pedido.\
 """
 
@@ -849,7 +941,59 @@ já publicado, sem nenhum fato novo.
 Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
 nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
 longa e cheia de detalhes zera os resultados — seja enxuto.
+
+E uma consulta de busca do YOUTUBE, no IDIOMA DO CANAL, com 2 a 5 palavras, do
+jeito que um espectador digitaria na barra de busca. Ela serve para descobrir
+que outros vídeos sobre este fato já saíram hoje — então use o nome PÚBLICO do
+assunto, não o jargão do comunicado.
 Responda somente com o JSON pedido.\
+"""
+
+# Regras de SEO e GEO (2026-08-07), iguais nos dois formatos. Ficam num
+# constante próprio porque valem para os campos de METADADOS (tags, resposta
+# curta, título e descrição diante da concorrência), que não mudam de um
+# formato para o outro — o que muda é o vídeo, não a forma de ser encontrado.
+#
+# Este texto é concatenado DENTRO das instruções e passa pelo .format() delas:
+# não escreva chave literal aqui.
+INSTRUCOES_SEO_GEO = """\
+
+SEO E GEO — o vídeo precisa ser ACHADO, por gente e por máquina. Dois campos
+existem só para isso, e nenhum deles pode prometer o que o vídeo não entrega.
+
+TAGS (campo tags) — de 8 a 15 termos de BUSCA, no idioma do canal, do mais
+específico para o mais geral, sem '#'. Elas NÃO são lidas pelo espectador:
+aqui não vale o teste do leigo do título, e é justamente onde entram os nomes
+próprios que o título teve de traduzir (o modelo de IA, o laboratório, a
+sigla, o produto, o ticker) — é por eles que procura quem já conhece o
+assunto. Monte nesta ordem:
+1. o nome exato do fato e das entidades envolvidas (empresa, produto, pessoa,
+   o número que virou manchete);
+2. os termos do VOCABULÁRIO DE TAGS do bloco de concorrência de hoje, quando
+   descreverem de verdade ESTE vídeo — são as palavras com que o público está
+   nomeando o assunto agora;
+3. dois ou três termos amplos do nicho do canal.
+PROIBIDO: tag sem relação com o conteúdo (tag enganosa derruba o alcance do
+canal inteiro), nome de canal concorrente e o mesmo termo repetido com outra
+caixa.
+
+RESPOSTA CURTA (campo resposta_curta) — uma frase que responde a pergunta de
+abertura e se sustenta SOZINHA, fora do vídeo. Ela vai para a descrição num par
+P:/R: e é o trecho que um buscador com IA extrai para responder quem perguntou
+aquilo. Por isso ela NOMEIA o que a pergunta deixou subentendido em vez de usar
+pronome: quem fez, o que fez, o número, a data e a fonte, tudo dentro da frase.
+Teste: lida fora do vídeo, por quem não viu nada, ela ainda informa? Se
+começar com 'isso', 'ele' ou 'a empresa', não passou.
+
+TÍTULO E DESCRIÇÃO DIANTE DA CONCORRÊNCIA DE HOJE — quando o material trouxer
+o bloco de vídeos já publicados sobre este assunto, ele é a lista do que vai
+aparecer LADO A LADO com o nosso na busca. Leia-o para duas coisas:
+(1) usar as PALAVRAS com que o público procura este fato — busca casa por
+palavra, e chamar o fato por um nome que ninguém digita é sumir dele; e
+(2) não repetir o ângulo que todos já ocuparam — se cinco títulos dizem a
+mesma coisa, o nosso diz o que os cinco deixaram de fora (o número exato, quem
+paga a conta, o efeito no emprego). Copiar título, frase ou nome de canal de
+qualquer um deles é PROIBIDO.\
 """
 
 INSTRUCOES_ROTEIRO = """\
@@ -1038,7 +1182,8 @@ que a narração não pode abrir (a narração não tem CTA e não pode quebrar 
 loop). Então ele vai onde o vídeo não foi — o dado que sobrou, o número de
 contexto, o lado que não coube — e termina numa pergunta aberta sobre a
 disputa. Ele NÃO resume o vídeo e NÃO repete a narração: quem chega nos
-comentários já assistiu.
+comentários já assistiu.\
+""" + INSTRUCOES_SEO_GEO + """
 
 Responda somente com o JSON pedido.\
 """
@@ -1211,6 +1356,17 @@ leva o dado de carreira ou de mercado que não coube na narração (setor, vaga,
 número, prazo) e fecha com uma pergunta aberta que quem procura emprego
 consegue responder com a própria experiência. NÃO resume o vídeo e NÃO repete
 a narração: quem chega nos comentários já assistiu.
+
+CAPÍTULOS — cada tópico traz uma CITAÇÃO literal do trecho de texto_video em
+que ele começa (campo citacao). O pipeline procura esse trecho no texto,
+converte em carimbo de tempo pelo alinhamento da narração e publica os
+capítulos na descrição, que é o que ativa os "momentos principais" do YouTube.
+Copie o trecho caractere por caractere, do PRIMEIRO ponto em que o tópico
+entra, e nunca de dentro de uma audio tag. Trecho que não existir no texto
+simplesmente não vira capítulo — e dois tópicos que começam quase no mesmo
+instante fazem o YouTube descartar o bloco inteiro, então espalhe os tópicos
+pela narração.\
+""" + INSTRUCOES_SEO_GEO + """
 
 Responda somente com o JSON pedido.\
 """
@@ -1937,8 +2093,18 @@ def gerar_roteiro(
     noticias: list[dict],
     videos_recentes: list[dict] | None = None,
     campeoes: list[dict] | None = None,
+    panorama: dict | None = None,
 ) -> dict:
-    """Gera o roteiro completo da trend escolhida, enriquecido com notícias."""
+    """Gera o roteiro completo da trend escolhida, enriquecido com notícias.
+
+    `panorama` é o retrato do assunto no YouTube de hoje (``seo.py``): os
+    vídeos que outros canais já publicaram sobre o mesmo fato nas últimas
+    horas, com views/h e o vocabulário de tags deles. Entra no material do
+    roteirista para calibrar título, descrição e tags contra a disputa REAL da
+    busca — o resumo de estilo ao lado dele só enxerga o próprio canal. É
+    opcional: sem ele, o roteiro sai como saía antes (com as tags montadas só a
+    partir do fato).
+    """
     cliente = OpenAI(api_key=cfg.openai_api_key)
 
     # A seleção devolve o objeto da trend escolhida em "trend_obj"; o match
@@ -1959,6 +2125,7 @@ def gerar_roteiro(
         + "\n\nNOTÍCIAS RECENTES SOBRE A TREND (o veículo entre colchetes é a "
         "fonte citável):\n" + _resumo_noticias(noticias)
         + _resumo_estilo(videos_recentes, campeoes, cfg.formato)
+        + resumo_para_prompt(panorama)
     )
 
     longo = cfg.formato == "longo"
@@ -2137,12 +2304,23 @@ def gerar_roteiro(
         palavras = _contar_palavras(roteiro["texto_video"])
 
     # Depois da reescrita, não antes: a auditoria devolve o JSON completo e
-    # traria um comentário novo, ainda por sanear.
+    # traria um comentário e tags novos, ainda por sanear.
     _limpar_comentario(roteiro)
+    # As tags passam pelo saneamento em código porque o limite que importa é o
+    # da API, não o do prompt: o YouTube recusa o UPLOAD INTEIRO quando a soma
+    # das tags passa de 500 caracteres — um vídeo já pago não pode morrer numa
+    # tag a mais.
+    roteiro["tags"] = limpar_tags(roteiro.get("tags"))
 
     print(f"[roteiro] {palavras} palavras faladas (faixa {minimo}-{limite})")
     print(f"[roteiro] Tema do dia: {roteiro['tema']}")
     print(f"[roteiro] Título: {roteiro['titulo']}")
+    if roteiro.get("resposta_curta"):
+        print(f"[roteiro] Resposta curta (GEO): {roteiro['resposta_curta']}")
+    if roteiro.get("tags"):
+        print(f"[roteiro] Tags: {', '.join(roteiro['tags'])}")
+    else:
+        print("[aviso] O roteiro saiu sem tags aproveitáveis; o vídeo sobe sem elas.")
     if roteiro.get("comentario"):
         print(f"[roteiro] Comentário de abertura: {roteiro['comentario']}")
     if roteiro.get("pergunta"):

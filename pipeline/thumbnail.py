@@ -13,6 +13,13 @@ clica), e tem que sair no IDIOMA DO CANAL — português no canal brasileiro,
 inglês no americano —, que é dado do pipeline (``cfg.publico``) e não coisa a
 deduzir do título.
 
+Desde 2026-08-07 o modelo também recebe os TÍTULOS dos vídeos que outros canais
+publicaram hoje sobre o mesmo assunto (``seo.py``): a capa é o que separa o
+nosso vídeo dos deles numa linha de resultados, e repetir o recorte que todos
+já usaram é a forma mais cara de desaparecer. Diferenciar aqui é escolher outro
+fato VERDADEIRO do próprio vídeo — a regra de dizer o fato continua acima de
+tudo.
+
 Falha aqui NÃO aborta: o vídeo já está montado e publicar sem capa customizada
 é muito melhor do que não publicar.
 """
@@ -123,6 +130,14 @@ Exemplos do que funciona neste canal: {exemplos}.
 Exemplos do que NÃO funciona: "O QUE NINGUÉM TE CONTOU", "ISSO MUDA TUDO",
 "ATENÇÃO: URGENTE".
 
+CONCORRÊNCIA DO DIA — quando vier a lista de vídeos já publicados hoje sobre
+este mesmo assunto, eles são o que vai aparecer na mesma linha de resultados
+que o nosso. A capa é o que diferencia: NÃO repita o recorte que todos já
+usaram. Se os títulos deles giram todos em torno do anúncio, a capa traz o
+NÚMERO; se todos trazem o número, a capa traz quem ganha ou quem paga. O fato
+continua sendo obrigatório — diferenciar é escolher OUTRO fato verdadeiro do
+vídeo, nunca inventar um.
+
 Responda somente com o JSON pedido, com o texto em {idioma}.\
 """
 
@@ -138,7 +153,12 @@ def _instrucoes(publico: str) -> str:
     )
 
 
-def _texto_da_capa(cfg: Config, titulo: str, narracao: str) -> str:
+def _texto_da_capa(
+    cfg: Config,
+    titulo: str,
+    narracao: str,
+    titulos_do_dia: list[str] | None = None,
+) -> str:
     """Frase curta para a capa, no idioma do CANAL; cai no título se o GPT falha.
 
     O idioma vem de ``cfg.publico`` (o canal), nunca da inferência do modelo —
@@ -146,11 +166,24 @@ def _texto_da_capa(cfg: Config, titulo: str, narracao: str) -> str:
     segunda chamada cobra a correção; se ela também sair errada, o título do
     vídeo (que já está no idioma certo, garantido por FOCO_USA/FOCO_BRASIL no
     escritor) vira a capa.
+
+    `titulos_do_dia` são os títulos dos vídeos que outros canais publicaram
+    hoje sobre o mesmo assunto (``seo.titulos_do_dia``). A capa disputa o
+    clique lado a lado com eles na busca, então ela precisa dizer outra coisa —
+    outro fato verdadeiro do mesmo vídeo, nunca um fato inventado.
     """
     reserva = " ".join(titulo.split()[:MAX_PALAVRAS]).upper()
     instrucoes = _instrucoes(cfg.publico)
+    concorrencia = ""
+    if titulos_do_dia:
+        concorrencia = (
+            "\n\nJÁ PUBLICADOS HOJE SOBRE O MESMO ASSUNTO (a capa precisa se "
+            "diferenciar destes):\n"
+            + "\n".join(f"- {t}" for t in titulos_do_dia)
+        )
     conteudo = (
         f"{AVISO_DADOS_EXTERNOS}\n\nTÍTULO: {titulo}\n\nNARRAÇÃO:\n{narracao}"
+        f"{concorrencia}"
     )
     try:
         cliente = OpenAI(api_key=cfg.openai_api_key)
@@ -246,11 +279,16 @@ def gerar_thumbnail(
     narracao: str,
     pasta: Path,
     instante: float = 2.0,
+    titulos_do_dia: list[str] | None = None,
 ) -> Path | None:
     """Monta a capa e devolve o caminho; None se não foi possível.
 
     `instante` é onde o quadro é colhido — 2s evita o crossfade de abertura e
     já mostra o primeiro clipe (o mais bem avaliado pela auditoria) na tela.
+
+    `titulos_do_dia` é a concorrência real daquele assunto no YouTube de hoje
+    (``seo.titulos_do_dia``), usada para a capa não repetir o recorte que todo
+    mundo já ocupou.
     """
     if not FONTE.is_file():
         print(f"[thumbnail] aviso: fonte ausente ({FONTE}); sem capa.")
@@ -260,7 +298,7 @@ def gerar_thumbnail(
     if quadro is None:
         return None
 
-    texto = _texto_da_capa(cfg, titulo, narracao)
+    texto = _texto_da_capa(cfg, titulo, narracao, titulos_do_dia)
     print(f"[thumbnail] Texto da capa: {texto}")
 
     img = Image.open(quadro).convert("RGB")

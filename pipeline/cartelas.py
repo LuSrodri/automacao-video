@@ -459,6 +459,11 @@ def gerar_cartelas(
         imagens = auditar_midias(
             cfg, texto_video, imagens, laudos, limite=teto_pool,
             rotulo="imagem", pasta=pasta,
+            # O veto por texto na tela é dos CLIPES, que ficam em tela cheia
+            # sob as legendas queimadas. A cartela é um cartão pequeno e
+            # emoldurado, e o print do post citado — texto por definição — é o
+            # material que esta camada existe para mostrar.
+            vetar_texto=False,
         )
         if not imagens:
             print("[cartelas] Nenhuma imagem aprovada na auditoria.")

@@ -286,6 +286,14 @@ TIPOS_MATERIAL = [
     "outro",
 ]
 
+# Quanto da tela é texto escrito (2026-08-07). Nasce de um pedido direto: clipe
+# de fundo cheio de texto — e principalmente texto PARADO — não pode entrar. O
+# vídeo já tem legendas grandes queimadas, cartelas e figuras por cima; um
+# clipe que também é texto vira uma tela onde nada se lê, e texto parado num
+# fundo em movimento é a versão pior disso, porque fica lá os segundos todos.
+# A escala é ordenada e a auditoria compara por posição (ver auditoria.py).
+DENSIDADES_TEXTO = ["nenhum", "pouco", "moderado", "muito"]
+
 ESQUEMA_DESCRICAO = {
     "name": "descricao_de_midia",
     "strict": True,
@@ -333,6 +341,33 @@ ESQUEMA_DESCRICAO = {
                     "Texto legível na imagem, transcrito; vazio se não houver."
                 ),
             },
+            "densidade_texto": {
+                "type": "string",
+                "enum": DENSIDADES_TEXTO,
+                "description": (
+                    "QUANTO da tela é ocupado por texto escrito, somando "
+                    "legendas queimadas, tarjas, títulos, slides e prints. "
+                    "'nenhum' = não há texto; 'pouco' = uma marca d'água, um "
+                    "placar ou uma linha discreta; 'moderado' = uma faixa de "
+                    "texto que puxa o olho, tipo legenda grande ou manchete no "
+                    "rodapé; 'muito' = o texto É o conteúdo do quadro (slide, "
+                    "cartaz, print de post, parede de tuíte, thumbnail com "
+                    "frase gigante). Julgue pela ÁREA ocupada, não pela "
+                    "importância do que está escrito."
+                ),
+            },
+            "texto_estatico": {
+                "type": "boolean",
+                "description": (
+                    "true se o MESMO texto fica parado na tela nos frames "
+                    "recebidos, sem mudar nem sair (cartaz, slide, print, "
+                    "quadro congelado). false quando não há texto, quando ele "
+                    "muda de um frame para o outro (legenda acompanhando a "
+                    "fala, rolagem, digitação) ou quando aparece só de "
+                    "passagem. Numa imagem estática (um frame só), responda "
+                    "true sempre que houver texto ocupando a tela."
+                ),
+            },
         },
         "required": [
             "descricao",
@@ -340,6 +375,8 @@ ESQUEMA_DESCRICAO = {
             "selo_de_emissora",
             "marca_visivel",
             "texto_na_tela",
+            "densidade_texto",
+            "texto_estatico",
         ],
     },
 }
@@ -352,6 +389,13 @@ A classificação decide se a mídia pode ser usada, então seja literal: se o q
 está na tela é uma matéria de telejornal (âncora ou repórter em enquadramento
 de TV, tarja inferior de emissora, estrutura de VT), o tipo é "reportagem_tv" —
 mesmo que a cena mostrada dentro da matéria seja interessante.
+
+O TEXTO NA TELA também decide o uso, então meça-o com cuidado e sem
+generosidade: "densidade_texto" é a ÁREA do quadro tomada por letras (não a
+importância do que dizem), e "texto_estatico" é se o mesmo texto fica PARADO
+nos frames que você recebeu. Print de post, slide, cartaz e quadro com frase
+gigante são "muito" e estáticos; legenda que acompanha a fala muda de frame
+para frame e não é estática.
 
 Responda somente com o JSON pedido.\
 """
@@ -453,9 +497,19 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
                     if laudo.get("selo_de_emissora")
                     else ""
                 )
+                densidade = laudo.get("densidade_texto") or "?"
+                texto = (
+                    ""
+                    if densidade in ("nenhum", "?")
+                    else (
+                        f" [texto: {densidade}"
+                        + (", parado" if laudo.get("texto_estatico") else "")
+                        + "]"
+                    )
+                )
                 print(
                     f"[midia-x] {m['caminho'].name}: "
-                    f"{laudo.get('tipo_material', '?')}{marca}"
+                    f"{laudo.get('tipo_material', '?')}{marca}{texto}"
                 )
 
     print(f"[midia-x] {len(descricoes)} mídias descritas")

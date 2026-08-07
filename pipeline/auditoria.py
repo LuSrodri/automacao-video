@@ -32,6 +32,15 @@ A auditoria roda em duas etapas, sobre um pool maior do que o necessário:
    estúdio); telejornal que exibe imagens do fato é julgado por essas imagens,
    senão o veto derrubado em (1) voltaria pela nota.
 
+3. VETO POR TEXTO NA TELA (2026-08-07), em código, com o contexto vindo da
+   etapa 2: clipe TOMADO por texto — e, mais ainda, por texto PARADO — sai da
+   disputa, a não ser que aquele texto seja o assunto que a narração descreve
+   (o post citado, a tela do produto, o número falado). A visão mede o texto
+   (`densidade_texto`, `texto_estatico`), o auditor da etapa 2 diz se ele é o
+   assunto (`texto_pertinente`) e a regra que junta as duas coisas mora aqui.
+   Vale só para os clipes, que ficam em tela cheia por baixo das legendas
+   queimadas — as cartelas passam com `vetar_texto=False`.
+
 A etapa 2 falha aberta (aviso no log e todo mundo passa): o veto duro já
 resolveu a reclamação principal, e derrubar o vídeo inteiro por um erro
 transitório da OpenAI desperdiçaria tudo que foi gasto antes. Já a decisão de
@@ -45,6 +54,7 @@ from pathlib import Path
 from openai import OpenAI
 
 from .config import AVISO_DADOS_EXTERNOS, Config
+from .midia_x import DENSIDADES_TEXTO
 
 # Tipos de material barrados por regra, sem passar por julgamento de modelo.
 TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
@@ -61,6 +71,31 @@ TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
 TIPOS_MARCAVEIS = {"reportagem_tv"}
 
 NOTA_MINIMA = 3  # abaixo disto a mídia não entra no vídeo
+
+# VETO POR TEXTO NA TELA (2026-08-07, pedido do usuário: "evitar vídeos de
+# fundo que tenham muitos textos ou textos estáticos, a menos que seja dentro
+# do contexto").
+#
+# O clipe do X entra como FUNDO de um vídeo que já é cheio de camadas: legendas
+# grandes queimadas, cartelas de imagem, figuras geradas e o crédito de
+# reprodução. Um clipe que também é texto empilha duas leituras concorrentes na
+# mesma tela e o espectador não faz nenhuma das duas. Texto PARADO é o caso
+# pior: ele não passa — fica ali os segundos inteiros do corte, competindo com
+# a legenda que está tentando ser lida.
+#
+# A exceção ("dentro do contexto") não dá para decidir em código, porque é
+# semântica: o print do post que a narração está citando, a tela do app de que
+# ela fala, o gráfico com o número que ela diz — nesses o texto É o assunto, e
+# tirá-lo do vídeo tiraria a prova do que está sendo narrado. Então a decisão é
+# dividida: a VISÃO mede o texto (densidade e se está parado, em midia_x.py), o
+# AUDITOR — que é quem lê a narração — diz se aquele texto é o assunto
+# (`texto_pertinente`), e a REGRA de juntar as duas coisas fica aqui, em
+# código, como todo veto duro deste módulo.
+DENSIDADE_VETO = "muito"  # sozinha já barra, mesmo com o texto em movimento
+DENSIDADE_VETO_ESTATICO = "moderado"  # com o texto parado, barra a partir daqui
+
+_NIVEL_VETO = DENSIDADES_TEXTO.index(DENSIDADE_VETO)
+_NIVEL_VETO_ESTATICO = DENSIDADES_TEXTO.index(DENSIDADE_VETO_ESTATICO)
 
 ESQUEMA_AUDITORIA = {
     "name": "auditoria_de_midias",
@@ -94,8 +129,20 @@ ESQUEMA_AUDITORIA = {
                                 "que a mídia mostra."
                             ),
                         },
+                        "texto_pertinente": {
+                            "type": "boolean",
+                            "description": (
+                                "SÓ sobre o texto escrito na tela da mídia: "
+                                "true quando esse texto é o próprio assunto "
+                                "que a narração descreve (o post citado, a "
+                                "tela do produto de que ela fala, o número que "
+                                "ela diz). false quando o texto é de outra "
+                                "coisa, é decoração/manchete genérica ou "
+                                "quando não há texto nenhum."
+                            ),
+                        },
                     },
-                    "required": ["midia", "nota", "motivo"],
+                    "required": ["midia", "nota", "motivo", "texto_pertinente"],
                 },
             },
         },
@@ -147,9 +194,33 @@ REGRAS DE TETO (a nota NÃO pode passar disso):
   é ilegível. Imagem real do conflito coberto é 3 mesmo sem identificar o
   objeto; só caia neste teto quando não dá para dizer nem que tipo de cena é.
 
+TEXTO NA TELA (campo texto_pertinente, separado da nota): cada mídia vem com a
+medida de quanto texto escrito ocupa o quadro e se ele fica parado. Mídia
+tomada por texto é barrada depois, FORA da nota — a não ser que aquele texto
+seja o próprio assunto da narração. Sua tarefa aqui é só essa: marque
+texto_pertinente = true quando o que está escrito é o que a narração está
+falando (o post que ela cita, a tela do produto que ela descreve, o número que
+ela diz, o comunicado que ela lê). Marque false quando o texto é de outro
+assunto, é manchete ou cartela genérica, é interface decorativa — ou quando
+não há texto. Na dúvida, false: o vídeo tem legendas grandes por cima do
+clipe, e texto sobre texto não é lido por ninguém.
+
 Dê um veredito para CADA mídia recebida, usando o id exato dela. Responda
 somente com o JSON pedido.\
 """
+
+
+def _nivel_texto(laudo: dict) -> int:
+    """Posição da densidade de texto na escala; -1 quando o laudo não a traz.
+
+    Laudo antigo (ou de um modelo que não devolveu o campo) vale -1 e nunca
+    veta: a ausência da medida não é prova de que a tela está limpa, mas
+    tratá-la como suja derrubaria material bom sem nenhuma evidência.
+    """
+    try:
+        return DENSIDADES_TEXTO.index(laudo.get("densidade_texto") or "")
+    except ValueError:
+        return -1
 
 
 def _rotulo_midia(m: dict, laudo: dict) -> str:
@@ -159,10 +230,46 @@ def _rotulo_midia(m: dict, laudo: dict) -> str:
         partes.append(f"{m['dur_s']:.0f}s de vídeo")
     if m.get("conta"):
         partes.append(f"post de {m['conta']}")
+    nivel = _nivel_texto(laudo)
+    if nivel > 0:
+        partes.append(
+            f"texto na tela: {DENSIDADES_TEXTO[nivel]}"
+            + (", parado" if laudo.get("texto_estatico") else ", em movimento")
+        )
     linha = f"[{', '.join(partes)}] {(laudo.get('descricao') or '').strip()}"
     if (laudo.get("texto_na_tela") or "").strip():
         linha += f"\n    Texto na tela: \"{laudo['texto_na_tela'].strip()}\""
     return linha
+
+
+def _veto_texto(laudo: dict, pertinente: bool | None) -> str:
+    """Motivo do veto por texto na tela; vazio quando a mídia pode entrar.
+
+    `pertinente` é o veredito do auditor sobre o texto ser o assunto da
+    narração; None significa que a chamada de pertinência falhou. Nesse caso o
+    veto encolhe para o único caso que dispensa contexto — a tela TOMADA por
+    texto PARADO (slide, cartaz, print) —, porque aí não existe leitura da
+    narração que salve o clipe: mesmo sendo o assunto, ele seria uma parede de
+    letras atrás das legendas do vídeo. Nos casos intermediários a mídia passa,
+    coerente com o resto do módulo, que falha aberto quando o GPT falha.
+    """
+    nivel = _nivel_texto(laudo)
+    if nivel < 0:
+        return ""
+    estatico = bool(laudo.get("texto_estatico"))
+    denso = nivel >= _NIVEL_VETO
+    parado_demais = estatico and nivel >= _NIVEL_VETO_ESTATICO
+    if not (denso or parado_demais):
+        return ""
+    if pertinente:
+        return ""
+    if pertinente is None and not (denso and estatico):
+        return ""
+    return (
+        f"texto ocupando a tela (densidade '{DENSIDADES_TEXTO[nivel]}'"
+        + (", parado" if estatico else "")
+        + ") sem ser o assunto que a narração descreve"
+    )
 
 
 def _motivo_do_veto(laudo: dict, marcar_tv: bool) -> tuple[str, bool]:
@@ -192,11 +299,12 @@ def _motivo_do_veto(laudo: dict, marcar_tv: bool) -> tuple[str, bool]:
 
 def _notas(
     cfg: Config, texto_video: str, candidatas: list[dict]
-) -> dict[int, tuple[int, str]]:
-    """Nota de pertinência de cada candidata; {índice: (nota, motivo)}.
+) -> dict[int, tuple[int, str, bool]]:
+    """Vereditos por candidata; {índice: (nota, motivo, texto_pertinente)}.
 
     Falha aberta: erro na chamada devolve dicionário vazio e quem chama trata
-    a ausência de nota como aprovação (o veto duro já rodou).
+    a ausência de veredito como aprovação (o veto duro já rodou) e como
+    "contexto do texto desconhecido" (ver `_veto_texto`).
     """
     listagem = "\n".join(
         f"m{k}: {_rotulo_midia(m, m['laudo'])}"
@@ -227,7 +335,7 @@ def _notas(
         )
         return {}
 
-    notas: dict[int, tuple[int, str]] = {}
+    notas: dict[int, tuple[int, str, bool]] = {}
     for v in vereditos:
         bruto = str(v.get("midia", "")).strip().lstrip("m")
         try:
@@ -236,7 +344,11 @@ def _notas(
             continue
         if 0 <= indice < len(candidatas):
             nota = max(1, min(5, int(v.get("nota", 0) or 0)))
-            notas[indice] = (nota, (v.get("motivo") or "").strip())
+            notas[indice] = (
+                nota,
+                (v.get("motivo") or "").strip(),
+                bool(v.get("texto_pertinente")),
+            )
     return notas
 
 
@@ -248,6 +360,7 @@ def auditar_midias(
     limite: int,
     rotulo: str = "clipe",
     pasta: Path | None = None,
+    vetar_texto: bool = True,
 ) -> list[dict]:
     """Aprova até `limite` mídias, da mais pertinente para a menos.
 
@@ -259,11 +372,18 @@ def auditar_midias(
 
     Com `pasta`, grava `auditoria_{rotulo}.json` com aprovadas e reprovadas
     para dar rastro do que foi barrado e por quê.
+
+    `vetar_texto` liga o veto por texto na tela (ver DENSIDADE_VETO). Vale para
+    os CLIPES, que ocupam a tela inteira por baixo das legendas queimadas.
+    As cartelas passam False: elas são um cartão pequeno e emoldurado sobre o
+    clipe, e o print do post citado — que é texto por definição — é exatamente
+    o material que aquela camada existe para mostrar.
     """
     if not midias:
         return []
 
     marcar_tv = getattr(cfg, "formato", "curto") == "longo"
+    vetar_texto = vetar_texto and getattr(cfg, "veto_texto_denso", True)
 
     candidatas: list[dict] = []
     reprovadas: list[dict] = []
@@ -282,23 +402,37 @@ def auditar_midias(
 
     aprovadas: list[dict] = []
     for i, m in enumerate(candidatas):
-        # Sem nota (auditoria de pertinência falhou) a mídia passa com o valor
-        # neutro: o veto duro já rodou e é ele que carrega a regra do canal.
-        nota, motivo = notas.get(i, (NOTA_MINIMA, "sem nota de pertinência"))
+        # Sem veredito (auditoria de pertinência falhou) a mídia passa com a
+        # nota neutra e com o contexto do texto desconhecido: o veto duro já
+        # rodou e é ele que carrega a regra do canal.
+        nota, motivo, pertinente = notas.get(
+            i, (NOTA_MINIMA, "sem nota de pertinência", None)
+        )
         item = dict(
             m,
             descricao=(m["laudo"].get("descricao") or "").strip(),
             tipo_material=m["laudo"].get("tipo_material", ""),
+            densidade_texto=m["laudo"].get("densidade_texto", ""),
+            texto_estatico=bool(m["laudo"].get("texto_estatico")),
+            nivel_texto=max(_nivel_texto(m["laudo"]), 0),
             nota=nota,
             motivo=motivo,
         )
+        veto_texto = (
+            _veto_texto(m["laudo"], pertinente) if vetar_texto else ""
+        )
         item.pop("laudo", None)
-        if nota < NOTA_MINIMA:
+        if veto_texto:
+            reprovadas.append(dict(item, motivo=veto_texto))
+        elif nota < NOTA_MINIMA:
             reprovadas.append(item)
         else:
             aprovadas.append(item)
 
-    aprovadas.sort(key=lambda m: -m["nota"])
+    # Desempate pela tela mais limpa: entre dois clipes igualmente pertinentes,
+    # o que tem menos texto é o que deixa a legendagem do vídeo ser lida — e a
+    # ordem aqui é a ordem de uso quando o planejador de cortes falha.
+    aprovadas.sort(key=lambda m: (-m["nota"], m["nivel_texto"]))
     excedentes = aprovadas[limite:]
     aprovadas = aprovadas[:limite]
 
@@ -314,9 +448,16 @@ def auditar_midias(
         )
     for m in aprovadas:
         marca = " [marcado: representação visual]" if m.get("representacao") else ""
+        texto = (
+            f" [texto: {m['densidade_texto']}"
+            + (", parado" if m.get("texto_estatico") else "")
+            + "]"
+            if m.get("nivel_texto")
+            else ""
+        )
         print(
             f"[auditoria] ok {Path(m['caminho']).name}: nota {m['nota']} "
-            f"({m['tipo_material']}){marca} — {m['motivo']}"
+            f"({m['tipo_material']}){marca}{texto} — {m['motivo']}"
         )
     print(
         f"[auditoria] {len(aprovadas)} {rotulo}(s) aprovado(s) de "
@@ -331,6 +472,8 @@ def auditar_midias(
                     "nota": m["nota"],
                     "tipo_material": m["tipo_material"],
                     "representacao_visual": bool(m.get("representacao")),
+                    "densidade_texto": m.get("densidade_texto", ""),
+                    "texto_estatico": bool(m.get("texto_estatico")),
                     "motivo": m["motivo"],
                 }
                 for m in aprovadas
@@ -340,6 +483,8 @@ def auditar_midias(
                     "arquivo": Path(m["caminho"]).name,
                     "motivo": m.get("motivo", ""),
                     "nota": m.get("nota"),
+                    "densidade_texto": m.get("densidade_texto", ""),
+                    "texto_estatico": bool(m.get("texto_estatico")),
                 }
                 for m in reprovadas + excedentes
             ],
