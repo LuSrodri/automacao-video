@@ -18,12 +18,13 @@ a cartela reintroduziria pela lateral exatamente o problema que a auditoria
 existe para resolver.
 
 Movimento (2026-08-09, pedido do usuário): a cartela deixou de ser um cartão
-sobreposto ao clipe. Ela agora é a TELA INTEIRA do celular e entra por ARRASTO
-— uma mão puxa o conteúdo para a esquerda, a imagem entra pela direita, e no
-fim da janela a mão a arrasta de volta para a direita e o vídeo retorna (ver
-edicao.py). Aqui só se renderiza a imagem parada, do tamanho exato da tela; o
-movimento inteiro é do ffmpeg. As figuras geradas (figuras.py) seguem a mesma
-regra, para as duas camadas serem a mesma coisa na tela.
+sobreposto ao clipe. Ela agora é a TELA INTEIRA do celular e entra DESLIZANDO —
+o conteúdo corre para a esquerda, a imagem entra pela direita, e no fim da
+janela o movimento se inverte e o vídeo retorna (ver edicao.py; a mão que
+empurrava o carrossel saiu em 2026-08-10). Aqui só se renderiza a imagem parada,
+do tamanho exato da tela; o movimento inteiro é do ffmpeg. As figuras geradas
+(figuras.py) seguem a mesma regra, para as duas camadas serem a mesma coisa na
+tela.
 
 Etapa opcional: qualquer falha (rede, GPT, Pillow, citação não encontrada) só
 deixa o vídeo sem cartelas — nunca derruba o pipeline.
@@ -47,7 +48,8 @@ FONTE_CARTELA = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 
 DUR_CARTELA = 3.6  # s; tempo-alvo de cada cartela na tela
 # Janela menor que isto não dá tempo de ler a imagem — e, desde o carrossel,
-# também não comporta os dois arrastos da mão (MIN_JANELA_CARROSSEL, 1,84s).
+# também não comporta os dois deslizes mais a leitura (MIN_JANELA_CARROSSEL,
+# 1,84s).
 DUR_MINIMA = max(2.2, MIN_JANELA_CARROSSEL)
 GAP_CARTELAS = 1.2  # s; respiro mínimo entre cartelas e para as figuras
 # O gancho é o que decide o swipe: os primeiros segundos ficam com o clipe
@@ -369,7 +371,7 @@ def gerar_cartelas(
     inteira do aparelho — não é mais um cartão sobre o quadro.
 
     `ocupadas`: janelas (início, fim) já usadas por outras imagens; nenhuma
-    cartela entra em cima delas — dois arrastos ao mesmo tempo viram poluição.
+    cartela entra em cima delas — dois deslizes ao mesmo tempo viram poluição.
     """
     maximo = cfg.max_cartelas
     if maximo <= 0:

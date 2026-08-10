@@ -20,15 +20,19 @@ usava. A área útil do clipe passa a ser o retângulo da TELA — o fundo borra
 preenche a tela quando o clipe não tem a proporção dela, e o PNG do cenário
 entra por cima recortando tudo na moldura do aparelho.
 
-CARROSSEL COM ARRASTO DA MÃO. As cartelas de imagem (cartelas.py) e as figuras
-do gpt-image-2 (figuras.py) deixaram de ser cartões sobrepostos ao clipe: elas
-agora ocupam a tela inteira do celular e entram por ARRASTO. No momento-chave
-uma MÃO surge, arrasta o conteúdo PARA A ESQUERDA e a imagem entra pela direita
-no lugar do vídeo; no fim da janela a mão volta, arrasta PARA A DIREITA e o
-vídeo retorna. É um carrossel de duas posições: o clipe e a imagem do momento,
-ambos deslocados pelo MESMO offset horizontal, de modo que a borda de um encosta
-na do outro durante todo o arrasto. O que sai da tela some atrás do corpo do
-aparelho — o recorte é o próprio PNG do cenário, sem máscara nenhuma no ffmpeg.
+CARROSSEL. As cartelas de imagem (cartelas.py) e as figuras do gpt-image-2
+(figuras.py) deixaram de ser cartões sobrepostos ao clipe: elas agora ocupam a
+tela inteira do celular e entram DESLIZANDO. No momento-chave o conteúdo corre
+PARA A ESQUERDA e a imagem entra pela direita no lugar do vídeo; no fim da
+janela o movimento se inverte e o vídeo volta. É um carrossel de duas posições:
+o clipe e a imagem do momento, ambos deslocados pelo MESMO offset horizontal, de
+modo que a borda de um encosta na do outro durante todo o deslize. O que sai da
+tela some atrás do corpo do aparelho — o recorte é o próprio PNG do cenário, sem
+máscara nenhuma no ffmpeg.
+
+A MÃO que empurrava o carrossel foi REMOVIDA em 2026-08-10 a pedido do usuário
+(o toque saiu junto): o deslize continua, sem ninguém arrastando. Não
+reintroduzir sem pedido explícito.
 
 Com a imagem tomando a tela inteira, o DESFOQUE do que ficava atrás das
 cartelas (CARTELA_BLUR_*) perdeu função e saiu junto: não há mais nada atrás
@@ -46,7 +50,7 @@ import subprocess
 import shutil
 from pathlib import Path
 
-from .cenario import gerar_cenario_celular, gerar_mao
+from .cenario import gerar_cenario_celular
 from .config import RAIZ
 
 FPS = 30
@@ -67,29 +71,19 @@ ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça o clipe nítido)
 WOOSH = RAIZ / "assets" / "woosh.mp3"
 WOOSH_VOL = 0.5  # volume do efeito relativo à narração
 
-# --- Carrossel (arrasto da mão) ---------------------------------------------
-# Tempo de cada arrasto, de uma ponta à outra da tela. 0,42s é a faixa em que o
-# gesto lê como arrasto e não como corte: abaixo de ~0,3 vira piscada, acima de
-# ~0,6 o espectador espera o conteúdo que ainda está entrando. Os DOIS arrastos
-# (o de ida, que traz a imagem, e o de volta, que devolve o vídeo) cabem DENTRO
-# da janela da cartela, então DUR_MINIMA lá precisa continuar bem acima de
-# 2 * T_ARRASTO.
+# --- Carrossel (deslize) -----------------------------------------------------
+# Tempo de cada deslize, de uma ponta à outra da tela. 0,42s é a faixa em que o
+# movimento lê como deslize e não como corte: abaixo de ~0,3 vira piscada, acima
+# de ~0,6 o espectador espera o conteúdo que ainda está entrando. Os DOIS
+# deslizes (o de ida, que traz a imagem, e o de volta, que devolve o vídeo)
+# cabem DENTRO da janela da cartela, então DUR_MINIMA lá precisa continuar bem
+# acima de 2 * T_ARRASTO.
 T_ARRASTO = 0.42
-# A mão aparece um pouco antes de o conteúdo começar a andar e sai um pouco
-# depois de ele parar — mão que surge já em movimento lê como falha de render.
-MAO_ANTECIPACAO = 0.25
-MAO_PERMANENCIA = 0.25
-MAO_SUBIDA = 0.22  # sobe de fora do quadro até encostar na tela
-MAO_DESCIDA = 0.22
-# Percurso do dedo na tela, em fração da largura dela: começa perto da borda
-# direita e termina perto da esquerda (e o inverso no arrasto de volta, que é o
-# mesmo percurso lido ao contrário).
-MAO_X_INICIO = 0.78
-MAO_X_FIM = 0.22
-MAO_Y_TELA = 0.55  # altura do toque, em fração da altura da tela
-# Janela mínima de uma imagem no carrossel: os dois arrastos, mais a entrada e
-# a saída da mão em cada um, sem que as duas aparições dela se encavalem.
-MIN_JANELA_CARROSSEL = 2 * (T_ARRASTO + MAO_ANTECIPACAO + MAO_PERMANENCIA)
+# Tempo mínimo com a imagem PARADA na tela, entre os dois deslizes: sem ele a
+# imagem entraria e já sairia, e ninguém leria o que ela mostra.
+LEITURA_MINIMA = 1.0
+# Janela mínima de uma imagem no carrossel: os dois deslizes mais a leitura.
+MIN_JANELA_CARROSSEL = 2 * T_ARRASTO + LEITURA_MINIMA
 
 # Crédito de reprodução no canto superior direito DA TELA, por clipe: linha 1
 # fixa ("Reprodução Imagem: X") e linha 2 com a conta do post de origem.
@@ -265,9 +259,10 @@ def _texto_drawtext(texto: str) -> str:
 def _suave(u: str) -> str:
     """smoothstep sobre uma expressão ffmpeg `u` já normalizada em [0,1].
 
-    Aceleração e desaceleração nas pontas: o arrasto de um dedo real não começa
-    nem termina na velocidade máxima. Escrito como expressão porque `overlay`
-    avalia x/y por quadro — não há como pré-calcular a curva em Python.
+    Aceleração e desaceleração nas pontas: conteúdo que parte e para na
+    velocidade máxima lê como corte, não como deslize. Escrito como expressão
+    porque `overlay` avalia x/y por quadro — não há como pré-calcular a curva em
+    Python.
     """
     return f"({u})*({u})*(3-2*({u}))"
 
@@ -282,8 +277,6 @@ def _expr_progresso(
     Os intervalos são semiabertos (`gte`/`lt`) para que dois termos nunca
     valham ao mesmo tempo na fronteira e o resultado passe de 1.
 
-    É a mesma curva para duas coisas diferentes: o deslocamento do carrossel
-    (rampa = arrasto) e a presença da mão em quadro (rampa = entrar/sair).
     """
     termos: list[str] = []
     for ini, fim in janelas:
@@ -358,8 +351,8 @@ def montar_video(
 
     `cartelas`: imagens dos momentos-chave (cartelas.py) — [{"imagem": str,
     "inicio_s": float, "dur_s": float}, ...], cada uma um PNG do TAMANHO EXATO
-    da tela do celular. Entram por arrasto da mão, ocupando a tela toda no
-    lugar do clipe, e saem pelo arrasto de volta.
+    da tela do celular. Entram deslizando, ocupando a tela toda no lugar do
+    clipe, e saem pelo deslize de volta.
 
     `figuras`: gráficos, tabelas e cartazes gerados pelo gpt-image-2
     (figuras.py), no mesmo formato das cartelas e tratados exatamente como
@@ -381,7 +374,7 @@ def montar_video(
 
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
     # Cartelas e figuras compartilham a camada: as duas são imagens que tomam a
-    # tela do celular pelo mesmo arrasto. Ordenadas pelo início para o log e a
+    # tela do celular pelo mesmo deslize. Ordenadas pelo início para o log e a
     # pilha ficarem previsíveis.
     cartelas = sorted(
         (cartelas or []) + (figuras or []), key=lambda c: float(c["inicio_s"])
@@ -420,10 +413,10 @@ def montar_video(
         )
         for c in cartelas
     ]
-    # Janela curta demais não comporta os dois arrastos mais as duas aparições
-    # da mão: as duas aparições se encavalariam e a expressão de presença
-    # passaria de 1, jogando a mão para fora do lugar. Quem chama já respeita
-    # DUR_MINIMA (2,2s nas cartelas, 2,6s nas figuras); isto é a guarda.
+    # Janela curta demais não comporta os dois deslizes mais o tempo de leitura
+    # entre eles: a imagem entraria e já sairia, sem ninguém ler o que ela
+    # mostra. Quem chama já respeita DUR_MINIMA (2,2s nas cartelas, 2,6s nas
+    # figuras); isto é a guarda.
     pares_cart = [
         (c, (a, b))
         for c, (a, b) in zip(cartelas, janelas_cart)
@@ -433,14 +426,14 @@ def montar_video(
         if b - a < MIN_JANELA_CARROSSEL:
             print(
                 f"[edicao] aviso: janela de {b - a:.1f}s em {a:.1f}s é curta "
-                f"demais para o arrasto (mínimo {MIN_JANELA_CARROSSEL:.1f}s); "
+                f"demais para o deslize (mínimo {MIN_JANELA_CARROSSEL:.1f}s); "
                 "imagem descartada."
             )
     cartelas = [c for c, _ in pares_cart]
     janelas_cart = [j for _, j in pares_cart]
     # Deslocamento do carrossel, de 0 (vídeo na tela) a 1 (imagem na tela). O
     # MESMO valor move o clipe para fora e a imagem para dentro — é isso que
-    # mantém as duas coladas durante o arrasto.
+    # mantém as duas coladas durante o deslize.
     desloc = _expr_progresso(janelas_cart, T_ARRASTO, T_ARRASTO)
 
     # Base preta (entrada 0); narração é a entrada 1. Com cobertura total, a
@@ -502,7 +495,7 @@ def montar_video(
         )
 
         # Sobrepõe fundo e depois a frente, ambos ativos na janela (+ crossfade),
-        # ancorados no canto da tela e ARRASTADOS para a esquerda pelo carrossel.
+        # ancorados no canto da tela e DESLOCADOS para a esquerda pelo carrossel.
         filtros.append(
             f"[{corrente}][bg{i}]overlay=x='{tela_x}-{tela_l}*({desloc})':y={tela_y}"
             f":eof_action=pass"
@@ -541,8 +534,8 @@ def montar_video(
         corrente = f"vcart{j}"
 
     # O celular entra por cima do conteúdo: opaco em tudo menos no buraco da
-    # tela, ele é que recorta o carrossel na moldura do aparelho. Vem ANTES da
-    # mão, das legendas e do crédito — esses ficam sobre o aparelho.
+    # tela, ele é que recorta o carrossel na moldura do aparelho. Vem ANTES das
+    # legendas e do crédito — esses ficam sobre o aparelho.
     comando += [
         "-loop", "1", "-framerate", str(FPS), "-t", f"{duracao:.2f}",
         "-i", str(cenario),
@@ -551,49 +544,6 @@ def montar_video(
     filtros.append(f"[{corrente}][aparelho]overlay=0:0:eof_action=repeat[vcel]")
     corrente = "vcel"
     prox_entrada += 1
-
-    # A MÃO que arrasta: sobe de fora do quadro pouco antes de cada arrasto,
-    # acompanha o dedo pela tela e desce depois. Duas aparições por imagem — a
-    # de ida (arrasta o vídeo para a esquerda) e a de volta (arrasta a imagem
-    # para a direita) —, e o percurso do dedo é o mesmo lido nos dois sentidos,
-    # porque é o próprio deslocamento do carrossel que o comanda.
-    if janelas_cart:
-        mao, (ponta_x, ponta_y) = gerar_mao(
-            tela_l, tela_a, destino.parent / "mao.png"
-        )
-        janelas_mao: list[tuple[float, float]] = []
-        for ini, fim in janelas_cart:
-            janelas_mao.append(
-                (
-                    max(0.0, ini - MAO_ANTECIPACAO),
-                    min(duracao, ini + T_ARRASTO + MAO_PERMANENCIA),
-                )
-            )
-            janelas_mao.append(
-                (
-                    max(0.0, fim - T_ARRASTO - MAO_ANTECIPACAO),
-                    min(duracao, fim + MAO_PERMANENCIA),
-                )
-            )
-        presenca = _expr_progresso(janelas_mao, MAO_SUBIDA, MAO_DESCIDA)
-        toque_x = tela_x + tela_l * MAO_X_INICIO - ponta_x
-        percurso = tela_l * (MAO_X_INICIO - MAO_X_FIM)
-        repouso_y = tela_y + tela_a * MAO_Y_TELA - ponta_y
-
-        comando += [
-            "-loop", "1", "-framerate", str(FPS), "-t", f"{duracao:.2f}",
-            "-i", str(mao),
-        ]
-        filtros.append(f"[{prox_entrada}:v]format=rgba[mao]")
-        filtros.append(
-            f"[{corrente}][mao]"
-            f"overlay=x='{toque_x:.1f}-{percurso:.1f}*({desloc})'"
-            f":y='{repouso_y:.1f}+({altura}-{repouso_y:.1f})*(1-({presenca}))'"
-            f":eof_action=repeat"
-            f":enable='{_expr_janelas(janelas_mao)}'[vmao]"
-        )
-        corrente = "vmao"
-        prox_entrada += 1
 
     if legendas is not None:
         fontes = RAIZ / "fonts"

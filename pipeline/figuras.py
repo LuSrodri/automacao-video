@@ -20,10 +20,11 @@ o modelo extraiu daquele trecho. Isso não é preciosismo — é o que impede o
 vídeo de exibir na tela um número que ninguém falou.
 
 ANIMAÇÃO (2026-08-09, pedido do usuário): a figura entra e sai pelo CARROSSEL
-do celular — uma mão arrasta o conteúdo para a esquerda e a figura ocupa a tela
-inteira no lugar do vídeo; no fim da janela a mão a arrasta de volta para a
-direita (ver edicao.py). Substituiu a subida de baixo do quadro. Este módulo só
-renderiza a imagem parada, do tamanho da tela; o movimento é todo do ffmpeg.
+do celular — o conteúdo desliza para a esquerda e a figura ocupa a tela inteira
+no lugar do vídeo; no fim da janela ela desliza de volta para a direita (ver
+edicao.py; a mão que empurrava o carrossel saiu em 2026-08-10). Substituiu a
+subida de baixo do quadro. Este módulo só renderiza a imagem parada, do tamanho
+da tela; o movimento é todo do ffmpeg.
 
 Etapa opcional: qualquer falha (OpenAI, rede, Pillow, citação não encontrada)
 só deixa o vídeo sem figuras — nunca derruba o pipeline.
@@ -50,15 +51,15 @@ FONTE_FIGURA = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 
 DUR_FIGURA = 4.0  # s; tempo-alvo de cada figura na tela (leitura de gráfico)
 # Menos que isto não dá para ler uma tabela — e, desde o carrossel, também não
-# comporta os dois arrastos da mão (MIN_JANELA_CARROSSEL, 1,84s).
+# comporta os dois deslizes mais a leitura (MIN_JANELA_CARROSSEL, 1,84s).
 DUR_MINIMA = max(2.6, MIN_JANELA_CARROSSEL)
 GAP_FIGURAS = 1.2  # s; respiro mínimo entre figuras e para as outras camadas
 # O gancho decide o swipe: os primeiros segundos ficam com o clipe limpo.
 INICIO_MINIMO = 3.0
 
 # Movimento (2026-08-09): a figura deixou de subir por cima do clipe e passou a
-# ocupar a TELA INTEIRA do celular, entrando pelo arrasto da mão — o mesmo
-# carrossel das cartelas (ver edicao.py). Aqui só se renderiza a imagem parada.
+# ocupar a TELA INTEIRA do celular, entrando pelo deslize — o mesmo carrossel
+# das cartelas (ver edicao.py). Aqui só se renderiza a imagem parada.
 
 # Tamanhos aceitos pelo gpt-image-2 (arestas múltiplas de 16, proporção até
 # 3:1, total de pixels dentro da faixa permitida). Retrato para o Short,
@@ -510,7 +511,7 @@ def gerar_figuras(
     figura é renderizada, porque ela ocupa a tela inteira do aparelho.
 
     `ocupadas`: janelas (início, fim) já usadas pelas cartelas; nenhuma figura
-    entra em cima delas — dois arrastos ao mesmo tempo viram poluição.
+    entra em cima delas — dois deslizes ao mesmo tempo viram poluição.
     """
     maximo = cfg.max_figuras
     if maximo <= 0:

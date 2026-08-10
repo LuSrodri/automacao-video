@@ -5,6 +5,13 @@ formato longo usava. Agora os DOIS formatos são montados dentro do aparelho: o
 clipe do X, as cartelas e as figuras aparecem na TELA do celular, e o resto do
 quadro é a cama em volta.
 
+A cama é a FOTO `fundo-cama.png` da raiz do projeto (2026-08-10, pedido do
+usuário), não mais uma colcha desenhada em Pillow: a versão desenhada — colcha
+em gradiente, travesseiro, vira do lençol e dobras desfocadas — saiu inteira. A
+foto entra cobrindo o quadro (escala por MAIOR lado + corte central, sem
+distorcer), levemente suavizada, dessaturada e escurecida, com vinheta: a
+estampa é fundo, e quem tem que puxar o olho é a tela.
+
 A ORIENTAÇÃO do aparelho vem da orientação do vídeo: quadro vertical (Short
 9:16) põe o celular EM PÉ, quadro deitado (formato longo, 16:9) põe o celular
 DEITADO. É o que mantém a tela grande nos dois casos — celular em pé dentro de
@@ -16,20 +23,32 @@ cima: o conteúdo só aparece pelo buraco, e o corpo do aparelho recorta as
 bordas dele sem precisar de máscara no ffmpeg. É esse recorte que faz o
 carrossel funcionar — o que desliza para fora da tela some atrás do aparelho.
 
-Tudo é desenhado com Pillow: nada de asset externo, nenhuma licença de imagem
-para administrar, e a paleta acompanha o vídeo.
+O aparelho é desenhado com Pillow em duas camadas: um TRILHO metálico externo
+(gradiente vertical, com brilho especular no topo e reflexo fraco na base) e o
+BEZEL preto fino por dentro dele, concêntricos com a tela. A borda de dentro da
+tela leva uma sombra semitransparente — o conteúdo do vídeo passa por ela e
+ganha profundidade de vidro — mais um brilho diagonal discreto.
 
-Três entradas:
+A MÃO que arrastava o conteúdo foi REMOVIDA em 2026-08-10 a pedido do usuário
+(junto com o halo de toque). O carrossel continua: o que mudou é que a imagem
+desliza sozinha, sem ninguém empurrando. Não reintroduzir sem pedido explícito.
+
+Duas entradas:
 - `retangulo_tela` devolve o retângulo da tela SEM renderizar nada (as legendas
   e as cartelas precisam dele antes de a montagem existir);
-- `gerar_cenario_celular` renderiza a cama + o aparelho;
-- `gerar_mao` renderiza a mão que arrasta o conteúdo na tela.
+- `gerar_cenario_celular` renderiza a cama + o aparelho.
 """
 
 import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter
+
+from .config import RAIZ
+
+# Foto da cama, na raiz do projeto. Sem ela o cenário sairia sem o fundo que o
+# usuário escolheu — aborta (diretriz de fail-fast do pipeline).
+FUNDO_CAMA = RAIZ / "fundo-cama.png"
 
 # Proporção da TELA do aparelho: largura/altura com ele EM PÉ (19,5:9 é a razão
 # dos celulares atuais). Deitado, é o inverso.
@@ -44,29 +63,30 @@ MAX_ALTURA_EM_PE = 0.80
 MAX_LARGURA_DEITADO = 0.82
 MAX_ALTURA_DEITADO = 0.72
 
-MOLDURA_FRAC = 0.038  # espessura da borda do aparelho, fração do lado MENOR da tela
-RAIO_TELA_FRAC = 0.055  # raio dos cantos da tela, fração do lado menor
+# Frações do lado MENOR da tela. A moldura antiga era uma borda só (0.038) com
+# um contorno claro por dentro, e era isso que dava o ar de adesivo: celular
+# nenhum tem um fio de luz correndo por dentro da borda preta. Agora são duas
+# peças, como no aparelho real — bezel preto fino colado na tela e trilho de
+# alumínio por fora dele.
+MOLDURA_FRAC = 0.026  # bezel preto entre a tela e o trilho
+TRILHO_FRAC = 0.014  # trilho metálico externo
+RAIO_TELA_FRAC = 0.075  # canto da tela (mais redondo que os 0.055 de antes)
 
-# Paleta da cama: dessaturada de propósito — a cama é moldura, não é o assunto;
-# quem tem que puxar o olho é a tela. Mas não ESCURA: na primeira versão a
-# colcha, a vinheta e o desfoque somados entregavam um retângulo cinza uniforme
-# que não lia como cama nenhuma. O aparelho ocupa quase todo o quadro, então a
-# faixa de cama que sobra precisa de luz e de contraste para ser reconhecida.
-#
-# O tom é de LINHO QUENTE, não de cinza-azulado: com a paleta fria o conjunto
-# de dobras retas lia como painel acolchoado de parede, não como roupa de cama.
-CAMA_TOPO = (150, 141, 130)
-CAMA_BASE = (72, 66, 60)
-LENCOL = (196, 187, 174)  # dobras iluminadas
-LENCOL_SOMBRA = (42, 38, 34)
-TRAVESSEIRO = (204, 196, 184)
-VIRA = (182, 174, 162)  # o lençol virado sobre a colcha, na faixa de cima
-APARELHO = (16, 16, 19)
-APARELHO_BORDA = (78, 82, 95)
+# Tratamento da foto da cama: ela é fundo, não é o assunto.
+CAMA_DESFOQUE_FRAC = 0.005  # sigma como fração do lado menor do quadro
+CAMA_SATURACAO = 0.80
+CAMA_BRILHO = 0.82
+CAMA_VINHETA = 0.55  # opacidade máxima do escurecimento das bordas
 
-# Mão que arrasta o conteúdo na tela.
-MAO_COR = (28, 29, 34)
-MAO_RIM = (86, 90, 104)
+# Corpo do aparelho.
+APARELHO = (13, 13, 16)  # bezel preto
+TRILHO_CLARO = (178, 183, 194)  # alumínio no topo do gradiente
+TRILHO_ESCURO = (46, 48, 56)  # alumínio na base
+# Botão em duas cores: um vinco escuro em volta e a face clara por cima. Uma
+# cor só some no trilho — o gradiente do metal passa pelo mesmo tom no meio do
+# aparelho em pé, e o botão sumia justamente ali.
+BOTAO_VINCO = (38, 40, 48)
+BOTAO_FACE = (170, 175, 186)
 
 
 def retangulo_tela(largura: int, altura: int) -> tuple[int, int, int, int]:
@@ -89,21 +109,82 @@ def retangulo_tela(largura: int, altura: int) -> tuple[int, int, int, int]:
     return ((largura - tela_l) // 2, (altura - tela_a) // 2, tela_l, tela_a)
 
 
-def _gradiente_vertical(img: Image.Image, cor0, cor1) -> None:
-    """Preenche a imagem inteira com um gradiente vertical de cor0 a cor1."""
-    desenho = ImageDraw.Draw(img)
-    for i in range(img.height):
-        t = i / max(img.height - 1, 1)
-        cor = tuple(round(a + (b - a) * t) for a, b in zip(cor0, cor1))
-        desenho.line([(0, i), (img.width, i)], fill=(*cor, 255))
+def _cobrir(foto: Image.Image, largura: int, altura: int) -> Image.Image:
+    """Escala a foto para COBRIR o quadro e corta o excesso pelo centro.
+
+    Equivale ao `force_original_aspect_ratio=increase` + `crop` do ffmpeg: a
+    estampa da colcha não pode esticar, senão a flor entrega que a imagem foi
+    deformada.
+    """
+    escala = max(largura / foto.width, altura / foto.height)
+    nova = foto.resize(
+        (max(1, math.ceil(foto.width * escala)),
+         max(1, math.ceil(foto.height * escala))),
+        Image.LANCZOS,
+    )
+    x = (nova.width - largura) // 2
+    y = (nova.height - altura) // 2
+    return nova.crop((x, y, x + largura, y + altura))
+
+
+def _rampa_vertical(
+    tam: tuple[int, int], y0: float, y1: float, v0: int, v1: int
+) -> Image.Image:
+    """Máscara "L" com uma rampa linear de v0 (em y0) a v1 (em y1).
+
+    Fora do intervalo o valor fica preso na ponta mais próxima. É o que dosa o
+    brilho especular do trilho: forte na aresta iluminada, some em seguida.
+    """
+    mascara = Image.new("L", tam, 0)
+    desenho = ImageDraw.Draw(mascara)
+    passo = 1 if y1 >= y0 else -1
+    for y in range(tam[1]):
+        if (y - y0) * passo <= 0:
+            v = v0
+        elif (y - y1) * passo >= 0:
+            v = v1
+        else:
+            v = round(v0 + (v1 - v0) * (y - y0) / (y1 - y0))
+        desenho.line([(0, y), (tam[0], y)], fill=v)
+    return mascara
+
+
+def _mascara_retangulo(
+    tam: tuple[int, int], caixa: list[float], raio: int, valor: int = 255
+) -> Image.Image:
+    """Máscara "L" de um retângulo arredondado."""
+    mascara = Image.new("L", tam, 0)
+    ImageDraw.Draw(mascara).rounded_rectangle(caixa, radius=raio, fill=valor)
+    return mascara
+
+
+def _mascara_anel(
+    tam: tuple[int, int],
+    fora: list[float],
+    raio_fora: int,
+    dentro: list[float],
+    raio_dentro: int,
+) -> Image.Image:
+    """Máscara "L" do anel entre dois retângulos arredondados concêntricos."""
+    mascara = _mascara_retangulo(tam, fora, raio_fora)
+    ImageDraw.Draw(mascara).rounded_rectangle(dentro, radius=raio_dentro, fill=0)
+    return mascara
+
+
+def _camada_colorida(
+    tam: tuple[int, int], cor: tuple[int, int, int], alfa: Image.Image
+) -> Image.Image:
+    """Camada RGBA de cor sólida com a máscara "L" dada como transparência."""
+    return Image.merge("RGBA", (*Image.new("RGB", tam, cor).split(), alfa))
 
 
 def _capsula(desenho: ImageDraw.ImageDraw, p0, p1, r: float, cor) -> None:
     """Retângulo de pontas arredondadas entre dois pontos (em qualquer ângulo).
 
-    `rounded_rectangle` do Pillow só desenha na horizontal/vertical; a mão e as
-    dobras do lençol precisam de traços inclinados, e dois círculos mais um
-    quadrilátero dão a mesma forma em qualquer direção.
+    `rounded_rectangle` do Pillow só desenha na horizontal/vertical; os botões
+    da lateral saem do corpo do aparelho e precisam de ponta redonda dos dois
+    lados, e dois círculos mais um quadrilátero dão a mesma forma em qualquer
+    direção.
     """
     for p in (p0, p1):
         desenho.ellipse([p[0] - r, p[1] - r, p[0] + r, p[1] + r], fill=cor)
@@ -121,82 +202,30 @@ def _capsula(desenho: ImageDraw.ImageDraw, p0, p1, r: float, cor) -> None:
     )
 
 
-# Dobras do lençol, em frações do quadro (x0, y0, x1, y1, espessura). Fixas de
-# propósito: o cenário precisa sair igual em toda execução, e ruído aleatório
-# num fundo que fica os 25 segundos inteiros na tela só chama atenção para si.
-#
-# Traçadas para cruzar as FAIXAS QUE SOBRAM em volta do aparelho (as laterais e
-# a barra de baixo): dobra que só existe atrás do celular não aparece no vídeo.
-_DOBRAS = [
-    (-0.05, 0.30, 0.30, 0.17, 0.022),
-    (0.72, 0.19, 1.06, 0.34, 0.018),
-    (-0.06, 0.58, 0.24, 0.71, 0.026),
-    (0.78, 0.63, 1.08, 0.47, 0.020),
-    (-0.04, 0.86, 0.22, 0.95, 0.017),
-    (0.85, 0.82, 1.05, 0.94, 0.016),
-    (0.02, 0.97, 0.70, 1.04, 0.024),
-]
-
-
 def _desenhar_cama(largura: int, altura: int) -> Image.Image:
-    """Cama vista de cima: colcha em gradiente, travesseiro, vira e dobras."""
-    img = Image.new("RGBA", (largura, altura), (0, 0, 0, 255))
-    _gradiente_vertical(img, CAMA_TOPO, CAMA_BASE)
-
-    # Travesseiro: um volume claro encostado no topo, desfocado para virar
-    # relevo em vez de retângulo.
-    # O travesseiro e a VIRA do lençol (a faixa de tecido dobrada sobre a
-    # colcha) ficam ACIMA do aparelho, na faixa que sobra no topo do quadro: é
-    # esse par — volume claro + borda horizontal com sombra — que faz a
-    # superfície ser lida como CAMA e não como um fundo qualquer. Abaixo do
-    # topo do celular não adiantaria nada: o aparelho cobre.
-    topo = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
-    dr_topo = ImageDraw.Draw(topo)
-    dr_topo.rounded_rectangle(
-        [
-            round(largura * 0.04),
-            round(-altura * 0.09),
-            round(largura * 0.96),
-            round(altura * 0.032),
-        ],
-        radius=round(largura * 0.08),
-        fill=(*TRAVESSEIRO, 235),
-    )
-    y_vira = round(altura * 0.072)
-    dr_topo.rectangle(
-        [0, round(altura * 0.030), largura, y_vira], fill=(*VIRA, 255)
-    )
-    dr_topo.rectangle(
-        [0, y_vira, largura, y_vira + max(4, round(altura * 0.010))],
-        fill=(*LENCOL_SOMBRA, 150),
-    )
-    img.alpha_composite(
-        topo.filter(ImageFilter.GaussianBlur(max(4, largura * 0.010)))
-    )
-
-    # Dobras do lençol: traços claros com sombra colada embaixo — é o par que
-    # dá o volume do tecido. Bem desfocadas: dobra de tecido não tem aresta, e
-    # com o traço nítido o conjunto virava um painel acolchoado.
-    dobras = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
-    dr_dobras = ImageDraw.Draw(dobras)
-    for x0, y0, x1, y1, esp in _DOBRAS:
-        p0 = (x0 * largura, y0 * altura)
-        p1 = (x1 * largura, y1 * altura)
-        raio = esp * largura
-        _capsula(dr_dobras, p0, p1, raio, (*LENCOL, 150))
-        _capsula(
-            dr_dobras,
-            (p0[0], p0[1] + raio * 2.1),
-            (p1[0], p1[1] + raio * 2.1),
-            raio,
-            (*LENCOL_SOMBRA, 135),
+    """Fundo do quadro: a foto da cama, tratada para não competir com a tela."""
+    if not FUNDO_CAMA.is_file():
+        raise SystemExit(
+            f"Fundo da cama ausente ({FUNDO_CAMA}) — o cenário do vídeo é "
+            "montado sobre essa foto; abortando."
         )
-    img.alpha_composite(
-        dobras.filter(ImageFilter.GaussianBlur(max(5, largura * 0.013)))
-    )
+    with Image.open(FUNDO_CAMA) as arquivo:
+        foto = arquivo.convert("RGB")
+
+    img = _cobrir(foto, largura, altura)
+    # Suavização leve: profundidade de campo de um objeto apoiado sobre o
+    # tecido. Só o bastante para a estampa parar de disputar detalhe com o
+    # conteúdo da tela — borrar mais apagaria a flor e devolveria o retângulo
+    # cinza uniforme que a cama desenhada produzia.
+    sigma = max(1.0, min(largura, altura) * CAMA_DESFOQUE_FRAC)
+    img = img.filter(ImageFilter.GaussianBlur(sigma))
+    img = ImageEnhance.Color(img).enhance(CAMA_SATURACAO)
+    img = ImageEnhance.Brightness(img).enhance(CAMA_BRILHO)
+    img = img.convert("RGBA")
 
     # Vinheta: escurece as bordas e empurra o olho para o centro, onde está o
-    # aparelho. Discreta — a versão forte apagava a cama inteira.
+    # aparelho. O branco da estampa é claro, e sem isto a faixa de cama que
+    # sobra em volta do celular brilha mais que a tela.
     mascara = Image.new("L", (largura, altura), 255)
     ImageDraw.Draw(mascara).ellipse(
         [round(-largura * 0.10), round(-altura * 0.06),
@@ -205,9 +234,92 @@ def _desenhar_cama(largura: int, altura: int) -> Image.Image:
     )
     mascara = mascara.filter(
         ImageFilter.GaussianBlur(max(20, min(largura, altura) * 0.16))
-    ).point(lambda v: round(v * 0.75))
+    ).point(lambda v: round(v * CAMA_VINHETA))
     img.paste(Image.new("RGBA", (largura, altura), (0, 0, 0, 255)), (0, 0), mascara)
     return img
+
+
+def _desenhar_trilho(
+    img: Image.Image, fora: list[float], raio_fora: int,
+    corpo: list[float], raio_corpo: int, trilho: int,
+) -> None:
+    """Pinta o trilho de alumínio no anel entre o corpo e a borda externa.
+
+    Gradiente vertical (claro em cima, escuro embaixo) mais dois reflexos: o
+    especular forte na aresta de cima, que é de onde vem a luz, e um reflexo
+    fraco na de baixo, que é a luz da colcha voltando no metal. É esse par que
+    faz a borda ler como peça de alumínio em vez de contorno desenhado.
+    """
+    tam = img.size
+    anel = _mascara_anel(tam, fora, raio_fora, corpo, raio_corpo)
+
+    gradiente = _rampa_vertical(tam, fora[1], fora[3], 255, 0)
+    metal = Image.composite(
+        Image.new("RGB", tam, TRILHO_CLARO), Image.new("RGB", tam, TRILHO_ESCURO),
+        gradiente,
+    )
+    img.paste(metal, (0, 0), anel)
+
+    altura_dev = max(1.0, fora[3] - fora[1])
+    for y0, y1, v0, v1 in (
+        (fora[1], fora[1] + altura_dev * 0.10, 170, 0),
+        (fora[3] - altura_dev * 0.07, fora[3], 0, 90),
+    ):
+        brilho = ImageChops.multiply(_rampa_vertical(tam, y0, y1, v0, v1), anel)
+        img.alpha_composite(
+            _camada_colorida(
+                tam, (255, 255, 255),
+                brilho.filter(ImageFilter.GaussianBlur(max(1, trilho * 0.6))),
+            )
+        )
+
+
+def _desenhar_botoes(
+    desenho: ImageDraw.ImageDraw, fora: list[float], em_pe: bool, trilho: int,
+    tela: tuple[int, int, int, int],
+) -> None:
+    """Botões nas laterais: power de um lado, o par de volume do outro.
+
+    Ficam ENCAIXADOS no trilho e sobram um fio para fora dele — botão é peça
+    que se aperta, então tem que aparecer de perfil. Com o aparelho deitado o
+    quadro gira no sentido anti-horário (a câmera frontal vai para a esquerda),
+    então a lateral do power vira a aresta de CIMA e a do volume, a de baixo.
+    """
+    tela_x, tela_y, tela_l, tela_a = tela
+    saliencia = max(1, round(trilho * 0.5))
+    raio = (trilho + saliencia) / 2
+    # (sentido de saída do botão, faixas ao longo do lado maior do aparelho).
+    # O power é uma peça só, o volume são duas coladas.
+    for sentido, faixas in (
+        (+1, ((0.29, 0.40),)),
+        (-1, ((0.185, 0.255), (0.275, 0.345))),
+    ):
+        for f0, f1 in faixas:
+            if em_pe:
+                # Positivo = borda direita do quadro; negativo = borda esquerda.
+                borda = fora[2] if sentido > 0 else fora[0]
+                centro = borda + sentido * (saliencia - trilho) / 2
+                eixo = ((centro, tela_y + tela_a * f0), (centro, tela_y + tela_a * f1))
+                fora_dx, fora_dy = sentido, 0
+            else:
+                # Deitado, a mesma lateral vira a aresta de cima (positivo) ou
+                # a de baixo (negativo) — o sinal se inverte porque o y cresce
+                # para baixo.
+                borda = fora[1] if sentido > 0 else fora[3]
+                centro = borda - sentido * (saliencia - trilho) / 2
+                eixo = ((tela_x + tela_l * f0, centro), (tela_x + tela_l * f1, centro))
+                fora_dx, fora_dy = 0, -sentido
+            _capsula(desenho, *eixo, raio, (*BOTAO_VINCO, 255))
+            # A face fica deslocada PARA FORA dentro do vinco: é o que dá o
+            # perfil de peça saliente em vez de risco pintado na lateral.
+            recuo = raio * 0.30
+            _capsula(
+                desenho,
+                (eixo[0][0] + fora_dx * recuo, eixo[0][1] + fora_dy * recuo),
+                (eixo[1][0] + fora_dx * recuo, eixo[1][1] + fora_dy * recuo),
+                raio * 0.55,
+                (*BOTAO_FACE, 255),
+            )
 
 
 def gerar_cenario_celular(
@@ -220,151 +332,117 @@ def gerar_cenario_celular(
     """
     tela_x, tela_y, tela_l, tela_a = retangulo_tela(largura, altura)
     menor = min(tela_l, tela_a)
-    moldura = max(4, round(menor * MOLDURA_FRAC))
+    bezel = max(3, round(menor * MOLDURA_FRAC))
+    trilho = max(2, round(menor * TRILHO_FRAC))
     raio_tela = max(6, round(menor * RAIO_TELA_FRAC))
-    raio_corpo = raio_tela + moldura
+    # Raios CONCÊNTRICOS: cada camada soma a própria espessura ao raio de
+    # dentro. É o que mantém as três curvas paralelas no canto — raio repetido
+    # em espessuras diferentes é o defeito clássico de moldura desenhada.
+    raio_corpo = raio_tela + bezel
+    raio_fora = raio_corpo + trilho
 
     img = _desenhar_cama(largura, altura)
 
     corpo = [
-        tela_x - moldura,
-        tela_y - moldura,
-        tela_x + tela_l + moldura,
-        tela_y + tela_a + moldura,
+        tela_x - bezel,
+        tela_y - bezel,
+        tela_x + tela_l + bezel,
+        tela_y + tela_a + bezel,
+    ]
+    fora = [
+        corpo[0] - trilho, corpo[1] - trilho, corpo[2] + trilho, corpo[3] + trilho
     ]
 
-    # Sombra do aparelho na colcha: o celular está APOIADO, então a sombra é
-    # curta e para baixo.
-    desloc = max(3, round(moldura * 0.9))
-    sombra = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
-    ImageDraw.Draw(sombra).rounded_rectangle(
-        [corpo[0], corpo[1] + desloc, corpo[2], corpo[3] + desloc * 2],
-        radius=raio_corpo,
-        fill=(0, 0, 0, 165),
-    )
-    img.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(moldura * 1.8)))
+    # Sombra em duas camadas: a de CONTATO, curta e escura, que gruda o
+    # aparelho no tecido, e a AMBIENTE, larga e difusa, que dá o peso. Só a
+    # ampla, como era antes, fazia o celular flutuar sobre a colcha.
+    espessura = bezel + trilho
+    for desloc, expansao, opacidade, sigma in (
+        (espessura * 2.4, espessura * 0.6, 130, espessura * 2.6),
+        (espessura * 0.5, 0.0, 175, espessura * 0.7),
+    ):
+        sombra = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
+        ImageDraw.Draw(sombra).rounded_rectangle(
+            [fora[0] - expansao, fora[1] + desloc,
+             fora[2] + expansao, fora[3] + desloc + expansao],
+            radius=round(raio_fora + expansao),
+            fill=(0, 0, 0, opacidade),
+        )
+        img.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(sigma)))
 
+    # Corpo inteiro em preto (é o bezel), o trilho de alumínio por cima do anel
+    # de fora e, por último, os botões: eles ficam SOBRE o trilho, senão o
+    # gradiente do metal passaria por cima e apagaria a peça.
+    ImageDraw.Draw(img).rounded_rectangle(
+        fora, radius=raio_fora, fill=(*APARELHO, 255)
+    )
+    _desenhar_trilho(img, fora, raio_fora, corpo, raio_corpo, trilho)
+    _desenhar_botoes(
+        ImageDraw.Draw(img), fora, altura >= largura, trilho,
+        (tela_x, tela_y, tela_l, tela_a),
+    )
+
+    # O buraco da tela: alfa zero para o conteúdo aparecer por trás.
     desenho = ImageDraw.Draw(img)
-    # Corpo do aparelho, com o fio de luz da lateral de alumínio.
-    desenho.rounded_rectangle(
-        corpo,
-        radius=raio_corpo,
-        fill=(*APARELHO, 255),
-        outline=(*APARELHO_BORDA, 255),
-        width=max(2, moldura // 3),
+    tela_caixa = [tela_x, tela_y, tela_x + tela_l - 1, tela_y + tela_a - 1]
+    desenho.rounded_rectangle(tela_caixa, radius=raio_tela, fill=(0, 0, 0, 0))
+
+    # Sombra interna na borda da tela: o vidro é mais fundo que o bezel, e o
+    # conteúdo do vídeo passa por baixo dela ganhando profundidade. Sem isso a
+    # tela lê como recorte de papel colado no aparelho.
+    dentro = max(2, round(menor * 0.014))
+    anel_interno = _mascara_anel(
+        (largura, altura), tela_caixa, raio_tela,
+        [tela_caixa[0] + dentro, tela_caixa[1] + dentro,
+         tela_caixa[2] - dentro, tela_caixa[3] - dentro],
+        max(1, raio_tela - dentro),
+    ).filter(ImageFilter.GaussianBlur(dentro * 0.8)).point(lambda v: round(v * 0.55))
+    img.alpha_composite(_camada_colorida((largura, altura), (0, 0, 0), anel_interno))
+
+    # Reflexo do vidro: uma faixa diagonal fraca atravessando o canto superior
+    # da tela. Alfa baixo de propósito — o reflexo é o que denuncia o vidro,
+    # mas o conteúdo (inclusive cartela com texto) tem que continuar legível.
+    reflexo = Image.new("L", (largura, altura), 0)
+    ImageDraw.Draw(reflexo).polygon(
+        [
+            (tela_x, tela_y + tela_a * 0.30),
+            (tela_x + tela_l * 0.46, tela_y),
+            (tela_x + tela_l * 0.74, tela_y),
+            (tela_x, tela_y + tela_a * 0.58),
+        ],
+        fill=26,
+    )
+    reflexo = ImageChops.multiply(
+        reflexo.filter(ImageFilter.GaussianBlur(max(4, menor * 0.030))),
+        _mascara_retangulo((largura, altura), tela_caixa, raio_tela),
+    )
+    img.alpha_composite(
+        _camada_colorida((largura, altura), (255, 255, 255), reflexo)
     )
 
-    # Botões da lateral: dois riscos discretos no lado MAIOR do aparelho —
-    # a lateral direita com ele em pé, a borda de cima com ele deitado. Ficam
-    # colados na moldura (metade da espessura por dentro dela), senão viram
-    # dois blocos soltos ao lado do celular.
+    # Câmera frontal: uma ilha DENTRO da tela, no topo (em pé) ou na lateral
+    # esquerda (deitado). Desenhada depois do buraco porque ela é o único ponto
+    # opaco dentro dele: lente preta, aro de metal e um ponto de luz no vidro.
+    desenho = ImageDraw.Draw(img)
+    furo = max(3, round(menor * 0.021))
     em_pe = altura >= largura
-    botao = max(2, moldura // 3)
-    for f0, f1 in ((0.22, 0.28), (0.33, 0.42)):
-        if em_pe:
-            pontos = [
-                (corpo[2], tela_y + tela_a * f0), (corpo[2], tela_y + tela_a * f1)
-            ]
-        else:
-            pontos = [
-                (tela_x + tela_l * f0, corpo[1]), (tela_x + tela_l * f1, corpo[1])
-            ]
-        desenho.line(pontos, fill=(*APARELHO_BORDA, 255), width=botao)
-
-    # O buraco da tela por último: alfa zero para o conteúdo aparecer por trás.
-    desenho.rounded_rectangle(
-        [tela_x, tela_y, tela_x + tela_l - 1, tela_y + tela_a - 1],
-        radius=raio_tela,
-        fill=(0, 0, 0, 0),
-    )
-
-    # Câmera frontal: uma ilha preta DENTRO da tela, no topo (em pé) ou na
-    # lateral esquerda (deitado). Desenhada depois do buraco porque ela é o
-    # único ponto opaco dentro dele.
-    furo = max(3, round(menor * 0.020))
     if em_pe:
-        cx, cy = tela_x + tela_l // 2, tela_y + round(menor * 0.055)
+        cx, cy = tela_x + tela_l // 2, tela_y + round(menor * 0.060)
     else:
-        cx, cy = tela_x + round(menor * 0.055), tela_y + tela_a // 2
+        cx, cy = tela_x + round(menor * 0.060), tela_y + tela_a // 2
     desenho.ellipse(
-        [cx - furo, cy - furo, cx + furo, cy + furo], fill=(*APARELHO, 255)
+        [cx - furo, cy - furo, cx + furo, cy + furo],
+        fill=(*APARELHO, 255),
+        outline=(58, 60, 70, 255),
+        width=max(1, round(furo * 0.18)),
+    )
+    luz = max(1, round(furo * 0.28))
+    desenho.ellipse(
+        [cx - furo * 0.45 - luz, cy - furo * 0.45 - luz,
+         cx - furo * 0.45 + luz, cy - furo * 0.45 + luz],
+        fill=(120, 126, 140, 190),
     )
 
     destino.parent.mkdir(parents=True, exist_ok=True)
     img.save(destino)
     return destino, (tela_x, tela_y, tela_l, tela_a)
-
-
-def gerar_mao(
-    tela_l: int, tela_a: int, destino: Path
-) -> tuple[Path, tuple[int, int]]:
-    """Renderiza a mão que arrasta o conteúdo; devolve (PNG, ponta do dedo).
-
-    A ponta do dedo é o ponto de contato com a tela: a montagem posiciona a mão
-    subtraindo esse offset da coordenada do toque, de modo que o dedo — e não o
-    canto do PNG — é o que acompanha o arrasto.
-
-    Silhueta estilizada (dedo indicador estendido, punho fechado), escura, com
-    um fio de luz na borda e um halo de toque na ponta. Não é uma foto de mão:
-    é o mesmo vocabulário de mockup de interface que o espectador já reconhece,
-    e desenhá-la com Pillow evita depender de asset ou licença.
-    """
-    # Alta e estreita: a primeira versão saiu com a palma larga demais e o dedo
-    # curto, e o conjunto lia como uma luva. O que identifica a mão num vídeo
-    # de 25 segundos é o DEDO ESTENDIDO — ele precisa de comprimento, e a palma,
-    # de menos largura.
-    alt = max(60, round(min(tela_a * 0.92, tela_l * 0.80)))
-    larg = max(34, round(alt * 0.58))
-    margem = max(8, round(larg * 0.12))  # espaço para a sombra
-    imagem = Image.new("RGBA", (larg + 2 * margem, alt + 2 * margem), (0, 0, 0, 0))
-
-    def p(fx: float, fy: float) -> tuple[float, float]:
-        return (margem + larg * fx, margem + alt * fy)
-
-    ponta = p(0.30, 0.035)
-    no_dedo = p(0.46, 0.50)
-    r_dedo = larg * 0.082
-    palma0, palma1 = p(0.40, 0.60), p(0.56, 1.02)
-    r_palma = larg * 0.230
-    polegar0, polegar1 = p(0.34, 0.72), p(0.13, 0.62)
-    r_polegar = larg * 0.072
-    # Nós dos outros dedos, dobrados sobre a palma: dois volumes pequenos na
-    # borda esquerda do punho, que é o que distingue um punho fechado de um
-    # bloco arredondado.
-    nos = [(p(0.26, 0.70), p(0.34, 0.70)), (p(0.24, 0.82), p(0.33, 0.82))]
-    r_no = larg * 0.090
-
-    def silhueta(folga: float, cor) -> None:
-        dr = ImageDraw.Draw(imagem)
-        _capsula(dr, palma0, palma1, r_palma + folga, cor)
-        for a, b in nos:
-            _capsula(dr, a, b, r_no + folga, cor)
-        _capsula(dr, polegar0, polegar1, r_polegar + folga, cor)
-        _capsula(dr, ponta, no_dedo, r_dedo + folga, cor)
-
-    # Sombra da mão sobre a tela, depois o fio de luz e o corpo por cima.
-    sombra = Image.new("RGBA", imagem.size, (0, 0, 0, 0))
-    dr_sombra = ImageDraw.Draw(sombra)
-    _capsula(dr_sombra, palma0, palma1, r_palma * 1.05, (0, 0, 0, 150))
-    _capsula(dr_sombra, ponta, no_dedo, r_dedo * 1.15, (0, 0, 0, 150))
-    imagem.alpha_composite(
-        sombra.filter(ImageFilter.GaussianBlur(max(4, larg * 0.05)))
-    )
-    silhueta(max(1.5, larg * 0.012), (*MAO_RIM, 255))
-    silhueta(0.0, (*MAO_COR, 255))
-
-    # Halo do toque na ponta do dedo: o sinal visual de que o arrasto é dali.
-    halo = Image.new("RGBA", imagem.size, (0, 0, 0, 0))
-    dr_halo = ImageDraw.Draw(halo)
-    r_halo = larg * 0.17
-    dr_halo.ellipse(
-        [ponta[0] - r_halo, ponta[1] - r_halo, ponta[0] + r_halo, ponta[1] + r_halo],
-        fill=(255, 255, 255, 45),
-        outline=(255, 255, 255, 120),
-        width=max(2, round(larg * 0.014)),
-    )
-    imagem.alpha_composite(halo.filter(ImageFilter.GaussianBlur(max(1, larg * 0.006))))
-
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    imagem.save(destino)
-    return destino, (round(ponta[0]), round(ponta[1]))

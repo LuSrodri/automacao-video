@@ -327,7 +327,7 @@ class Config:
     # só teria como resultado abortar o vídeo.
     pool_extra_clipes: int = 3
     max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
-    # Imagens que tomam a tela do celular pelo arrasto da mão, por vídeo.
+    # Imagens que tomam a tela do celular pelo deslize do carrossel, por vídeo.
     # Caiu de 2 para 1 em 2026-08-09, junto com o Short de 25 segundos: cada
     # imagem tira ~4s de clipe da tela, e 2 cartelas + 2 figuras deixariam a
     # maior parte do Short em imagem parada — o oposto do formato.
