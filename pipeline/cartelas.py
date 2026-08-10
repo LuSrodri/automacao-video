@@ -2,9 +2,8 @@
 
 O corpo do vídeo continua sendo SÓ clipe de vídeo do X — a regra de que imagem
 estática não ocupa a tela segue valendo. A cartela é outra coisa: uma imagem
-emoldurada que entra POR CIMA do clipe por alguns segundos, no instante em que
-a narração nomeia a pessoa, o lugar, o documento ou o produto que ela mostra.
-Mesma lógica dos infográficos (grafico.py), com imagem no lugar do número.
+que TOMA A TELA do celular por alguns segundos, no instante em que a narração
+nomeia a pessoa, o lugar, o documento ou o produto que ela mostra.
 
 De onde vêm as imagens:
 1. FOTOS DOS POSTS DA TREND, que o pipeline já lia da X API e jogava fora no
@@ -18,9 +17,13 @@ estruturada, veto duro em material de emissora e nota de pertinência. Sem isso
 a cartela reintroduziria pela lateral exatamente o problema que a auditoria
 existe para resolver.
 
-Movimento: a cartela SOBE de baixo do quadro até a posição de leitura e SAI
-POR CIMA do quadro — o mesmo movimento das figuras geradas (figuras.py), para
-as duas camadas parecerem a mesma coisa na tela.
+Movimento (2026-08-09, pedido do usuário): a cartela deixou de ser um cartão
+sobreposto ao clipe. Ela agora é a TELA INTEIRA do celular e entra por ARRASTO
+— uma mão puxa o conteúdo para a esquerda, a imagem entra pela direita, e no
+fim da janela a mão a arrasta de volta para a direita e o vídeo retorna (ver
+edicao.py). Aqui só se renderiza a imagem parada, do tamanho exato da tela; o
+movimento inteiro é do ffmpeg. As figuras geradas (figuras.py) seguem a mesma
+regra, para as duas camadas serem a mesma coisa na tela.
 
 Etapa opcional: qualquer falha (rede, GPT, Pillow, citação não encontrada) só
 deixa o vídeo sem cartelas — nunca derruba o pipeline.
@@ -37,23 +40,19 @@ from openai import OpenAI
 from .auditoria import auditar_midias
 from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
 from .cortes import _tempo_do_char
-from .edicao import FPS
+from .edicao import MIN_JANELA_CARROSSEL
 from .midia_x import MAX_FOTO_BYTES, _baixar_arquivo, descrever_midias
 
 FONTE_CARTELA = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 
 DUR_CARTELA = 3.6  # s; tempo-alvo de cada cartela na tela
-DUR_MINIMA = 2.2  # s; janela menor que isto não dá tempo de ler a imagem
-GAP_CARTELAS = 1.2  # s; respiro mínimo entre cartelas e para os infográficos
+# Janela menor que isto não dá tempo de ler a imagem — e, desde o carrossel,
+# também não comporta os dois arrastos da mão (MIN_JANELA_CARROSSEL, 1,84s).
+DUR_MINIMA = max(2.2, MIN_JANELA_CARROSSEL)
+GAP_CARTELAS = 1.2  # s; respiro mínimo entre cartelas e para as figuras
 # O gancho é o que decide o swipe: os primeiros segundos ficam com o clipe
-# limpo, sem nada sobreposto.
+# limpo, sem nada por cima.
 INICIO_MINIMO = 3.0
-# Movimento (2026-07-30, pedido do usuário): a cartela SOBE de baixo do quadro
-# até a posição de leitura e SAI POR CIMA do quadro — uma travessia de baixo
-# para cima ao longo da vida dela, igual às figuras geradas (figuras.py). O
-# "carimbo" antigo (escala 92% -> 100% com fade) foi substituído por este.
-T_ENTRADA = 0.50  # s; sobe de fora da tela até a posição de leitura
-T_SAIDA = 0.45  # s; continua subindo até sumir acima do quadro
 
 MAX_NOTICIAS_IMAGEM = 3  # páginas de notícia consultadas por og:image
 # Teto de imagens que chegam à visão do GPT: cada uma é uma chamada paga, e
@@ -66,7 +65,6 @@ ALTURA_MINIMA_IMG = 300
 
 BRANCO = (255, 255, 255)
 PRETO = (14, 14, 14)
-CINZA_FONTE = (80, 80, 80)
 
 CABECALHO_HTTP = {
     "User-Agent": (
@@ -135,7 +133,7 @@ INSTRUCOES_CARTELAS = """\
 Você é o editor de CARTELAS de um canal de vídeos jornalísticos. Você recebe a
 NARRAÇÃO de um vídeo e as IMAGENS disponíveis (com a descrição do que cada uma
 mostra), e escolhe até {maximo} MOMENTOS-CHAVE em que uma imagem aparece
-emoldurada por cerca de {duracao} segundos, sobreposta ao vídeo.
+ocupando a tela do celular por cerca de {duracao} segundos, no lugar do vídeo.
 
 O vídeo já tem imagem em movimento o tempo todo. A cartela existe para dar
 ROSTO E FORMA ao que a narração acabou de nomear — a pessoa citada, o lugar
@@ -277,16 +275,6 @@ def _planejar(
 # ---- Renderização (Pillow) ----
 
 
-def _ease_out(u: float) -> float:
-    u = min(max(u, 0.0), 1.0)
-    return 1 - (1 - u) ** 3
-
-
-def _ease_in(u: float) -> float:
-    u = min(max(u, 0.0), 1.0)
-    return u**3
-
-
 def _texto_credito(m: dict, publico: str) -> str:
     prefixo = "Image Credit" if publico == "usa" else "Reprodução"
     if m.get("origem") == "noticia":
@@ -295,117 +283,66 @@ def _texto_credito(m: dict, publico: str) -> str:
     return f"{prefixo}: X / {conta}" if conta else f"{prefixo}: X"
 
 
-def _montar_cartao(m: dict, largura: int, altura: int, publico: str):
-    """Monta o cartão estático (imagem + moldura + crédito) uma única vez."""
-    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+def montar_tela(
+    caminho_foto: Path, destino: Path, tela_l: int, tela_a: int, rodape: str
+) -> Path:
+    """Renderiza a imagem do tamanho EXATO da tela do celular; devolve o PNG.
 
-    vertical = altura > largura
-    # Tamanho AUMENTADO em 2026-08-04 (pedido do usuário): a cartela era um
-    # cartão pequeno no meio de um clipe em movimento e perdia a disputa pela
-    # atenção justamente no segundo em que a narração nomeia o que ela mostra.
-    # Os tetos foram escolhidos contra o quadro real: no vertical a largura
-    # deixa folga para a sombra (que é desenhada fora do cartão) e a altura
-    # somada à posição de leitura para acima da faixa das legendas queimadas;
-    # no 16:9 não há legenda, e o limite é só o quadro.
-    larg_alvo = round(largura * (0.78 if vertical else 0.48))
-    alt_max = round(altura * (0.50 if vertical else 0.66))
+    Compartilhada com figuras.py, porque as duas camadas agora são a mesma
+    coisa na tela: uma imagem que toma o aparelho inteiro no lugar do vídeo.
 
-    with Image.open(m["caminho"]) as bruta:
+    A imagem entra INTEIRA (nada de recorte que corte rosto ou número), e o que
+    sobra da proporção é preenchido pela própria imagem ampliada, borrada e
+    escurecida — o mesmo tratamento que o clipe já recebe no fundo da tela, em
+    vez de duas tarjas pretas. `rodape` é o crédito (foto de terceiro) ou a
+    etiqueta do canal (figura desenhada), numa faixa na base.
+    """
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+
+    with Image.open(caminho_foto) as bruta:
         foto = bruta.convert("RGB")
-    borda = max(6, round(min(largura, altura) * 0.008))
-    faixa = max(24, round(min(largura, altura) * 0.045))  # altura do crédito
 
-    larg_foto = larg_alvo - 2 * borda
-    alt_foto = round(larg_foto * foto.height / max(foto.width, 1))
-    if alt_foto + 2 * borda + faixa > alt_max:
-        alt_foto = alt_max - 2 * borda - faixa
-        larg_foto = round(alt_foto * foto.width / max(foto.height, 1))
-    larg_foto, alt_foto = max(1, larg_foto), max(1, alt_foto)
-    foto = foto.resize((larg_foto, alt_foto), Image.LANCZOS)
+    # Fundo: a foto cobrindo a tela, borrada e escurecida.
+    cobrir = max(tela_l / foto.width, tela_a / foto.height)
+    fundo = foto.resize(
+        (max(1, round(foto.width * cobrir)), max(1, round(foto.height * cobrir))),
+        Image.LANCZOS,
+    ).filter(ImageFilter.GaussianBlur(max(8, round(min(tela_l, tela_a) * 0.05))))
+    esq = (fundo.width - tela_l) // 2
+    topo = (fundo.height - tela_a) // 2
+    fundo = fundo.crop((esq, topo, esq + tela_l, topo + tela_a))
+    tela = Image.new("RGBA", (tela_l, tela_a), (*PRETO, 255))
+    tela.paste(ImageEnhance.Brightness(fundo).enhance(0.45), (0, 0))
 
-    larg_card = larg_foto + 2 * borda
-    alt_card = alt_foto + 2 * borda + faixa
-    raio = max(8, round(borda * 1.6))
-
-    cartao = Image.new("RGBA", (larg_card, alt_card), (0, 0, 0, 0))
-    dr = ImageDraw.Draw(cartao)
-    dr.rounded_rectangle(
-        [0, 0, larg_card - 1, alt_card - 1], radius=raio, fill=BRANCO + (255,)
+    faixa = max(26, round(min(tela_l, tela_a) * 0.075))  # rodapé do crédito
+    util_a = tela_a - faixa
+    caber = min(tela_l / foto.width, util_a / foto.height)
+    larg = max(1, round(foto.width * caber))
+    alt = max(1, round(foto.height * caber))
+    tela.paste(
+        foto.resize((larg, alt), Image.LANCZOS),
+        ((tela_l - larg) // 2, (util_a - alt) // 2),
     )
-    cartao.paste(foto, (borda, borda))
 
-    texto = _texto_credito(m, publico)
-    tam = max(11, round(faixa * 0.42))
+    dr = ImageDraw.Draw(tela, "RGBA")
+    dr.rectangle([0, tela_a - faixa, tela_l, tela_a], fill=(*PRETO, 215))
+    tam = max(12, round(faixa * 0.40))
     fonte = ImageFont.truetype(str(FONTE_CARTELA), tam)
-    while dr.textlength(texto, font=fonte) > larg_card - 2 * borda and tam > 9:
+    margem = round(tela_l * 0.04)
+    while dr.textlength(rodape, font=fonte) > tela_l - 2 * margem and tam > 9:
         tam -= 1
         fonte = ImageFont.truetype(str(FONTE_CARTELA), tam)
     dr.text(
-        (larg_card // 2, alt_foto + borda + faixa // 2),
-        texto,
+        (tela_l // 2, tela_a - faixa // 2),
+        rodape,
         font=fonte,
-        fill=CINZA_FONTE + (255,),
+        fill=(*BRANCO, 235),
         anchor="mm",
     )
 
-    # Sombra: o cartão branco precisa se descolar do clipe, que pode ser claro.
-    desfoque = max(8, round(borda * 2.2))
-    margem = desfoque * 3
-    tela = Image.new(
-        "RGBA", (larg_card + 2 * margem, alt_card + 2 * margem), (0, 0, 0, 0)
-    )
-    sombra = Image.new("RGBA", tela.size, (0, 0, 0, 0))
-    ImageDraw.Draw(sombra).rounded_rectangle(
-        [margem, margem + desfoque // 2,
-         margem + larg_card, margem + alt_card + desfoque // 2],
-        radius=raio,
-        fill=PRETO + (150,),
-    )
-    tela.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(desfoque)))
-    tela.alpha_composite(cartao, (margem, margem))
-    return tela
-
-
-def _renderizar_frames(
-    m: dict, destino: Path, largura: int, altura: int, dur: float, publico: str
-) -> int:
-    """Gera os PNGs RGBA da cartela; devolve o número de frames.
-
-    O movimento entra por baixo e sai por cima: a cartela sobe de FORA DO
-    QUADRO até a posição de leitura, fica parada enquanto é lida e continua
-    subindo até sumir acima do quadro.
-    """
-    from PIL import Image
-
-    destino.mkdir(parents=True, exist_ok=True)
-    cartao = _montar_cartao(m, largura, altura, publico)
-    # Vertical: acima da faixa das legendas queimadas. Subiu de 0.44 para 0.38
-    # junto com o aumento do cartão — com o cartão maior, a posição antiga
-    # levava a base dele para dentro da faixa das legendas. 16:9 (sem
-    # legendas): centro da tela.
-    cy_final = round(altura * 0.38) if altura > largura else altura // 2
-    cx = largura // 2
-    cy_baixo = altura + cartao.height // 2
-    cy_cima = -cartao.height // 2
-    nframes = max(1, round(dur * FPS))
-
-    for f in range(nframes):
-        t = f / FPS
-        if t < T_ENTRADA:
-            cy = cy_baixo + (cy_final - cy_baixo) * _ease_out(t / T_ENTRADA)
-        elif t > dur - T_SAIDA:
-            cy = cy_final + (cy_cima - cy_final) * _ease_in(
-                (t - (dur - T_SAIDA)) / T_SAIDA
-            )
-        else:
-            cy = cy_final
-
-        quadro = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
-        quadro.alpha_composite(
-            cartao, (cx - cartao.width // 2, round(cy) - cartao.height // 2)
-        )
-        quadro.save(destino / f"f_{f + 1:04d}.png")
-    return nframes
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tela.save(destino)
+    return destino
 
 
 # ---- Entrada do pipeline ----
@@ -419,16 +356,20 @@ def gerar_cartelas(
     alinhamento: dict,
     dur_total: float,
     pasta: Path,
+    tela: tuple[int, int],
     ocupadas: list[tuple[float, float]] | None = None,
 ) -> list[dict]:
     """Monta as cartelas de imagem; devolve a lista para `montar_video`.
 
-    Retorno: [{"pattern": str, "inicio_s": float, "dur_s": float}, ...] — vazio
+    Retorno: [{"imagem": str, "inicio_s": float, "dur_s": float}, ...] — vazio
     quando não há imagem pertinente ou qualquer etapa falha (opcional).
 
-    `ocupadas`: janelas (início, fim) já usadas por infográficos; nenhuma
-    cartela entra em cima delas — duas coisas sobrepostas ao mesmo tempo viram
-    poluição.
+    `tela`: (largura, altura) da TELA do celular em px (cenario.retangulo_tela).
+    É nesse tamanho que cada cartela é renderizada, porque ela ocupa a tela
+    inteira do aparelho — não é mais um cartão sobre o quadro.
+
+    `ocupadas`: janelas (início, fim) já usadas por outras imagens; nenhuma
+    cartela entra em cima delas — dois arrastos ao mesmo tempo viram poluição.
     """
     maximo = cfg.max_cartelas
     if maximo <= 0:
@@ -459,11 +400,13 @@ def gerar_cartelas(
         imagens = auditar_midias(
             cfg, texto_video, imagens, laudos, limite=teto_pool,
             rotulo="imagem", pasta=pasta,
-            # O veto por texto na tela é dos CLIPES, que ficam em tela cheia
-            # sob as legendas queimadas. A cartela é um cartão pequeno e
-            # emoldurado, e o print do post citado — texto por definição — é o
-            # material que esta camada existe para mostrar.
+            # Os vetos de TEXTO e de MOVIMENTO são dos CLIPES, que são o corpo
+            # do vídeo. A cartela é uma imagem PARADA por definição, e o print
+            # do post citado — texto por definição — e o rosto de quem a
+            # narração nomeia são exatamente o material que esta camada existe
+            # para mostrar.
             vetar_texto=False,
+            vetar_parado=False,
         )
         if not imagens:
             print("[cartelas] Nenhuma imagem aprovada na auditoria.")
@@ -531,19 +474,21 @@ def gerar_cartelas(
                 f"{conflito[1]:.1f}s); descartada."
             )
             continue
-        pasta_frames = pasta / f"cartela_{k}"
         try:
-            nframes = _renderizar_frames(
-                m, pasta_frames, cfg.video_largura, cfg.video_altura, dur,
-                cfg.publico,
+            png = montar_tela(
+                m["caminho"],
+                pasta / f"cartela_{k}.png",
+                tela[0],
+                tela[1],
+                _texto_credito(m, cfg.publico),
             )
         except Exception as erro:  # noqa: BLE001 — renderização nunca derruba
             print(f"[aviso] Renderização da cartela falhou ({erro}); pulada.")
             continue
         item = {
-            "pattern": str(pasta_frames / "f_%04d.png"),
+            "imagem": str(png),
             "inicio_s": inicio,
-            "dur_s": nframes / FPS,
+            "dur_s": dur,
         }
         resultado.append(item)
         ocupadas.append((inicio, inicio + item["dur_s"]))

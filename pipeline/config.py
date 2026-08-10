@@ -108,28 +108,38 @@ def idioma_plausivel(texto: str, publico: str) -> bool:
     return not (palavras & alheias) or bool(palavras & proprias)
 
 # --- Formato CURTO (Shorts 9:16, padrão) ------------------------------------
-# Piso DURO de duração do Short (2026-08-04, pedido do usuário): Short com
-# menos de 50 segundos não sai. O motivo está nos vídeos publicados — com
-# VIDEO_DURACAO=60 o canal americano vinha entregando Shorts de 17 a 35
-# segundos, porque o orçamento de palavras só existia como pedido no prompt e o
-# modelo entregava metade dele. O piso é conferido em DOIS lugares, e é a
-# segunda conferência que vale: na faixa de palavras do roteiro (escritor.py,
-# barato, antes de gastar TTS) e na duração REAL da narração (main.py, depois
-# do corte de silêncios) — a primeira orienta, a segunda proíbe.
-CURTO_MIN_S = 50
+# DURAÇÃO-ALVO: 25 SEGUNDOS (2026-08-09, pedido do usuário). Vinha de 60s, com
+# piso duro de 50s. O piso desce junto — mantê-lo em 50 com alvo de 25 só faria
+# toda execução abortar depois de pagar a narração.
+#
+# Piso DURO de duração do Short (2026-08-04, pedido do usuário): Short abaixo
+# dele não sai. O motivo está nos vídeos publicados — com VIDEO_DURACAO=60 o
+# canal americano vinha entregando Shorts de 17 a 35 segundos, porque o
+# orçamento de palavras só existia como pedido no prompt e o modelo entregava
+# metade dele. O piso é conferido em DOIS lugares, e é a segunda conferência
+# que vale: na faixa de palavras do roteiro (escritor.py, barato, antes de
+# gastar TTS) e na duração REAL da narração (main.py, depois do corte de
+# silêncios) — a primeira orienta, a segunda proíbe.
+#
+# 21s guarda a mesma proporção que 50 guardava para 60 (~85% do alvo): é a
+# folga que a variação de ritmo do TTS consome sem que o vídeo deixe de ser o
+# Short de 25 segundos que foi pedido.
+CURTO_MIN_S = 21
 # Folga sobre o piso na hora de calcular o piso de PALAVRAS: o ritmo real do
 # TTS varia de narração para narração, então mirar exatamente em CURTO_MIN_S
 # faz metade das execuções cair logo abaixo dele e abortar depois de já ter
 # pago a narração.
 #
-# Subiu de 4 para 7 em 2026-08-05. Com 4 a margem cobria a variação medida
-# sobre o áudio BRUTO, mas o piso duro mede o áudio FINAL, e a variação lá é
-# maior: nas 8 narrações reais dos crons o ritmo final foi de 3,09 a 3,84
-# palavras/s (±11% em torno da média). Para o piso segurar na ponta RÁPIDA —
-# que é a que fura — a mira precisa de 6s de folga; o 7º segundo é cushion,
-# porque são só 8 medições e errar para baixo custa a narração inteira já paga,
-# enquanto errar para cima só entrega um Short alguns segundos mais longo.
-CURTO_MARGEM_S = 7
+# Era um valor ABSOLUTO (7 segundos, calibrado em 2026-08-05 contra o alvo de
+# 60s) e virou FRAÇÃO da duração-alvo em 2026-08-09, quando o alvo caiu para 25:
+# 7 segundos de folga sobre um vídeo de 25 empurrariam o piso de palavras para
+# CIMA do teto e o roteiro sairia com 29 segundos, não com os 25 pedidos. O que
+# a margem cobre é proporcional por natureza — nas 8 narrações reais dos crons
+# o ritmo final variou ±11% em torno da média (3,09 a 3,84 palavras/s) —, então
+# a fração é a forma certa da constante; 0,12 é aquele ±11% com um resto de
+# cushion, e reproduz a folga antiga (7,2s) no alvo antigo de 60s.
+CURTO_MARGEM_FRAC = 0.12
+CURTO_MARGEM_MIN_S = 2.0  # piso absoluto da folga, para alvos muito curtos
 
 # --- Formato LONGO (flag --long-take) ---------------------------------------
 # Vídeo de análise educacional em 16:9, de 120 a 150 segundos, para os dois
@@ -297,7 +307,7 @@ class Config:
     # "medium" é o piso para figura com texto: em "low" o gpt-image-2 entrega
     # rótulo borrado, e rótulo borrado num gráfico não vale o custo da chamada.
     imagem_qualidade: str = "medium"
-    video_duracao: int = 60
+    video_duracao: int = 25
     # Velocidade da narração (e, por consequência, do ritmo do vídeo inteiro:
     # os cortes, as legendas e as sobreposições saem do alinhamento, que é
     # reescalado junto). O Short é ACELERADO — é o que o feed premia — e o
@@ -317,10 +327,14 @@ class Config:
     # só teria como resultado abortar o vídeo.
     pool_extra_clipes: int = 3
     max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
-    max_cartelas: int = 2  # cartelas de imagem sobrepostas por vídeo
+    # Imagens que tomam a tela do celular pelo arrasto da mão, por vídeo.
+    # Caiu de 2 para 1 em 2026-08-09, junto com o Short de 25 segundos: cada
+    # imagem tira ~4s de clipe da tela, e 2 cartelas + 2 figuras deixariam a
+    # maior parte do Short em imagem parada — o oposto do formato.
+    max_cartelas: int = 1
     # Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
     # infográfico, diagrama ou cartaz do dado que a narração cita. 0 desliga.
-    max_figuras: int = 2
+    max_figuras: int = 1
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
     youtube_refresh_token: str = ""
@@ -339,6 +353,11 @@ class Config:
     # não é o assunto que a narração descreve (auditoria.py). Desligar aceita
     # de volta o fundo de slide/print atrás das legendas queimadas.
     veto_texto_denso: bool = True
+    # Veto a clipe PARADO (o mesmo quadro do começo ao fim) e a clipe de PESSOA
+    # FALANDO para a câmera — entrevista, podcast, coletiva, depoimento
+    # (auditoria.py). Desligar aceita de volta o busto falante e a foto com
+    # áudio como fundo do vídeo.
+    veto_clipe_parado: bool = True
     # --- TikTok via Zernio (publicação secundária, só no canal brasileiro) --
     # O mesmo vídeo que vai para o YouTube é postado no TikTok na MESMA
     # execução: nada é gerado de novo, então o custo adicional é zero. Ligado
@@ -409,7 +428,7 @@ def carregar_config() -> Config:
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
-        video_duracao=int(os.getenv("VIDEO_DURACAO", "60")),
+        video_duracao=int(os.getenv("VIDEO_DURACAO", "25")),
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", "1.25")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
@@ -425,8 +444,8 @@ def carregar_config() -> Config:
         max_urls_trend=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         pool_extra_clipes=int(os.getenv("POOL_EXTRA_CLIPES", "3")),
         max_fotos=int(os.getenv("MAX_FOTOS", "4")),
-        max_cartelas=int(os.getenv("MAX_CARTELAS", "2")),
-        max_figuras=int(os.getenv("MAX_FIGURAS", "2")),
+        max_cartelas=int(os.getenv("MAX_CARTELAS", "1")),
+        max_figuras=int(os.getenv("MAX_FIGURAS", "1")),
         youtube_client_id=os.getenv("YOUTUBE_CLIENT_ID", ""),
         youtube_client_secret=os.getenv("YOUTUBE_CLIENT_SECRET", ""),
         youtube_refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN", ""),
@@ -437,6 +456,8 @@ def carregar_config() -> Config:
         in ("1", "true", "sim", "yes"),
         seo_max_videos=int(os.getenv("SEO_MAX_VIDEOS", "20")),
         veto_texto_denso=os.getenv("VETO_TEXTO_DENSO", "1").strip().lower()
+        in ("1", "true", "sim", "yes"),
+        veto_clipe_parado=os.getenv("VETO_CLIPE_PARADO", "1").strip().lower()
         in ("1", "true", "sim", "yes"),
         tiktok_publicar=os.getenv("TIKTOK_PUBLICAR", "0").strip().lower()
         in ("1", "true", "sim", "yes"),

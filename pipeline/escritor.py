@@ -77,7 +77,8 @@ from openai import OpenAI
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import (
     AVISO_DADOS_EXTERNOS,
-    CURTO_MARGEM_S,
+    CURTO_MARGEM_FRAC,
+    CURTO_MARGEM_MIN_S,
     CURTO_MIN_S,
     LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
@@ -1979,9 +1980,14 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
             int((LONGO_MAX_S - MARGEM_LONGO_MAX_S) * ritmo),
         )
     limite = int(cfg.video_duracao * ritmo)
+    # A folga sobre o piso duro é PROPORCIONAL à duração-alvo (ver
+    # CURTO_MARGEM_FRAC): o que ela cobre é a variação de RITMO do TTS, que é
+    # percentual, e uma folga absoluta calibrada para 60s estouraria o teto de
+    # um alvo de 25.
+    margem = max(CURTO_MARGEM_MIN_S, cfg.video_duracao * CURTO_MARGEM_FRAC)
     piso = max(
         int(limite * FRACAO_MINIMA),
-        int((CURTO_MIN_S + CURTO_MARGEM_S) * ritmo),
+        int((CURTO_MIN_S + margem) * ritmo),
     )
     # Alvo baixo demais (VIDEO_DURACAO perto do piso) deixaria o piso passar do
     # teto e a faixa vazia; nesse caso o teto cede, porque o piso é a regra.

@@ -8,47 +8,51 @@ narração — nunca há um instante sem imagem na tela — com um crossfade cur
 limpo entre si (corte editorial, sem deslizes). A narração TTS (sem silêncios)
 é a única faixa contínua — o vídeo NÃO tem música de fundo (removida em
 2026-07-30) —, e o crédito de reprodução ("Reprodução Imagem: X" + "Conta
-@usuario" do post de origem) fica no canto superior direito enquanto o clipe
-daquela conta está na tela.
+@usuario" do post de origem) fica no canto superior direito da TELA enquanto o
+clipe daquela conta está nela.
+
+MOLDURA DE SMARTPHONE SOBRE UMA CAMA (2026-08-09, pedido do usuário). Nada
+ocupa mais o quadro inteiro: o clipe, as cartelas e as figuras aparecem dentro
+da TELA de um celular apoiado numa cama (cenario.py), nos DOIS formatos. O
+aparelho fica EM PÉ quando o vídeo é vertical (Short 9:16) e DEITADO quando é
+16:9 (formato longo). Substituiu a sala de estar com TV, que só o formato longo
+usava. A área útil do clipe passa a ser o retângulo da TELA — o fundo borrado
+preenche a tela quando o clipe não tem a proporção dela, e o PNG do cenário
+entra por cima recortando tudo na moldura do aparelho.
+
+CARROSSEL COM ARRASTO DA MÃO. As cartelas de imagem (cartelas.py) e as figuras
+do gpt-image-2 (figuras.py) deixaram de ser cartões sobrepostos ao clipe: elas
+agora ocupam a tela inteira do celular e entram por ARRASTO. No momento-chave
+uma MÃO surge, arrasta o conteúdo PARA A ESQUERDA e a imagem entra pela direita
+no lugar do vídeo; no fim da janela a mão volta, arrasta PARA A DIREITA e o
+vídeo retorna. É um carrossel de duas posições: o clipe e a imagem do momento,
+ambos deslocados pelo MESMO offset horizontal, de modo que a borda de um encosta
+na do outro durante todo o arrasto. O que sai da tela some atrás do corpo do
+aparelho — o recorte é o próprio PNG do cenário, sem máscara nenhuma no ffmpeg.
+
+Com a imagem tomando a tela inteira, o DESFOQUE do que ficava atrás das
+cartelas (CARTELA_BLUR_*) perdeu função e saiu junto: não há mais nada atrás
+para tirar de foco. Os INFOGRÁFICOS ANIMADOS montados em ffmpeg (grafico.py)
+já haviam sido REMOVIDOS em 2026-08-04 — os "big numbers" da tela vêm só das
+figuras do gpt-image-2; não reintroduzir sem pedido explícito.
 
 Clipe marcado como REPRESENTAÇÃO VISUAL (material de telejornal, que só o
 formato longo admite — ver auditoria.py) entra dessaturado e com etiqueta no
-rodapé esquerdo, para não se confundir com material próprio do canal. A marca
-é por clipe: os demais da mesma montagem seguem coloridos e sem etiqueta.
-
-No FORMATO LONGO o clipe não ocupa o quadro inteiro: ele aparece dentro da TV
-de uma sala de estar (cenario.py), identidade visual só desse formato. A área
-útil do clipe passa a ser o retângulo da TELA — o fundo borrado preenche a
-tela quando o clipe é vertical, e o PNG da sala entra por cima recortando o
-clipe na moldura. Crédito, etiquetas e sobreposições ficam SOBRE a sala.
-
-Por cima disso entra UMA camada de sobreposição, como sequências de PNG RGBA já
-renderizadas: as CARTELAS de imagem dos momentos-chave (cartelas.py) e as
-FIGURAS desenhadas pelo gpt-image-2 (figuras.py), ambas no miolo da tela. As
-janelas das duas nunca coincidem — quem monta as figuras recebe as janelas das
-cartelas e desvia delas. Enquanto uma delas está na tela, tudo que está atrás
-sai de foco (CARTELA_BLUR_SIGMA), para a imagem do momento-chave não disputar
-atenção com o clipe em movimento; o desfoque ENTRA E SAI EM RAMPA, acompanhando
-o movimento do cartão (ver `_filtros_desfoque`).
-
-Os INFOGRÁFICOS ANIMADOS montados em ffmpeg (contadores e barras renderizados
-em Pillow pelo antigo grafico.py) foram REMOVIDOS em 2026-08-04, a pedido do
-usuário: os "big numbers" da tela passam a vir só das figuras do gpt-image-2,
-que já cobrem o mesmo repertório com identidade visual única. O módulo
-grafico.py foi apagado junto — não reintroduzir sem pedido explícito.
+rodapé esquerdo da tela, para não se confundir com material próprio do canal. A
+marca é por clipe: os demais da mesma montagem seguem coloridos e sem etiqueta.
 """
 
 import subprocess
 import shutil
 from pathlib import Path
 
-from .cenario import gerar_cenario_tv
+from .cenario import gerar_cenario_celular, gerar_mao
 from .config import RAIZ
 
 FPS = 30
 MIN_EXIBICAO = 3.0  # segundos mínimos de exibição de cada clipe
 MAX_EXIBICAO = 15.0  # segundos máximos de exibição de cada clipe (só aviso)
-# No formato longo (16:9, 90-120s) o clipe segura janelas maiores: com 8
+# No formato longo (16:9, 120-150s) o clipe segura janelas maiores: com 8
 # clipes em 2 minutos a média já é ~15s, e o aviso só interessa acima disso.
 MAX_EXIBICAO_LONGO = 25.0
 CROSSFADE = 0.3  # duração do crossfade entre clipes consecutivos
@@ -63,70 +67,63 @@ ESCURECER = -0.05  # brilho aplicado ao fundo borrado (realça o clipe nítido)
 WOOSH = RAIZ / "assets" / "woosh.mp3"
 WOOSH_VOL = 0.5  # volume do efeito relativo à narração
 
-# TRILHA MUSICAL REMOVIDA em 2026-07-30 (pedido do usuário). O vídeo sai só com
-# a narração e os wooshes das transições: o formato virou análise/educacional e
-# música de fundo disputa atenção com a informação falada. O arquivo
-# assets/trilha.mp3 foi apagado do repositório junto com este código — não
-# reintroduzir mixagem de música sem pedido explícito.
+# --- Carrossel (arrasto da mão) ---------------------------------------------
+# Tempo de cada arrasto, de uma ponta à outra da tela. 0,42s é a faixa em que o
+# gesto lê como arrasto e não como corte: abaixo de ~0,3 vira piscada, acima de
+# ~0,6 o espectador espera o conteúdo que ainda está entrando. Os DOIS arrastos
+# (o de ida, que traz a imagem, e o de volta, que devolve o vídeo) cabem DENTRO
+# da janela da cartela, então DUR_MINIMA lá precisa continuar bem acima de
+# 2 * T_ARRASTO.
+T_ARRASTO = 0.42
+# A mão aparece um pouco antes de o conteúdo começar a andar e sai um pouco
+# depois de ele parar — mão que surge já em movimento lê como falha de render.
+MAO_ANTECIPACAO = 0.25
+MAO_PERMANENCIA = 0.25
+MAO_SUBIDA = 0.22  # sobe de fora do quadro até encostar na tela
+MAO_DESCIDA = 0.22
+# Percurso do dedo na tela, em fração da largura dela: começa perto da borda
+# direita e termina perto da esquerda (e o inverso no arrasto de volta, que é o
+# mesmo percurso lido ao contrário).
+MAO_X_INICIO = 0.78
+MAO_X_FIM = 0.22
+MAO_Y_TELA = 0.55  # altura do toque, em fração da altura da tela
+# Janela mínima de uma imagem no carrossel: os dois arrastos, mais a entrada e
+# a saída da mão em cada um, sem que as duas aparições dela se encavalem.
+MIN_JANELA_CARROSSEL = 2 * (T_ARRASTO + MAO_ANTECIPACAO + MAO_PERMANENCIA)
 
-# Crédito de reprodução no canto superior direito, por clipe: linha 1 fixa
-# ("Reprodução Imagem: X") e linha 2 com a conta do post de origem. Estética
-# editorial de rede social: Archivo Black branca sobre tarja preta
-# semitransparente, alinhada à direita. Some enquanto um infográfico ocupa o
-# terço superior (mesmo mecanismo que escondia o antigo branding).
+# Crédito de reprodução no canto superior direito DA TELA, por clipe: linha 1
+# fixa ("Reprodução Imagem: X") e linha 2 com a conta do post de origem.
+# Estética editorial de rede social: Archivo Black branca sobre tarja preta
+# semitransparente, alinhada à direita. Some enquanto a imagem do carrossel
+# está na tela — ela traz o próprio crédito, e manter o do clipe ali creditaria
+# a conta errada.
 FONTE_CREDITO = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 CREDITO_TEXTOS = {
     "brasil": ("Reprodução Imagem: X", "Conta {conta}"),
     "usa": ("Image Credit: X", "Account {conta}"),
 }
-# O tamanho da fonte é fração do LADO MENOR do vídeo: no formato vertical o
-# lado menor é a largura (nada muda), e no 16:9 ele impede que o crédito saia
-# gigante por causa dos 1920 de largura.
-CREDITO_FONTE_FRAC = 0.026  # tamanho da fonte como fração do lado menor
-CREDITO_MARGEM_FRAC = 0.030  # distância da borda direita (fração da largura)
-CREDITO_Y_FRAC = 0.045  # distância do topo como fração da altura
+# As frações abaixo são da TELA do celular, não do quadro: é dentro dela que o
+# crédito mora desde que a moldura entrou.
+CREDITO_FONTE_FRAC = 0.030  # tamanho da fonte como fração do lado menor da tela
+CREDITO_MARGEM_FRAC = 0.035  # distância da borda direita (fração da largura da tela)
+CREDITO_Y_FRAC = 0.045  # distância do topo da tela como fração da altura dela
 CREDITO_ENTRELINHA = 1.55  # distância entre as duas linhas (fração da fonte)
 CREDITO_TARJA = 0.45  # opacidade da tarja preta atrás do texto
 CREDITO_TARJA_PAD_FRAC = 0.45  # respiro da tarja ao redor do texto (fração da fonte)
 
 # Marcação de REPRESENTAÇÃO VISUAL: no formato longo o material de telejornal
 # não é mais vetado (auditoria.py) — entra dessaturado e etiquetado no rodapé
-# esquerdo, para o espectador não tomar cobertura de terceiro por material do
-# canal. Só o clipe marcado ("representacao" na sobreposição) recebe o
-# tratamento; os demais seguem coloridos e sem etiqueta na mesma montagem.
+# esquerdo da tela, para o espectador não tomar cobertura de terceiro por
+# material do canal. Só o clipe marcado ("representacao" na sobreposição)
+# recebe o tratamento; os demais seguem coloridos e sem etiqueta.
 REPR_SATURACAO = 0.10  # 0 = P&B puro; sobra um resto de cor, menos chapado
 REPR_TEXTOS = {
     "brasil": "REPRESENTAÇÃO VISUAL",
     "usa": "ILLUSTRATIVE FOOTAGE",
 }
-REPR_FONTE_FRAC = 0.024  # fração do lado menor (mesma lógica do crédito)
-REPR_MARGEM_FRAC = 0.030  # distância da borda esquerda (fração da largura)
-REPR_Y_FRAC = 0.912  # distância do topo como fração da altura (rodapé)
-
-# Desfoque aplicado ao que está ATRÁS de uma cartela ou figura, enquanto ela
-# está na tela: tira o clipe em movimento da disputa pela atenção enquanto a
-# imagem do momento-chave é lida. Vale só no intervalo de cada cartela.
-# Subiu de 14 para 20 em 2026-08-04 junto com o aumento dos cartões: cartão
-# maior deixa menos fundo à mostra, e o pouco que sobra precisa sair de foco
-# com mais convicção para não virar uma moldura de ruído em volta da imagem.
-CARTELA_BLUR_SIGMA = 20
-# RAMPA do desfoque (2026-08-04, pedido do usuário: "deixe o fundo borrado …
-# com uma animação suave"). O desfoque entrava e saía de um quadro para o
-# outro, e um corte seco de nitidez no meio de um clipe em movimento é
-# exatamente o tipo de solavanco que o resto da montagem evita.
-#
-# gblur NÃO aceita expressão por quadro em `sigma` (só `enable`, de timeline),
-# então a rampa é feita por NÍVEIS: CARTELA_BLUR_NIVEIS filtros gblur, cada um
-# com um sigma fixo e ligado apenas nas fatias de tempo em que aquele nível
-# vale — somadas as fatias de TODAS as cartelas. Como as fatias são disjuntas,
-# o custo total é o de um único desfoque; o que muda é só quando cada um liga.
-CARTELA_BLUR_NIVEIS = 5
-# Duração de cada ponta da rampa. Casada com o movimento do cartão (T_ENTRADA /
-# T_SAIDA em cartelas.py e figuras.py, 0,45-0,55s): o fundo desfoca enquanto o
-# cartão sobe e volta ao foco enquanto ele sai. Precisa caber duas vezes dentro
-# da menor janela de cartela (DUR_MINIMA = 2,2s) e não pode passar do respiro
-# entre cartelas (GAP_CARTELAS = 1,2s), senão duas rampas se encavalariam.
-CARTELA_BLUR_RAMPA = 0.45
+REPR_FONTE_FRAC = 0.028  # fração do lado menor da tela (mesma lógica do crédito)
+REPR_MARGEM_FRAC = 0.035  # distância da borda esquerda da tela
+REPR_Y_FRAC = 0.912  # distância do topo da tela como fração da altura dela
 
 
 def _exigir_ffmpeg() -> None:
@@ -262,55 +259,76 @@ def _texto_drawtext(texto: str) -> str:
     )
 
 
-def _filtros_desfoque(
-    janelas: list[tuple[float, float]], entrada: str, saida: str
-) -> list[str]:
-    """Filtros gblur que desfocam o fundo em RAMPA nas janelas das cartelas.
+# ---- Expressões de tempo do carrossel ---------------------------------------
 
-    Um gblur por NÍVEL de sigma (CARTELA_BLUR_NIVEIS), cada um ligado só nas
-    fatias de tempo em que aquele nível vale, somadas todas as janelas. Para
-    uma janela (ini, fim) e uma rampa de duração R dividida em N fatias:
 
-    - nível j (1..N-1) vale em [ini+(j-1)R/N, ini+jR/N) na subida e no espelho
-      dela na descida — duas fatias curtas;
-    - nível N (sigma cheio) vale de ini+(N-1)R/N até fim-(N-1)R/N, um intervalo
-      contíguo que já engloba o platô.
+def _suave(u: str) -> str:
+    """smoothstep sobre uma expressão ffmpeg `u` já normalizada em [0,1].
 
-    Devolve a lista de filtros encadeando `entrada` até `saida`; lista vazia
-    quando não há janela nenhuma (o chamador segue com `entrada`).
+    Aceleração e desaceleração nas pontas: o arrasto de um dedo real não começa
+    nem termina na velocidade máxima. Escrito como expressão porque `overlay`
+    avalia x/y por quadro — não há como pré-calcular a curva em Python.
     """
-    if not janelas:
-        return []
+    return f"({u})*({u})*(3-2*({u}))"
 
-    fatias: dict[int, list[tuple[float, float]]] = {}
-    n = CARTELA_BLUR_NIVEIS
-    passo = CARTELA_BLUR_RAMPA / n
+
+def _expr_progresso(
+    janelas: list[tuple[float, float]], subida: float, descida: float
+) -> str:
+    """Expressão ffmpeg: 0 fora das janelas, 1 dentro, com rampa nas pontas.
+
+    Em cada janela (ini, fim) o valor sobe de 0 a 1 em `subida` segundos a
+    partir de `ini`, fica em 1, e desce de 1 a 0 nos `descida` segundos finais.
+    Os intervalos são semiabertos (`gte`/`lt`) para que dois termos nunca
+    valham ao mesmo tempo na fronteira e o resultado passe de 1.
+
+    É a mesma curva para duas coisas diferentes: o deslocamento do carrossel
+    (rampa = arrasto) e a presença da mão em quadro (rampa = entrar/sair).
+    """
+    termos: list[str] = []
     for ini, fim in janelas:
-        # Janela curta demais para as duas rampas: encolhe o passo em vez de
-        # deixar a subida invadir a descida.
-        p = min(passo, max((fim - ini) / (2 * n), 0.01))
-        for j in range(1, n):
-            fatias.setdefault(j, []).extend(
-                [
-                    (ini + (j - 1) * p, ini + j * p),
-                    (fim - j * p, fim - (j - 1) * p),
-                ]
-            )
-        fatias.setdefault(n, []).append((ini + (n - 1) * p, fim - (n - 1) * p))
+        # Janela curta demais para as duas rampas: encolhe as duas na mesma
+        # proporção em vez de deixar a subida invadir a descida (o que faria a
+        # expressão saltar de um valor intermediário para 0).
+        total = subida + descida
+        sub, desc = subida, descida
+        if fim - ini < total and total > 0:
+            escala = (fim - ini) / total
+            sub, desc = subida * escala, descida * escala
+        sub, desc = max(sub, 0.001), max(desc, 0.001)
+        a, b = ini, ini + sub
+        c, d = fim - desc, fim
+        termos.append(f"gte(t,{a:.3f})*lt(t,{b:.3f})*{_suave(f'(t-{a:.3f})/{sub:.3f}')}")
+        if c > b:
+            termos.append(f"gte(t,{b:.3f})*lt(t,{c:.3f})")
+        termos.append(
+            f"gte(t,{c:.3f})*lt(t,{d:.3f})*(1-{_suave(f'(t-{c:.3f})/{desc:.3f}')})"
+        )
+    return "+".join(termos) if termos else "0"
 
-    filtros = []
-    corrente = entrada
-    for j in sorted(fatias):
-        sigma = CARTELA_BLUR_SIGMA * j / n
-        enable = "+".join(
-            f"between(t,{a:.3f},{b:.3f})" for a, b in sorted(fatias[j])
-        )
-        alvo = saida if j == max(fatias) else f"{saida}_n{j}"
-        filtros.append(
-            f"[{corrente}]gblur=sigma={sigma:.2f}:enable='{enable}'[{alvo}]"
-        )
-        corrente = alvo
-    return filtros
+
+def _expr_janelas(janelas: list[tuple[float, float]]) -> str:
+    """Expressão ffmpeg verdadeira dentro das janelas (para `enable`)."""
+    return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in janelas)
+
+
+def _subtrair(
+    janela: tuple[float, float], remocoes: list[tuple[float, float]]
+) -> list[tuple[float, float]]:
+    """`janela` menos os intervalos de `remocoes`; pedaços curtos são descartados."""
+    partes = [janela]
+    for ra, rb in remocoes:
+        novas: list[tuple[float, float]] = []
+        for a, b in partes:
+            if rb <= a or ra >= b:
+                novas.append((a, b))
+                continue
+            if a < ra:
+                novas.append((a, ra))
+            if rb < b:
+                novas.append((rb, b))
+        partes = novas
+    return [(a, b) for a, b in partes if b - a > 0.15]
 
 
 def montar_video(
@@ -325,7 +343,7 @@ def montar_video(
     publico: str = "brasil",
     formato: str = "curto",
 ) -> Path:
-    """Monta o vídeo final: clipes do X com fundo borrado do próprio clipe.
+    """Monta o vídeo final: celular sobre a cama, com o clipe do X na tela.
 
     `sobreposicoes`: [{"caminho": Path, "inicio_frac": float|None,
     "fim_frac": float|None, "conta": str, "representacao": bool}, ...] —
@@ -333,27 +351,25 @@ def montar_video(
     uniforme. SOMENTE clipes de vídeo (imagem estática aborta). Os clipes
     cobrem 100% da narração (sem instante vazio) e fazem crossfade entre si;
     "conta" (@usuario do post de origem) alimenta o crédito de reprodução no
-    canto superior direito. "representacao" marca o clipe de telejornal que a
-    auditoria admitiu no formato longo: ele entra dessaturado e com a etiqueta
-    "REPRESENTAÇÃO VISUAL" no rodapé, enquanto os outros clipes da mesma
-    montagem seguem coloridos e sem etiqueta.
+    canto superior direito da tela. "representacao" marca o clipe de telejornal
+    que a auditoria admitiu no formato longo: ele entra dessaturado e com a
+    etiqueta "REPRESENTAÇÃO VISUAL" no rodapé, enquanto os outros clipes da
+    mesma montagem seguem coloridos e sem etiqueta.
 
-    `cartelas`: imagens emolduradas nos momentos-chave (cartelas.py) —
-    [{"pattern": str, "inicio_s": float, "dur_s": float}, ...], sequências de
-    PNGs RGBA sobrepostas ao vídeo. Ficam no miolo da tela e trazem o próprio
-    crédito, então NÃO desligam o crédito de reprodução do topo.
+    `cartelas`: imagens dos momentos-chave (cartelas.py) — [{"imagem": str,
+    "inicio_s": float, "dur_s": float}, ...], cada uma um PNG do TAMANHO EXATO
+    da tela do celular. Entram por arrasto da mão, ocupando a tela toda no
+    lugar do clipe, e saem pelo arrasto de volta.
 
     `figuras`: gráficos, tabelas e cartazes gerados pelo gpt-image-2
-    (figuras.py), no mesmo formato das cartelas — sobem de baixo do quadro e
-    saem por cima. São tratadas exatamente como cartelas na montagem (mesma
-    camada, mesma rampa de desfoque do que está atrás); a diferença está na
-    origem da imagem, não no ffmpeg.
+    (figuras.py), no mesmo formato das cartelas e tratados exatamente como
+    elas na montagem; a diferença está na origem da imagem, não no ffmpeg.
 
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
 
     `formato`: "curto" (Shorts 9:16, com legendas queimadas) ou "longo"
-    (--long-take: 16:9, 90-120s, sem legendas) — muda só a tolerância de
-    tempo de cada clipe na tela; o resto da montagem é o mesmo.
+    (--long-take: 16:9, sem legendas) — muda a orientação do aparelho (em pé /
+    deitado, via cenario.py) e a tolerância de tempo de cada clipe na tela.
     """
     _exigir_ffmpeg()
     if not FONTE_CREDITO.is_file():
@@ -364,22 +380,17 @@ def montar_video(
         )
 
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
-    # Cartelas e figuras compartilham a camada: as duas são sequências de PNG
-    # RGBA no miolo da tela, com o mesmo borrão por trás. Ordenadas pelo início
-    # para o log e a pilha ficarem previsíveis.
+    # Cartelas e figuras compartilham a camada: as duas são imagens que tomam a
+    # tela do celular pelo mesmo arrasto. Ordenadas pelo início para o log e a
+    # pilha ficarem previsíveis.
     cartelas = sorted(
         (cartelas or []) + (figuras or []), key=lambda c: float(c["inicio_s"])
     )
 
-    # Cenário de sala com TV: identidade visual do formato longo. O clipe passa
-    # a ser escalado para o retângulo da TELA e o PNG da sala entra por cima,
-    # opaco em tudo menos no buraco da tela. O Short segue em tela cheia.
-    cenario = None
-    tela_x, tela_y, tela_l, tela_a = 0, 0, largura, altura
-    if formato == "longo":
-        cenario, (tela_x, tela_y, tela_l, tela_a) = gerar_cenario_tv(
-            largura, altura, destino.parent / "cenario_tv.png"
-        )
+    # Celular sobre a cama: a área útil de TUDO passa a ser o retângulo da tela.
+    cenario, (tela_x, tela_y, tela_l, tela_a) = gerar_cenario_celular(
+        largura, altura, destino.parent / "cenario_celular.png"
+    )
 
     sobreposicoes = _ordenar(sobreposicoes)
     estaticas = [s for s in sobreposicoes if not _e_video(s["caminho"])]
@@ -399,6 +410,38 @@ def montar_video(
                 f"[edicao] aviso: clipe fica {fim - ini:.1f}s na tela "
                 f"(acima do alvo de {max_exibicao:.0f}s)"
             )
+
+    # Janelas do carrossel: em cada uma a tela sai do clipe e vai para a imagem
+    # do momento, voltando ao clipe no fim.
+    janelas_cart = [
+        (
+            max(0.0, float(c["inicio_s"])),
+            min(float(c["inicio_s"]) + float(c["dur_s"]), duracao),
+        )
+        for c in cartelas
+    ]
+    # Janela curta demais não comporta os dois arrastos mais as duas aparições
+    # da mão: as duas aparições se encavalariam e a expressão de presença
+    # passaria de 1, jogando a mão para fora do lugar. Quem chama já respeita
+    # DUR_MINIMA (2,2s nas cartelas, 2,6s nas figuras); isto é a guarda.
+    pares_cart = [
+        (c, (a, b))
+        for c, (a, b) in zip(cartelas, janelas_cart)
+        if b - a >= MIN_JANELA_CARROSSEL
+    ]
+    for c, (a, b) in zip(cartelas, janelas_cart):
+        if b - a < MIN_JANELA_CARROSSEL:
+            print(
+                f"[edicao] aviso: janela de {b - a:.1f}s em {a:.1f}s é curta "
+                f"demais para o arrasto (mínimo {MIN_JANELA_CARROSSEL:.1f}s); "
+                "imagem descartada."
+            )
+    cartelas = [c for c, _ in pares_cart]
+    janelas_cart = [j for _, j in pares_cart]
+    # Deslocamento do carrossel, de 0 (vídeo na tela) a 1 (imagem na tela). O
+    # MESMO valor move o clipe para fora e a imagem para dentro — é isso que
+    # mantém as duas coladas durante o arrasto.
+    desloc = _expr_progresso(janelas_cart, T_ARRASTO, T_ARRASTO)
 
     # Base preta (entrada 0); narração é a entrada 1. Com cobertura total, a
     # base só aparece se faltarem clipes.
@@ -438,9 +481,9 @@ def montar_video(
         # a frente deixaria um halo colorido em volta do clipe em P&B.
         dessat = f"eq=saturation={REPR_SATURACAO}," if s.get("representacao") else ""
 
-        # Fundo: o próprio clipe cobrindo a área útil, borrado e levemente
-        # escuro. No formato longo a área útil é a TELA da TV, não o quadro —
-        # é o que mantém a tela sempre preenchida quando o clipe é vertical.
+        # Fundo: o próprio clipe cobrindo a TELA do celular, borrado e levemente
+        # escuro. É ele que mantém a tela sempre preenchida quando o clipe não
+        # tem a proporção do aparelho.
         filtros.append(
             f"[in_bg{i}]scale={tela_l}:{tela_a}:force_original_aspect_ratio=increase,"
             f"crop={tela_l}:{tela_a},gblur=sigma={BLUR_SIGMA},"
@@ -449,12 +492,9 @@ def montar_video(
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
         )
 
-        # Frente: o clipe nítido no maior tamanho que CABE na tela, centrado
-        # (no vertical isso é a largura total, como sempre foi; no 16:9 é a
-        # altura, e o clipe vertical do X vira uma faixa central sobre o fundo
-        # borrado em vez de estourar para fora do quadro). Sem zoom nem
-        # deslize — o clipe já tem movimento próprio; a transição editorial é
-        # um crossfade curto e limpo.
+        # Frente: o clipe nítido no maior tamanho que CABE na tela, centrado.
+        # Sem zoom nem deslize — o clipe já tem movimento próprio; a transição
+        # editorial é um crossfade curto e limpo.
         filtros.append(
             f"[in_fg{i}]scale={tela_l}:{tela_a}:force_original_aspect_ratio=decrease,"
             f"format=rgba,{dessat}{fade_in}{fade_out}"
@@ -462,51 +502,98 @@ def montar_video(
         )
 
         # Sobrepõe fundo e depois a frente, ambos ativos na janela (+ crossfade),
-        # ancorados no canto da área útil (a tela da TV, no formato longo).
+        # ancorados no canto da tela e ARRASTADOS para a esquerda pelo carrossel.
         filtros.append(
-            f"[{corrente}][bg{i}]overlay={tela_x}:{tela_y}:eof_action=pass"
+            f"[{corrente}][bg{i}]overlay=x='{tela_x}-{tela_l}*({desloc})':y={tela_y}"
+            f":eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[b{i}]"
         )
         filtros.append(
-            f"[b{i}][fg{i}]overlay={tela_x}+({tela_l}-w)/2:{tela_y}+({tela_a}-h)/2"
+            f"[b{i}][fg{i}]overlay="
+            f"x='{tela_x}+({tela_l}-w)/2-{tela_l}*({desloc})'"
+            f":y='{tela_y}+({tela_a}-h)/2'"
             f":eof_action=pass"
             f":enable='between(t,{ini:.2f},{fim_render:.2f})'[f{i}]"
         )
         corrente = f"f{i}"
 
-    # A sala entra por cima dos clipes: opaca em tudo menos no buraco da tela,
-    # ela é que recorta o clipe na moldura da TV. Vem ANTES do crédito, das
-    # legendas e das sobreposições — esses ficam sobre a sala, não dentro dela.
+    # Imagens do carrossel (cartelas.py e figuras.py): cada uma é um PNG do
+    # tamanho da tela, que espera FORA dela, à direita, e entra empurrada pelo
+    # mesmo deslocamento que tira o clipe. Entram ANTES do cenário porque é o
+    # corpo do aparelho que as recorta na moldura.
     prox_entrada = 2 + n
-    if cenario is not None:
+    for j, (c, (ini, fim)) in enumerate(zip(cartelas, janelas_cart)):
+        idx_cart = prox_entrada
+        prox_entrada += 1
         comando += [
             "-loop", "1", "-framerate", str(FPS), "-t", f"{duracao:.2f}",
-            "-i", str(cenario),
+            "-i", str(c["imagem"]),
         ]
-        filtros.append(f"[{prox_entrada}:v]format=rgba[sala]")
+        # Deslocamento só desta janela: duas cartelas nunca andam juntas.
+        d_j = _expr_progresso([(ini, fim)], T_ARRASTO, T_ARRASTO)
+        filtros.append(f"[{idx_cart}:v]format=rgba[cart{j}]")
         filtros.append(
-            f"[{corrente}][sala]overlay=0:0:eof_action=repeat[vsala]"
+            f"[{corrente}][cart{j}]"
+            f"overlay=x='{tela_x}+{tela_l}*(1-({d_j}))':y={tela_y}"
+            f":eof_action=repeat"
+            f":enable='between(t,{ini:.3f},{fim:.3f})'[vcart{j}]"
         )
-        corrente = "vsala"
-        prox_entrada += 1
+        corrente = f"vcart{j}"
 
-    # Borrão sob as cartelas: enquanto a imagem do momento-chave está na tela,
-    # o que está atrás dela sai de foco, para a cartela não disputar atenção
-    # com o clipe em movimento. Entra e sai em RAMPA, acompanhando o movimento
-    # do cartão; só o intervalo de cada cartela é afetado.
-    janelas_cart = [
-        (
-            max(0.0, float(c["inicio_s"])),
-            min(float(c["inicio_s"]) + float(c["dur_s"]), duracao),
-        )
-        for c in cartelas
+    # O celular entra por cima do conteúdo: opaco em tudo menos no buraco da
+    # tela, ele é que recorta o carrossel na moldura do aparelho. Vem ANTES da
+    # mão, das legendas e do crédito — esses ficam sobre o aparelho.
+    comando += [
+        "-loop", "1", "-framerate", str(FPS), "-t", f"{duracao:.2f}",
+        "-i", str(cenario),
     ]
-    filtros_blur = _filtros_desfoque(
-        [(a, b) for a, b in janelas_cart if b > a], corrente, "vcartblur"
-    )
-    if filtros_blur:
-        filtros += filtros_blur
-        corrente = "vcartblur"
+    filtros.append(f"[{prox_entrada}:v]format=rgba[aparelho]")
+    filtros.append(f"[{corrente}][aparelho]overlay=0:0:eof_action=repeat[vcel]")
+    corrente = "vcel"
+    prox_entrada += 1
+
+    # A MÃO que arrasta: sobe de fora do quadro pouco antes de cada arrasto,
+    # acompanha o dedo pela tela e desce depois. Duas aparições por imagem — a
+    # de ida (arrasta o vídeo para a esquerda) e a de volta (arrasta a imagem
+    # para a direita) —, e o percurso do dedo é o mesmo lido nos dois sentidos,
+    # porque é o próprio deslocamento do carrossel que o comanda.
+    if janelas_cart:
+        mao, (ponta_x, ponta_y) = gerar_mao(
+            tela_l, tela_a, destino.parent / "mao.png"
+        )
+        janelas_mao: list[tuple[float, float]] = []
+        for ini, fim in janelas_cart:
+            janelas_mao.append(
+                (
+                    max(0.0, ini - MAO_ANTECIPACAO),
+                    min(duracao, ini + T_ARRASTO + MAO_PERMANENCIA),
+                )
+            )
+            janelas_mao.append(
+                (
+                    max(0.0, fim - T_ARRASTO - MAO_ANTECIPACAO),
+                    min(duracao, fim + MAO_PERMANENCIA),
+                )
+            )
+        presenca = _expr_progresso(janelas_mao, MAO_SUBIDA, MAO_DESCIDA)
+        toque_x = tela_x + tela_l * MAO_X_INICIO - ponta_x
+        percurso = tela_l * (MAO_X_INICIO - MAO_X_FIM)
+        repouso_y = tela_y + tela_a * MAO_Y_TELA - ponta_y
+
+        comando += [
+            "-loop", "1", "-framerate", str(FPS), "-t", f"{duracao:.2f}",
+            "-i", str(mao),
+        ]
+        filtros.append(f"[{prox_entrada}:v]format=rgba[mao]")
+        filtros.append(
+            f"[{corrente}][mao]"
+            f"overlay=x='{toque_x:.1f}-{percurso:.1f}*({desloc})'"
+            f":y='{repouso_y:.1f}+({altura}-{repouso_y:.1f})*(1-({presenca}))'"
+            f":eof_action=repeat"
+            f":enable='{_expr_janelas(janelas_mao)}'[vmao]"
+        )
+        corrente = "vmao"
+        prox_entrada += 1
 
     if legendas is not None:
         fontes = RAIZ / "fonts"
@@ -516,21 +603,17 @@ def montar_video(
         filtros.append(f"[{corrente}]{filtro_ass}[vleg]")
         corrente = "vleg"
 
-    # Crédito de reprodução no canto superior direito (sobre as legendas):
-    # linha 1 fixa e linha 2 com a conta do post de origem do clipe que está
-    # na tela — cada clipe liga o seu crédito na sua janela. `prox_entrada` já
-    # vem numerando as entradas extras do ffmpeg (cenário, cartelas, woosh)
-    # desde a sobreposição da sala.
-    #
-    # O crédito não desliga mais em janela nenhuma: ele desligava sob os
-    # infográficos animados, que ocupavam o terço superior e cobriam o canto
-    # direito. Com eles removidos (2026-08-04), o que sobra na tela são as
-    # cartelas e as figuras, que ficam no MIOLO e nunca encostaram no crédito.
+    # Crédito de reprodução no canto superior direito DA TELA: linha 1 fixa e
+    # linha 2 com a conta do post de origem do clipe que está na tela — cada
+    # clipe liga o seu crédito na sua janela, DESCONTADAS as janelas do
+    # carrossel: enquanto a imagem do momento ocupa a tela, o clipe não está
+    # visível e o crédito dele creditaria a coisa errada (a imagem traz o seu).
     rotulo_fixo, rotulo_conta = CREDITO_TEXTOS.get(publico, CREDITO_TEXTOS["brasil"])
-    fonte = round(min(largura, altura) * CREDITO_FONTE_FRAC)
-    margem = round(largura * CREDITO_MARGEM_FRAC)
+    menor_tela = min(tela_l, tela_a)
+    fonte = round(menor_tela * CREDITO_FONTE_FRAC)
+    margem = round(tela_l * CREDITO_MARGEM_FRAC)
     pad = max(6, round(fonte * CREDITO_TARJA_PAD_FRAC))
-    y1 = round(altura * CREDITO_Y_FRAC)
+    y1 = tela_y + round(tela_a * CREDITO_Y_FRAC)
     y2 = y1 + round(fonte * CREDITO_ENTRELINHA) + 2 * pad
     base_credito = (
         f"drawtext=fontfile='{_caminho_filtro(FONTE_CREDITO)}'"
@@ -538,34 +621,42 @@ def montar_video(
         f":box=1:boxcolor=black@{CREDITO_TARJA}:boxborderw={pad}"
     )
     seq = 0
+    borda_direita = tela_x + tela_l - margem
     for s, (ini, fim) in pares:
+        visiveis = _subtrair((ini, fim), janelas_cart)
+        if not visiveis:
+            continue
         linhas = [rotulo_fixo]
         conta = (s.get("conta") or "").strip()
         if conta:
             linhas.append(rotulo_conta.format(conta=conta))
-        enable = f":enable='between(t,{ini:.2f},{fim:.2f})'"
+        enable = f":enable='{_expr_janelas(visiveis)}'"
         for texto, y in zip(linhas, (y1, y2)):
             filtros.append(
                 f"[{corrente}]{base_credito}"
                 f":text='{_texto_drawtext(texto)}'"
-                f":x=w-text_w-{margem}:y={y}"
+                f":x={borda_direita}-text_w:y={y}"
                 f"{enable}[vcred{seq}]"
             )
             corrente = f"vcred{seq}"
             seq += 1
 
-    # Etiqueta de representação visual no rodapé esquerdo, só nas janelas dos
-    # clipes marcados. Não some sob as cartelas (que ficam no miolo da tela): a
-    # etiqueta precisa acompanhar o clipe de ponta a ponta, senão o material de
-    # telejornal aparece um trecho sem aviso nenhum — que é justamente o que a
+    # Etiqueta de representação visual no rodapé esquerdo da tela, só nas
+    # janelas dos clipes marcados (também descontado o carrossel: com a imagem
+    # na tela não há material de telejornal a sinalizar). A etiqueta acompanha
+    # o clipe de ponta a ponta enquanto ele está visível, senão o material de
+    # emissora aparece um trecho sem aviso nenhum — que é justamente o que a
     # marcação existe para impedir.
     texto_repr = REPR_TEXTOS.get(publico, REPR_TEXTOS["brasil"])
-    fonte_repr = round(min(largura, altura) * REPR_FONTE_FRAC)
-    margem_repr = round(largura * REPR_MARGEM_FRAC)
+    fonte_repr = round(menor_tela * REPR_FONTE_FRAC)
+    margem_repr = tela_x + round(tela_l * REPR_MARGEM_FRAC)
     pad_repr = max(6, round(fonte_repr * CREDITO_TARJA_PAD_FRAC))
-    y_repr = round(altura * REPR_Y_FRAC)
+    y_repr = tela_y + round(tela_a * REPR_Y_FRAC)
     for s, (ini, fim) in pares:
         if not s.get("representacao"):
+            continue
+        visiveis = _subtrair((ini, fim), janelas_cart)
+        if not visiveis:
             continue
         filtros.append(
             f"[{corrente}]drawtext=fontfile='{_caminho_filtro(FONTE_CREDITO)}'"
@@ -573,28 +664,10 @@ def montar_video(
             f":box=1:boxcolor=black@{CREDITO_TARJA}:boxborderw={pad_repr}"
             f":text='{_texto_drawtext(texto_repr)}'"
             f":x={margem_repr}:y={y_repr}"
-            f":enable='between(t,{ini:.2f},{fim:.2f})'[vrepr{seq}]"
+            f":enable='{_expr_janelas(visiveis)}'[vrepr{seq}]"
         )
         corrente = f"vrepr{seq}"
         seq += 1
-
-    # Cartelas de imagem (cartelas.py) e figuras geradas (figuras.py): a
-    # imagem emoldurada do momento-chave entra por cima do clipe, no miolo da
-    # tela, com o próprio crédito. É a camada mais alta da montagem.
-    for j, (c, (ini, fim)) in enumerate(zip(cartelas, janelas_cart)):
-        idx_cart = prox_entrada
-        prox_entrada += 1
-        comando += [
-            "-framerate", str(FPS), "-start_number", "1", "-i", c["pattern"],
-        ]
-        filtros.append(
-            f"[{idx_cart}:v]format=rgba,setpts=PTS-STARTPTS+{ini:.2f}/TB[cart{j}]"
-        )
-        filtros.append(
-            f"[{corrente}][cart{j}]overlay=0:0:eof_action=pass"
-            f":enable='between(t,{ini:.2f},{fim:.2f})'[vcart{j}]"
-        )
-        corrente = f"vcart{j}"
 
     # Áudio: narração + woosh em cada transição de clipe. SEM música de fundo
     # (removida em 2026-07-30). O primeiro clipe não tem transição de entrada.
@@ -606,7 +679,6 @@ def montar_video(
         filtros.append(
             "[1:a]aformat=channel_layouts=stereo:sample_rates=44100[narr]"
         )
-    if usar_woosh:
         idx_woosh = prox_entrada
         prox_entrada += 1
         comando += ["-i", str(WOOSH)]

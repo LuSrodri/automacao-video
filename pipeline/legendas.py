@@ -9,6 +9,12 @@ Black (manchete de rede social), texto branco com contorno preto grosso e
 sombra suave, com a ALTURA do glifo levemente reduzida (ESCALA_Y) — o corpo da
 fonte é o mesmo, só a proporção fica mais baixa e condensada, que é o que dá o
 ar editorial e minimalista.
+
+Desde a moldura de celular (2026-08-09, cenario.py) a legenda é medida e
+posicionada contra a TELA DO APARELHO, não contra o quadro: `area` traz o
+retângulo da tela, e dele saem o tamanho da fonte, as margens laterais e a
+altura da faixa inferior. Sem isso a palavra transbordaria do celular e cairia
+sobre a cama, que é o único lugar do quadro onde ela não deveria estar.
 """
 
 import re
@@ -47,8 +53,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Centro,Archivo Black,{tam_centro},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,{escala_y},0,0,1,5,2,5,40,40,0,1
-Style: Inferior,Archivo Black,{tam_inferior},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,{escala_y},0,0,1,5,2,2,40,40,{margem_v},1
+Style: Centro,Archivo Black,{tam_centro},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,{escala_y},0,0,1,5,2,5,{margem_l},{margem_r},0,1
+Style: Inferior,Archivo Black,{tam_inferior},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,{escala_y},0,0,1,5,2,2,{margem_l},{margem_r},{margem_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -163,13 +169,19 @@ def gerar_legendas(
     altura: int,
     destino: Path,
     intervalos_imagens: list[tuple[float, float]] | None = None,
+    area: tuple[int, int, int, int] | None = None,
 ) -> Path:
     """Gera o .ass das legendas sincronizadas e devolve seu caminho.
 
     `intervalos_imagens`: janelas (início, fim) em que há imagem na tela; nesses
     trechos a legenda vai para a parte inferior, nos demais fica centralizada.
+
+    `area`: (x, y, largura, altura) da TELA do celular dentro do quadro. É
+    contra ela que a tipografia é dimensionada e posicionada. Omitida, o quadro
+    inteiro é a área — o comportamento anterior à moldura de celular.
     """
     intervalos = intervalos_imagens or []
+    area_x, area_y, area_l, area_a = area or (0, 0, largura, altura)
     palavras = _palavras_com_tempos(texto, alinhamento, dur_total)
     eventos = _agrupar(palavras)
 
@@ -177,20 +189,27 @@ def gerar_legendas(
     # leitura principal do vídeo — palavra grande segura a atenção no mudo.
     # Estes valores NÃO mudaram em 2026-08-04: o pedido foi manter o tamanho da
     # tipografia e baixar só a altura, que é o ScaleY (ESCALA_Y) do estilo.
-    tam_centro = max(64, round(largura * 0.165))
-    tam_inferior = max(48, round(largura * 0.135))
+    tam_centro = max(48, round(area_l * 0.165))
+    tam_inferior = max(36, round(area_l * 0.135))
+    # Margens laterais: as bordas da área útil mais o respiro de sempre (40px).
+    margem_l = area_x + 40
+    margem_r = largura - (area_x + area_l) + 40
     corpo = CABECALHO.format(
         largura=largura,
         altura=altura,
         tam_centro=tam_centro,
         tam_inferior=tam_inferior,
         escala_y=ESCALA_Y,
-        margem_v=round(altura * 0.26),
+        margem_l=margem_l,
+        margem_r=margem_r,
+        # A faixa inferior é medida a partir da BASE DA ÁREA (a base da tela do
+        # celular), não da base do quadro: é dentro da tela que a legenda mora.
+        margem_v=round(altura - (area_y + area_a) + area_a * 0.26),
     )
 
-    # Largura disponível para o texto: tela menos as margens laterais (40+40)
-    # e a borda, com uma folga de segurança para a estimativa de largura.
-    largura_util = (largura - 80 - 8) * 0.95
+    # Largura disponível para o texto: a área útil menos as margens laterais
+    # (40+40) e a borda, com uma folga de segurança para a estimativa.
+    largura_util = (area_l - 80 - 8) * 0.95
 
     linhas = []
     for ev in eventos:

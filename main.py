@@ -56,20 +56,23 @@ Fluxo:
    o momento exato da narração (citações do texto -> timestamps do
    alinhamento).
 10. Cartelas de imagem nos momentos-chave: foto do post da trend ou og:image
-    da notícia, auditada igual aos clipes, emoldurada por cima do clipe quando
-    a narração nomeia o que ela mostra.
+    da notícia, auditada igual aos clipes, tomando a TELA DO CELULAR quando a
+    narração nomeia o que ela mostra.
 11. Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
     infográfico, diagrama ou cartaz DESENHADO a partir dos números que a
     narração diz — ancorado na citação literal do trecho, e só com dado que a
     narração falou. São a ÚNICA fonte de "big number" na tela: os infográficos
     que o ffmpeg montava a partir de PNGs do Pillow foram removidos em
-    2026-08-04. Cartelas e figuras sobem de baixo do quadro e saem por cima, e
-    enquanto estão na tela o fundo entra e sai de foco em rampa suave.
-12. ffmpeg monta: fundo = o próprio clipe borrado (cobertura total, sem
-    instante vazio) + clipe nítido centrado + crossfade curto + legendas
-    grandes (Archivo Black, altura levemente reduzida) + crédito de reprodução
-    no canto superior direito ("Reprodução Imagem: X" + conta do post) +
-    cartelas + figuras. SEM música de fundo.
+    2026-08-04. Cartelas e figuras entram e saem pelo ARRASTO DA MÃO (item 12).
+12. ffmpeg monta TUDO DENTRO DA TELA DE UM CELULAR APOIADO NUMA CAMA
+    (cenario.py), em pé no Short e deitado no 16:9: fundo = o próprio clipe
+    borrado (cobertura total, sem instante vazio) + clipe nítido centrado +
+    crossfade curto + legendas grandes (Archivo Black, altura levemente
+    reduzida) + crédito de reprodução no canto superior direito da tela
+    ("Reprodução Imagem: X" + conta do post). As cartelas e as figuras entram
+    por um CARROSSEL: uma mão surge, arrasta o conteúdo para a esquerda e a
+    imagem ocupa a tela; no fim da janela a mão a arrasta de volta para a
+    direita e o vídeo retorna. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução)
     com TAGS de busca (que iam vazias até 2026-08-07) e com a descrição
@@ -84,9 +87,9 @@ Fluxo:
     só avisa, porque o vídeo já está no ar no YouTube quando isso roda.
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
-- padrão: Short vertical 1080x1920 de ~60s, com legendas queimadas e narração
-  ACELERADA (VIDEO_VELOCIDADE). PISO DURO de 50 segundos: Short mais curto que
-  isso não é publicado, a execução aborta. Os Shorts INTERCALAM temas — o
+- padrão: Short vertical 1080x1920 de ~25s (era 60 até 2026-08-09), com
+  legendas queimadas e narração ACELERADA (VIDEO_VELOCIDADE). PISO DURO de 21
+  segundos: Short mais curto que isso não é publicado, a execução aborta. Os Shorts INTERCALAM temas — o
   macrotema do Short anterior sai da disputa da seleção.
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 120 a 150 segundos
   (o piso de 120s é duro: abaixo dele a execução aborta), SEM legendas e em
@@ -112,6 +115,7 @@ from datetime import datetime
 from pipeline.audio import gerar_narracao
 from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
+from pipeline.cenario import retangulo_tela
 from pipeline.classificacao import classificar_trends
 from pipeline.config import (
     CURTO_MIN_S,
@@ -451,6 +455,12 @@ def main() -> None:
             encoding="utf-8",
         )
 
+    # Tela do celular: desde a moldura de smartphone (cenario.py) é ela, e não
+    # o quadro, a área útil de tudo que aparece — legendas, cartelas e figuras.
+    # O retângulo é calculado aqui, sem renderizar nada; `montar_video` chega
+    # ao mesmo pela mesma função.
+    tela_x, tela_y, tela_l, tela_a = retangulo_tela(largura, altura)
+
     # Formato longo é SEM legendas queimadas (pedido do usuário): a narração
     # se sustenta sozinha e a tela fica limpa para o clipe.
     legendas = None
@@ -463,10 +473,11 @@ def main() -> None:
             altura,
             pasta / "legendas.ass",
             intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
+            area=(tela_x, tela_y, tela_l, tela_a),
         )
 
     # Cartelas: a imagem do momento-chave (foto do post da trend ou og:image da
-    # notícia) entra emoldurada por cima do clipe.
+    # notícia) toma a tela do celular pelo arrasto da mão, no lugar do clipe.
     cartelas = gerar_cartelas(
         cfg,
         roteiro["texto_video"],
@@ -475,6 +486,7 @@ def main() -> None:
         alinhamento,
         duracao,
         pasta,
+        tela=(tela_l, tela_a),
     )
 
     # Figuras geradas (gpt-image-2): gráfico, tabela, infográfico, diagrama ou
@@ -492,6 +504,7 @@ def main() -> None:
         alinhamento,
         duracao,
         pasta,
+        tela=(tela_l, tela_a),
         ocupadas=ocupadas,
     )
 

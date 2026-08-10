@@ -294,6 +294,14 @@ TIPOS_MATERIAL = [
 # A escala é ordenada e a auditoria compara por posição (ver auditoria.py).
 DENSIDADES_TEXTO = ["nenhum", "pouco", "moderado", "muito"]
 
+# MOVIMENTO E TALKING HEAD (2026-08-09). Nasce do mesmo tipo de pedido que o
+# veto de texto: clipe PARADO (o mesmo quadro do começo ao fim, foto com áudio,
+# tela congelada) e clipe de PESSOA FALANDO PARA A CÂMERA não podem entrar. Os
+# dois falham pelo mesmo motivo — o vídeo é montado sobre movimento, e um
+# quadro que não muda ou um busto que só mexe a boca não mostram o fato, só
+# ocupam a tela enquanto a narração o conta. A visão mede as duas coisas aqui;
+# quem veta é a auditoria (auditoria.py).
+
 ESQUEMA_DESCRICAO = {
     "name": "descricao_de_midia",
     "strict": True,
@@ -368,6 +376,32 @@ ESQUEMA_DESCRICAO = {
                     "true sempre que houver texto ocupando a tela."
                 ),
             },
+            "cena_estatica": {
+                "type": "boolean",
+                "description": (
+                    "true se os frames recebidos são praticamente o MESMO "
+                    "quadro: câmera parada e nada de relevante se movendo "
+                    "(foto parada com áudio, slide, quadro congelado, cartaz "
+                    "filmado, tela sem atividade). false quando a cena muda de "
+                    "um frame para o outro — pessoas ou objetos se deslocando, "
+                    "câmera em movimento, corte para outro plano, interface "
+                    "sendo operada. Numa imagem estática (um frame só), "
+                    "responda true."
+                ),
+            },
+            "pessoa_falando": {
+                "type": "boolean",
+                "description": (
+                    "true se o quadro é DOMINADO por uma ou mais pessoas "
+                    "falando para a câmera ou entre si, e é isso que o clipe "
+                    "mostra: entrevista, depoimento, podcast, palestra, "
+                    "coletiva, âncora, selfie-vídeo, reação gravada. false "
+                    "quando ninguém fala, quando a fala é só narração em off "
+                    "sobre imagens do fato, ou quando as pessoas aparecem "
+                    "AGINDO (operando, andando, apresentando algo que se vê na "
+                    "tela) em vez de só falando."
+                ),
+            },
         },
         "required": [
             "descricao",
@@ -377,6 +411,8 @@ ESQUEMA_DESCRICAO = {
             "texto_na_tela",
             "densidade_texto",
             "texto_estatico",
+            "cena_estatica",
+            "pessoa_falando",
         ],
     },
 }
@@ -396,6 +432,14 @@ importância do que dizem), e "texto_estatico" é se o mesmo texto fica PARADO
 nos frames que você recebeu. Print de post, slide, cartaz e quadro com frase
 gigante são "muito" e estáticos; legenda que acompanha a fala muda de frame
 para frame e não é estática.
+
+O MOVIMENTO decide o uso do mesmo jeito. "cena_estatica" é se os frames são o
+mesmo quadro: compare-os de verdade, e responda true quando o que muda entre
+eles é irrelevante (um relógio, uma legenda) e o QUADRO é o mesmo.
+"pessoa_falando" é se o clipe é alguém falando para a câmera ou entre si —
+entrevista, podcast, coletiva, depoimento, âncora — e não uma cena em que
+pessoas AGEM. Nos dois campos, na dúvida responda true: material parado ou de
+busto falante é o que este canal não usa.
 
 Responda somente com o JSON pedido.\
 """
@@ -507,9 +551,17 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
                         + "]"
                     )
                 )
+                movimento = "".join(
+                    f" [{rotulo}]"
+                    for campo, rotulo in (
+                        ("cena_estatica", "cena parada"),
+                        ("pessoa_falando", "pessoa falando"),
+                    )
+                    if laudo.get(campo)
+                )
                 print(
                     f"[midia-x] {m['caminho'].name}: "
-                    f"{laudo.get('tipo_material', '?')}{marca}{texto}"
+                    f"{laudo.get('tipo_material', '?')}{marca}{texto}{movimento}"
                 )
 
     print(f"[midia-x] {len(descricoes)} mídias descritas")

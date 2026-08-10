@@ -32,7 +32,23 @@ A auditoria roda em duas etapas, sobre um pool maior do que o necessário:
    estúdio); telejornal que exibe imagens do fato é julgado por essas imagens,
    senão o veto derrubado em (1) voltaria pela nota.
 
-3. VETO POR TEXTO NA TELA (2026-08-07), em código, com o contexto vindo da
+3. VETO POR FALTA DE MOVIMENTO (2026-08-09), em código: clipe PARADO (o mesmo
+   quadro do começo ao fim — foto com áudio, slide, tela congelada) e clipe de
+   PESSOA FALANDO para a câmera (entrevista, podcast, coletiva, depoimento,
+   'estudio_ou_podcast') saem da disputa. É veto duro e sem exceção de
+   contexto, diferente do veto por texto: os dois casos falham pelo que o
+   material É, não pelo que ele mostra. O vídeo é montado sobre movimento — o
+   clipe é o que prova o fato enquanto a narração o conta —, e um quadro que
+   não muda ou um busto que só mexe a boca ocupam a tela sem provar nada.
+   Vale para os CLIPES; as cartelas passam com `vetar_parado=False`, porque
+   imagem parada é justamente o que aquela camada existe para mostrar.
+
+   CONSEQUÊNCIA no formato longo: o telejornal que entrava MARCADO como
+   representação visual (item 1) só continua entrando quando é VT com imagens
+   do fato — âncora ou repórter falando em quadro cai neste veto, que não tem
+   exceção de formato.
+
+4. VETO POR TEXTO NA TELA (2026-08-07), em código, com o contexto vindo da
    etapa 2: clipe TOMADO por texto — e, mais ainda, por texto PARADO — sai da
    disputa, a não ser que aquele texto seja o assunto que a narração descreve
    (o post citado, a tela do produto, o número falado). A visão mede o texto
@@ -58,6 +74,13 @@ from .midia_x import DENSIDADES_TEXTO
 
 # Tipos de material barrados por regra, sem passar por julgamento de modelo.
 TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
+
+# Tipos barrados só nos CLIPES, junto com o veto por falta de movimento
+# (2026-08-09): entrevista, podcast, palestra e coletiva são o retrato do
+# "vídeo de gente falando" que o canal deixou de usar. Fica separado de
+# TIPOS_VETADOS porque a mesma cena vira uma cartela legítima — a foto do
+# executivo que a narração acabou de nomear.
+TIPOS_VETADOS_CLIPE = {"estudio_ou_podcast"}
 
 # No FORMATO LONGO o material de telejornal deixa de ser vetado: entra MARCADO
 # como representação visual (dessaturado + etiqueta na tela, ver edicao.py).
@@ -272,13 +295,38 @@ def _veto_texto(laudo: dict, pertinente: bool | None) -> str:
     )
 
 
-def _motivo_do_veto(laudo: dict, marcar_tv: bool) -> tuple[str, bool]:
+def _veto_parado(laudo: dict) -> str:
+    """Motivo do veto por falta de movimento; vazio quando o clipe pode entrar.
+
+    Sem exceção de contexto e sem exceção de formato, ao contrário do veto por
+    texto: aqui o problema é o que o material É — um quadro que não muda ou uma
+    pessoa falando para a câmera —, e não a relação dele com a narração. Laudo
+    antigo, sem os campos, não veta ninguém: a ausência da medida não é prova
+    de que o clipe está parado.
+    """
+    if laudo.get("cena_estatica"):
+        return "clipe estático (o mesmo quadro do começo ao fim)"
+    if laudo.get("pessoa_falando"):
+        return "clipe de pessoa falando para a câmera"
+    tipo = laudo.get("tipo_material", "")
+    if tipo in TIPOS_VETADOS_CLIPE:
+        return f"material do tipo '{tipo}' (gente falando, veto duro)"
+    return ""
+
+
+def _motivo_do_veto(laudo: dict, marcar_tv: bool, vetar_parado: bool) -> tuple[str, bool]:
     """(motivo do veto, marcar como representação visual).
 
     Motivo vazio = a mídia segue para a nota de pertinência. Com `marcar_tv`
     (formato longo), telejornal e selo de emissora não vetam mais: a mídia
-    passa marcada, e a marcação vira dessaturação + etiqueta na montagem.
+    passa marcada, e a marcação vira dessaturação + etiqueta na montagem — mas
+    o veto por falta de movimento roda ANTES e não conhece essa exceção, então
+    âncora falando em quadro sai mesmo no formato longo.
     """
+    if vetar_parado:
+        parado = _veto_parado(laudo)
+        if parado:
+            return parado, False
     tipo = laudo.get("tipo_material", "")
     marcada = False
     if tipo in TIPOS_VETADOS:
@@ -361,6 +409,7 @@ def auditar_midias(
     rotulo: str = "clipe",
     pasta: Path | None = None,
     vetar_texto: bool = True,
+    vetar_parado: bool = True,
 ) -> list[dict]:
     """Aprova até `limite` mídias, da mais pertinente para a menos.
 
@@ -373,17 +422,19 @@ def auditar_midias(
     Com `pasta`, grava `auditoria_{rotulo}.json` com aprovadas e reprovadas
     para dar rastro do que foi barrado e por quê.
 
-    `vetar_texto` liga o veto por texto na tela (ver DENSIDADE_VETO). Vale para
-    os CLIPES, que ocupam a tela inteira por baixo das legendas queimadas.
-    As cartelas passam False: elas são um cartão pequeno e emoldurado sobre o
-    clipe, e o print do post citado — que é texto por definição — é exatamente
-    o material que aquela camada existe para mostrar.
+    `vetar_texto` liga o veto por texto na tela (ver DENSIDADE_VETO) e
+    `vetar_parado`, o veto por falta de movimento (ver `_veto_parado`). Os dois
+    valem para os CLIPES, que são o corpo do vídeo. As cartelas passam False
+    nos dois: elas são imagens PARADAS por definição — o print do post citado,
+    o rosto de quem foi nomeado —, e aplicar ali as regras dos clipes barraria
+    exatamente o material que aquela camada existe para mostrar.
     """
     if not midias:
         return []
 
     marcar_tv = getattr(cfg, "formato", "curto") == "longo"
     vetar_texto = vetar_texto and getattr(cfg, "veto_texto_denso", True)
+    vetar_parado = vetar_parado and getattr(cfg, "veto_clipe_parado", True)
 
     candidatas: list[dict] = []
     reprovadas: list[dict] = []
@@ -392,7 +443,7 @@ def auditar_midias(
         if not laudo:
             reprovadas.append(dict(m, motivo="sem laudo de visão"))
             continue
-        veto, marcada = _motivo_do_veto(laudo, marcar_tv)
+        veto, marcada = _motivo_do_veto(laudo, marcar_tv, vetar_parado)
         if veto:
             reprovadas.append(dict(m, laudo=laudo, motivo=veto))
             continue
@@ -414,6 +465,8 @@ def auditar_midias(
             tipo_material=m["laudo"].get("tipo_material", ""),
             densidade_texto=m["laudo"].get("densidade_texto", ""),
             texto_estatico=bool(m["laudo"].get("texto_estatico")),
+            cena_estatica=bool(m["laudo"].get("cena_estatica")),
+            pessoa_falando=bool(m["laudo"].get("pessoa_falando")),
             nivel_texto=max(_nivel_texto(m["laudo"]), 0),
             nota=nota,
             motivo=motivo,
@@ -474,6 +527,8 @@ def auditar_midias(
                     "representacao_visual": bool(m.get("representacao")),
                     "densidade_texto": m.get("densidade_texto", ""),
                     "texto_estatico": bool(m.get("texto_estatico")),
+                    "cena_estatica": bool(m.get("cena_estatica")),
+                    "pessoa_falando": bool(m.get("pessoa_falando")),
                     "motivo": m["motivo"],
                 }
                 for m in aprovadas

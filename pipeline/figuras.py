@@ -2,12 +2,11 @@
 tabelas, infográficos, diagramas e cartazes.
 
 O corpo do vídeo continua sendo SÓ clipe de vídeo do X — a regra de que imagem
-estática não ocupa a tela segue valendo. A figura é outra coisa: um cartão que
-ENTRA POR CIMA do clipe no instante em que a narração diz o dado que ela
-desenha, e sai. Mesma família visual das cartelas (cartelas.py) e dos
-infográficos animados (grafico.py), com uma diferença de origem: aqui a imagem
-não vem de lugar nenhum do mundo real — ela é DESENHADA a partir dos números
-que a própria narração já falou.
+estática não ocupa a tela segue valendo. A figura é outra coisa: uma imagem que
+TOMA A TELA do celular no instante em que a narração diz o dado que ela
+desenha, e sai. Mesma família visual das cartelas (cartelas.py), com uma
+diferença de origem: aqui a imagem não vem de lugar nenhum do mundo real — ela
+é DESENHADA a partir dos números que a própria narração já falou.
 
 Por que a IA e não o Pillow: grafico.py já desenha, com precisão perfeita,
 contador e barra comparativa. O que ele não desenha é tabela, linha do tempo,
@@ -20,10 +19,11 @@ CITAÇÃO LITERAL do texto narrado, e os rótulos e valores desenhados são os q
 o modelo extraiu daquele trecho. Isso não é preciosismo — é o que impede o
 vídeo de exibir na tela um número que ninguém falou.
 
-ANIMAÇÃO (pedido do usuário): a figura SOBE suavemente de baixo do quadro até
-a posição de leitura, fica parada enquanto é lida, e SAI POR CIMA do quadro.
-Entrada e saída são movimentos de direção única — a figura atravessa a tela de
-baixo para cima ao longo da vida dela.
+ANIMAÇÃO (2026-08-09, pedido do usuário): a figura entra e sai pelo CARROSSEL
+do celular — uma mão arrasta o conteúdo para a esquerda e a figura ocupa a tela
+inteira no lugar do vídeo; no fim da janela a mão a arrasta de volta para a
+direita (ver edicao.py). Substituiu a subida de baixo do quadro. Este módulo só
+renderiza a imagem parada, do tamanho da tela; o movimento é todo do ffmpeg.
 
 Etapa opcional: qualquer falha (OpenAI, rede, Pillow, citação não encontrada)
 só deixa o vídeo sem figuras — nunca derruba o pipeline.
@@ -42,24 +42,23 @@ from .config import (
     idioma_plausivel,
     nome_do_idioma,
 )
+from .cartelas import montar_tela
 from .cortes import _tempo_do_char
-from .edicao import FPS
+from .edicao import MIN_JANELA_CARROSSEL
 
 FONTE_FIGURA = RAIZ / "fonts" / "ArchivoBlack-Regular.ttf"
 
 DUR_FIGURA = 4.0  # s; tempo-alvo de cada figura na tela (leitura de gráfico)
-DUR_MINIMA = 2.6  # s; menos que isto não dá para ler uma tabela
+# Menos que isto não dá para ler uma tabela — e, desde o carrossel, também não
+# comporta os dois arrastos da mão (MIN_JANELA_CARROSSEL, 1,84s).
+DUR_MINIMA = max(2.6, MIN_JANELA_CARROSSEL)
 GAP_FIGURAS = 1.2  # s; respiro mínimo entre figuras e para as outras camadas
 # O gancho decide o swipe: os primeiros segundos ficam com o clipe limpo.
 INICIO_MINIMO = 3.0
 
-# Movimento: entra subindo de baixo do quadro, sai por cima do quadro.
-T_ENTRADA = 0.55  # s; sobe de fora da tela até a posição de leitura
-T_SAIDA = 0.50  # s; continua subindo até sumir acima do quadro
-
-BRANCO = (255, 255, 255)
-PRETO = (14, 14, 14)
-CINZA_FONTE = (90, 90, 90)
+# Movimento (2026-08-09): a figura deixou de subir por cima do clipe e passou a
+# ocupar a TELA INTEIRA do celular, entrando pelo arrasto da mão — o mesmo
+# carrossel das cartelas (ver edicao.py). Aqui só se renderiza a imagem parada.
 
 # Tamanhos aceitos pelo gpt-image-2 (arestas múltiplas de 16, proporção até
 # 3:1, total de pixels dentro da faixa permitida). Retrato para o Short,
@@ -479,136 +478,12 @@ def _planejar(
 # ---- Renderização (Pillow) --------------------------------------------------
 
 
-def _ease_out(u: float) -> float:
-    u = min(max(u, 0.0), 1.0)
-    return 1 - (1 - u) ** 3
-
-
-def _ease_in(u: float) -> float:
-    u = min(max(u, 0.0), 1.0)
-    return u**3
-
-
+# Etiqueta no rodapé da tela. Não é decoração: a figura é DESENHADA pelo canal
+# a partir do que a narração disse, e o espectador precisa poder distingui-la de
+# um gráfico publicado por uma fonte externa — o mesmo cuidado que já vale para
+# o material de terceiros (crédito de reprodução) e para o material de
+# telejornal (etiqueta de representação visual).
 ETIQUETA = {"brasil": "INFOGRÁFICO DO CANAL", "usa": "CHANNEL GRAPHIC"}
-
-
-def _montar_cartao(caminho: Path, largura: int, altura: int, publico: str):
-    """Monta o cartão estático (figura + moldura + etiqueta) uma única vez.
-
-    A etiqueta no rodapé não é decoração: a figura é DESENHADA pelo canal a
-    partir do que a narração disse, e o espectador precisa poder distinguí-la
-    de um gráfico publicado por uma fonte externa — o mesmo cuidado que já vale
-    para o material de terceiros (crédito de reprodução) e para o material de
-    telejornal (etiqueta de representação visual).
-    """
-    from PIL import Image, ImageDraw, ImageFilter, ImageFont
-
-    vertical = altura > largura
-    # Tamanho AUMENTADO em 2026-08-04 (pedido do usuário), pelo mesmo motivo
-    # das cartelas — e aqui pesa mais: a figura carrega TEXTO (rótulo, valor,
-    # título), e rótulo pequeno num cartão pequeno visto no celular não é
-    # lido, o que anula a razão de a figura existir. Os tetos deixam folga
-    # para a sombra na largura e, no vertical, mantêm a base do cartão acima
-    # da faixa das legendas queimadas.
-    larg_alvo = round(largura * (0.84 if vertical else 0.54))
-    alt_max = round(altura * (0.54 if vertical else 0.74))
-
-    with Image.open(caminho) as bruta:
-        figura = bruta.convert("RGB")
-    borda = max(6, round(min(largura, altura) * 0.007))
-    faixa = max(22, round(min(largura, altura) * 0.040))  # altura da etiqueta
-
-    larg_fig = larg_alvo - 2 * borda
-    alt_fig = round(larg_fig * figura.height / max(figura.width, 1))
-    if alt_fig + 2 * borda + faixa > alt_max:
-        alt_fig = alt_max - 2 * borda - faixa
-        larg_fig = round(alt_fig * figura.width / max(figura.height, 1))
-    larg_fig, alt_fig = max(1, larg_fig), max(1, alt_fig)
-    figura = figura.resize((larg_fig, alt_fig), Image.LANCZOS)
-
-    larg_card = larg_fig + 2 * borda
-    alt_card = alt_fig + 2 * borda + faixa
-    raio = max(8, round(borda * 1.6))
-
-    cartao = Image.new("RGBA", (larg_card, alt_card), (0, 0, 0, 0))
-    dr = ImageDraw.Draw(cartao)
-    dr.rounded_rectangle(
-        [0, 0, larg_card - 1, alt_card - 1], radius=raio, fill=BRANCO + (255,)
-    )
-    cartao.paste(figura, (borda, borda))
-
-    texto = ETIQUETA.get(publico, ETIQUETA["brasil"])
-    tam = max(11, round(faixa * 0.38))
-    fonte = ImageFont.truetype(str(FONTE_FIGURA), tam)
-    while dr.textlength(texto, font=fonte) > larg_card - 2 * borda and tam > 9:
-        tam -= 1
-        fonte = ImageFont.truetype(str(FONTE_FIGURA), tam)
-    dr.text(
-        (larg_card // 2, alt_fig + borda + faixa // 2),
-        texto,
-        font=fonte,
-        fill=CINZA_FONTE + (255,),
-        anchor="mm",
-    )
-
-    desfoque = max(8, round(borda * 2.2))
-    margem = desfoque * 3
-    tela = Image.new(
-        "RGBA", (larg_card + 2 * margem, alt_card + 2 * margem), (0, 0, 0, 0)
-    )
-    sombra = Image.new("RGBA", tela.size, (0, 0, 0, 0))
-    ImageDraw.Draw(sombra).rounded_rectangle(
-        [margem, margem + desfoque // 2,
-         margem + larg_card, margem + alt_card + desfoque // 2],
-        radius=raio,
-        fill=PRETO + (160,),
-    )
-    tela.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(desfoque)))
-    tela.alpha_composite(cartao, (margem, margem))
-    return tela
-
-
-def _renderizar_frames(
-    imagem: Path, destino: Path, largura: int, altura: int, dur: float, publico: str
-) -> int:
-    """Gera os PNGs RGBA da figura; devolve o número de frames.
-
-    O movimento é o pedido pelo usuário e tem uma direção só: a figura entra
-    subindo de FORA DO QUADRO, por baixo, até a posição de leitura; fica parada
-    o tempo do meio; e sai continuando a subir, saindo POR CIMA do quadro.
-    """
-    from PIL import Image
-
-    destino.mkdir(parents=True, exist_ok=True)
-    cartao = _montar_cartao(imagem, largura, altura, publico)
-    # Vertical: acima do centro, longe da faixa das legendas queimadas. Subiu
-    # de 0.42 para 0.36 junto com o aumento do cartão — com o cartão maior, a
-    # posição antiga levava a base dele para dentro da faixa das legendas.
-    # 16:9 (sem legendas): centro da tela.
-    cy_final = round(altura * 0.36) if altura > largura else altura // 2
-    cx = largura // 2
-    # Fora do quadro embaixo e fora do quadro em cima, com folga da sombra.
-    cy_baixo = altura + cartao.height // 2
-    cy_cima = -cartao.height // 2
-    nframes = max(1, round(dur * FPS))
-
-    for f in range(nframes):
-        t = f / FPS
-        if t < T_ENTRADA:
-            p = _ease_out(t / T_ENTRADA)
-            cy = cy_baixo + (cy_final - cy_baixo) * p
-        elif t > dur - T_SAIDA:
-            p = _ease_in((t - (dur - T_SAIDA)) / T_SAIDA)
-            cy = cy_final + (cy_cima - cy_final) * p
-        else:
-            cy = cy_final
-
-        quadro = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
-        quadro.alpha_composite(
-            cartao, (cx - cartao.width // 2, round(cy) - cartao.height // 2)
-        )
-        quadro.save(destino / f"f_{f + 1:04d}.png")
-    return nframes
 
 
 # ---- Entrada do pipeline ----------------------------------------------------
@@ -622,17 +497,20 @@ def gerar_figuras(
     alinhamento: dict,
     dur_total: float,
     pasta: Path,
+    tela: tuple[int, int],
     ocupadas: list[tuple[float, float]] | None = None,
 ) -> list[dict]:
     """Gera as figuras do vídeo; devolve a lista para `montar_video`.
 
-    Retorno: [{"pattern": str, "inicio_s": float, "dur_s": float}, ...] — vazio
+    Retorno: [{"imagem": str, "inicio_s": float, "dur_s": float}, ...] — vazio
     quando a narração não tem dado que renda figura ou quando qualquer etapa
     falha (a camada é opcional por construção).
 
-    `ocupadas`: janelas (início, fim) já usadas por infográficos e cartelas;
-    nenhuma figura entra em cima delas — duas coisas sobrepostas ao mesmo tempo
-    viram poluição.
+    `tela`: (largura, altura) da TELA do celular em px — é nesse tamanho que a
+    figura é renderizada, porque ela ocupa a tela inteira do aparelho.
+
+    `ocupadas`: janelas (início, fim) já usadas pelas cartelas; nenhuma figura
+    entra em cima delas — dois arrastos ao mesmo tempo viram poluição.
     """
     maximo = cfg.max_figuras
     if maximo <= 0:
@@ -686,7 +564,9 @@ def gerar_figuras(
 
     candidatas.sort(key=lambda c: c[0])
     ocupadas = list(ocupadas or [])
-    vertical = cfg.video_altura > cfg.video_largura
+    # A orientação pedida ao gpt-image-2 é a da TELA do celular, não a do
+    # quadro: é dentro dela que a figura vai aparecer.
+    vertical = tela[1] > tela[0]
     resultado: list[dict] = []
     registro: list[dict] = []
     for k, (inicio, dur, fig) in enumerate(candidatas, 1):
@@ -711,20 +591,22 @@ def gerar_figuras(
         if imagem is None:
             continue
 
-        pasta_frames = pasta / f"figura_{k}"
         try:
-            nframes = _renderizar_frames(
-                imagem, pasta_frames, cfg.video_largura, cfg.video_altura, dur,
-                cfg.publico,
+            png = montar_tela(
+                imagem,
+                pasta / f"figura_tela_{k}.png",
+                tela[0],
+                tela[1],
+                ETIQUETA.get(cfg.publico, ETIQUETA["brasil"]),
             )
         except Exception as erro:  # noqa: BLE001 — renderização nunca derruba
             print(f"[aviso] Renderização da figura falhou ({erro}); pulada.")
             continue
 
         item = {
-            "pattern": str(pasta_frames / "f_%04d.png"),
+            "imagem": str(png),
             "inicio_s": inicio,
-            "dur_s": nframes / FPS,
+            "dur_s": dur,
         }
         resultado.append(item)
         ocupadas.append((inicio, inicio + item["dur_s"]))
