@@ -63,16 +63,20 @@ Fluxo:
     narração diz — ancorado na citação literal do trecho, e só com dado que a
     narração falou. São a ÚNICA fonte de "big number" na tela: os infográficos
     que o ffmpeg montava a partir de PNGs do Pillow foram removidos em
-    2026-08-04. Cartelas e figuras entram e saem pelo ARRASTO DA MÃO (item 12).
+    2026-08-04. Cartelas e figuras entram e saem pelo CARROSSEL (item 12).
 12. ffmpeg monta TUDO DENTRO DA TELA DE UM CELULAR APOIADO NUMA CAMA
-    (cenario.py), em pé no Short e deitado no 16:9: fundo = o próprio clipe
-    borrado (cobertura total, sem instante vazio) + clipe nítido centrado +
-    crossfade curto + legendas grandes (Archivo Black, altura levemente
-    reduzida) + crédito de reprodução no canto superior direito da tela
-    ("Reprodução Imagem: X" + conta do post). As cartelas e as figuras entram
-    por um CARROSSEL: uma mão surge, arrasta o conteúdo para a esquerda e a
-    imagem ocupa a tela; no fim da janela a mão a arrasta de volta para a
-    direita e o vídeo retorna. SEM música de fundo.
+    (cenario.py, sobre a foto fundo-cama.png). A ORIENTAÇÃO DO APARELHO VEM DO
+    MATERIAL, não do quadro: clipe horizontal deita o celular mesmo num Short
+    vertical, clipe vertical o levanta mesmo no 16:9 (orientacao_dominante, que
+    pesa cada clipe pelo tempo de tela). Fundo = o próprio clipe borrado
+    (cobertura total, sem instante vazio) + clipe nítido centrado + crossfade
+    curto + legendas grandes (Archivo Black, altura levemente reduzida) +
+    crédito de reprodução no canto superior direito da tela ("Reprodução
+    Imagem: X" + conta do post). Com o celular deitado num Short a legenda
+    desce para a cama, abaixo do aparelho. As cartelas e as figuras entram por
+    um CARROSSEL de duas posições: o conteúdo desliza para a esquerda e a
+    imagem ocupa a tela; no fim da janela ela desliza de volta e o vídeo
+    retorna. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução)
     com TAGS de busca (que iam vazias até 2026-08-07) e com a descrição
@@ -115,7 +119,7 @@ from datetime import datetime
 from pipeline.audio import gerar_narracao
 from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
-from pipeline.cenario import retangulo_tela
+from pipeline.cenario import area_legenda, retangulo_tela
 from pipeline.classificacao import classificar_trends
 from pipeline.config import (
     CURTO_MIN_S,
@@ -132,6 +136,7 @@ from pipeline.edicao import (
     duracao_audio,
     intervalos_imagens,
     montar_video,
+    orientacao_dominante,
 )
 from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.figuras import gerar_figuras
@@ -455,11 +460,26 @@ def main() -> None:
             encoding="utf-8",
         )
 
+    # ORIENTAÇÃO DO APARELHO (2026-08-10, pedido do usuário): vem do MATERIAL,
+    # não do quadro. Clipe horizontal deita o celular mesmo num Short vertical,
+    # clipe vertical o levanta mesmo no 16:9 — antes o aparelho seguia o quadro
+    # e um clipe 16:9 dentro de um celular em pé ficava numa faixa no meio da
+    # tela, apontando para o lado contrário do aparelho. Decidido AQUI, antes
+    # das legendas e das imagens, porque todas são medidas contra a tela; o
+    # mesmo valor desce para `montar_video`, senão as duas contas divergiriam.
+    aparelho_em_pe = orientacao_dominante(sobreposicoes, duracao, altura >= largura)
+    print(
+        f"[cenario] Clipes majoritariamente "
+        f"{'verticais' if aparelho_em_pe else 'horizontais'}: celular "
+        f"{'em pé' if aparelho_em_pe else 'deitado'} no quadro "
+        f"{largura}x{altura}."
+    )
+
     # Tela do celular: desde a moldura de smartphone (cenario.py) é ela, e não
     # o quadro, a área útil de tudo que aparece — legendas, cartelas e figuras.
     # O retângulo é calculado aqui, sem renderizar nada; `montar_video` chega
     # ao mesmo pela mesma função.
-    tela_x, tela_y, tela_l, tela_a = retangulo_tela(largura, altura)
+    tela_x, tela_y, tela_l, tela_a = retangulo_tela(largura, altura, aparelho_em_pe)
 
     # Formato longo é SEM legendas queimadas (pedido do usuário): a narração
     # se sustenta sozinha e a tela fica limpa para o clipe.
@@ -473,11 +493,14 @@ def main() -> None:
             altura,
             pasta / "legendas.ass",
             intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
-            area=(tela_x, tela_y, tela_l, tela_a),
+            # Com o celular DEITADO num Short (clipe horizontal), a tela vira
+            # uma faixa baixa e a legenda desce para a cama, abaixo do
+            # aparelho — dentro da tela ela cobriria o clipe inteiro.
+            area=area_legenda(largura, altura, aparelho_em_pe),
         )
 
     # Cartelas: a imagem do momento-chave (foto do post da trend ou og:image da
-    # notícia) toma a tela do celular pelo arrasto da mão, no lugar do clipe.
+    # notícia) toma a tela do celular pelo deslize, no lugar do clipe.
     cartelas = gerar_cartelas(
         cfg,
         roteiro["texto_video"],
@@ -519,6 +542,7 @@ def main() -> None:
         figuras=figuras,
         publico=cfg.publico,
         formato=cfg.formato,
+        aparelho_em_pe=aparelho_em_pe,
     )
 
     # CAPÍTULOS (só no formato longo): cada tópico do roteiro trouxe uma citação

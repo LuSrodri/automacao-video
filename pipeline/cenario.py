@@ -12,10 +12,18 @@ foto entra cobrindo o quadro (escala por MAIOR lado + corte central, sem
 distorcer), levemente suavizada, dessaturada e escurecida, com vinheta: a
 estampa é fundo, e quem tem que puxar o olho é a tela.
 
-A ORIENTAÇÃO do aparelho vem da orientação do vídeo: quadro vertical (Short
-9:16) põe o celular EM PÉ, quadro deitado (formato longo, 16:9) põe o celular
-DEITADO. É o que mantém a tela grande nos dois casos — celular em pé dentro de
-um quadro 16:9 sobraria moldura por todo lado e encolheria o clipe.
+A ORIENTAÇÃO do aparelho vem do MATERIAL (2026-08-10, pedido do usuário), não
+mais do quadro: clipe horizontal põe o celular DEITADO, clipe vertical põe EM
+PÉ. Quem decide é `edicao.orientacao_dominante` (pesa cada clipe pelo tempo que
+ele fica na tela) e passa o resultado para cá — este módulo só obedece. Antes a
+orientação vinha do quadro, e um clipe 16:9 dentro de um celular em pé ficava
+numa faixa no meio da tela, com o resto preenchido pelo fundo borrado dele
+mesmo: aparelho e material apontavam para lados diferentes.
+
+São quatro combinações de aparelho x quadro, e cada uma tem o seu limite de
+ocupação (MAX_OCUPACAO): quando o aparelho está ALINHADO com o quadro sobra
+moldura nos dois eixos, quando está CRUZADO o lado longo dele encosta no lado
+CURTO do quadro e é só esse eixo que aperta.
 
 Como no cenário antigo, a saída é um PNG RGBA OPACO em tudo menos no retângulo
 da tela, que fica transparente. A montagem põe o conteúdo atrás e este PNG por
@@ -33,9 +41,11 @@ A MÃO que arrastava o conteúdo foi REMOVIDA em 2026-08-10 a pedido do usuário
 (junto com o halo de toque). O carrossel continua: o que mudou é que a imagem
 desliza sozinha, sem ninguém empurrando. Não reintroduzir sem pedido explícito.
 
-Duas entradas:
+Três entradas:
 - `retangulo_tela` devolve o retângulo da tela SEM renderizar nada (as legendas
   e as cartelas precisam dele antes de a montagem existir);
+- `area_legenda` diz onde a legenda do Short pode morar (dentro da tela, ou na
+  cama abaixo do aparelho quando ele está deitado num quadro em pé);
 - `gerar_cenario_celular` renderiza a cama + o aparelho.
 """
 
@@ -54,14 +64,33 @@ FUNDO_CAMA = RAIZ / "fundo-cama.png"
 # dos celulares atuais). Deitado, é o inverso.
 TELA_RAZAO = 9 / 19.5
 
-# Quanto do quadro o aparelho pode ocupar. O par muda com a orientação porque a
-# sobra fica em eixos diferentes: em pé o que aperta é a altura, deitado é a
-# largura. Os valores deixam uma faixa de cama visível em volta — sem ela o
-# celular não lê como objeto sobre uma cama, lê como borda preta.
-MAX_LARGURA_EM_PE = 0.68
-MAX_ALTURA_EM_PE = 0.80
-MAX_LARGURA_DEITADO = 0.82
-MAX_ALTURA_DEITADO = 0.72
+# Quanto do quadro o aparelho pode ocupar, por (aparelho em pé?, quadro em pé?)
+# -> (fração máxima da largura, fração máxima da altura). O par muda porque a
+# sobra fica em eixos diferentes, e os valores deixam uma faixa de cama visível
+# em volta — sem ela o celular não lê como objeto sobre uma cama, lê como borda
+# preta.
+#
+# Nas duas combinações ALINHADAS os valores são os de sempre (não mexer sem
+# motivo: são o enquadramento que já está no ar). Nas CRUZADAS, o lado longo do
+# aparelho encosta no lado CURTO do quadro e só esse eixo aperta, então ele
+# pode ser mais generoso — a sobra de cama vem de graça no outro eixo, que fica
+# com mais da metade do quadro livre.
+MAX_OCUPACAO = {
+    (True, True): (0.68, 0.80),  # em pé no 9:16 — Short com clipe vertical
+    (False, False): (0.82, 0.72),  # deitado no 16:9 — longo com clipe horizontal
+    (False, True): (0.88, 0.72),  # deitado no 9:16 — Short com clipe horizontal
+    (True, False): (0.68, 0.88),  # em pé no 16:9 — longo com clipe vertical
+}
+
+# Respiro entre o corpo do aparelho e a faixa da legenda, quando ela cai na
+# cama (fração da altura do quadro).
+LEGENDA_FOLGA_FRAC = 0.02
+# Rodapé RESERVADO no Short: o Shorts e o TikTok desenham título, @ do canal e
+# botões por cima dos últimos ~14% do quadro. Com a legenda dentro da tela isso
+# nunca foi problema (o aparelho em pé já a segurava em ~69% da altura); com o
+# aparelho deitado, a faixa de cama vai até a base do quadro, e sem esta reserva
+# a palavra cairia bem debaixo da interface do app.
+LEGENDA_RODAPE_FRAC = 0.14
 
 # Frações do lado MENOR da tela. A moldura antiga era uma borda só (0.038) com
 # um contorno claro por dentro, e era isso que dava o ar de adesivo: celular
@@ -89,17 +118,29 @@ BOTAO_VINCO = (38, 40, 48)
 BOTAO_FACE = (170, 175, 186)
 
 
-def retangulo_tela(largura: int, altura: int) -> tuple[int, int, int, int]:
+def _orientacao(largura: int, altura: int, aparelho_em_pe: bool | None) -> bool:
+    """Resolve a orientação do aparelho; None = segue o quadro (padrão antigo)."""
+    return (altura >= largura) if aparelho_em_pe is None else bool(aparelho_em_pe)
+
+
+def retangulo_tela(
+    largura: int, altura: int, aparelho_em_pe: bool | None = None
+) -> tuple[int, int, int, int]:
     """(x, y, largura, altura) da tela do celular dentro do quadro.
+
+    `aparelho_em_pe` vem da orientação do MATERIAL (ver o cabeçalho do módulo).
+    Omitido, o aparelho segue o quadro — o comportamento anterior a 2026-08-10,
+    mantido só para quem não tem os clipes em mãos.
 
     Determinístico e sem custo: `gerar_cenario_celular` usa exatamente este
     retângulo, e quem precisa dele antes da montagem (legendas, cartelas,
     figuras) chama esta função em vez de renderizar o cenário duas vezes.
     """
-    em_pe = altura >= largura
+    em_pe = _orientacao(largura, altura, aparelho_em_pe)
     razao = TELA_RAZAO if em_pe else 1 / TELA_RAZAO  # largura/altura da tela
-    max_l = largura * (MAX_LARGURA_EM_PE if em_pe else MAX_LARGURA_DEITADO)
-    max_a = altura * (MAX_ALTURA_EM_PE if em_pe else MAX_ALTURA_DEITADO)
+    frac_l, frac_a = MAX_OCUPACAO[(em_pe, altura >= largura)]
+    max_l = largura * frac_l
+    max_a = altura * frac_a
     tela_l = min(max_l, max_a * razao)
     tela_a = tela_l / razao
     # Lados PARES: o clipe é escalado para este retângulo, e libx264 com
@@ -107,6 +148,62 @@ def retangulo_tela(largura: int, altura: int) -> tuple[int, int, int, int]:
     tela_l = max(2, int(tela_l) // 2 * 2)
     tela_a = max(2, int(tela_a) // 2 * 2)
     return ((largura - tela_l) // 2, (altura - tela_a) // 2, tela_l, tela_a)
+
+
+def _espessuras(tela_l: int, tela_a: int) -> tuple[int, int, int]:
+    """(bezel, trilho, raio da tela) em px, a partir do lado MENOR da tela.
+
+    Uma função só porque `gerar_cenario_celular` desenha o aparelho com esses
+    valores e `area_legenda` precisa da mesma caixa externa: calculados em dois
+    lugares, a legenda encostaria no aparelho no dia em que uma fração mudasse.
+    """
+    menor = min(tela_l, tela_a)
+    return (
+        max(3, round(menor * MOLDURA_FRAC)),
+        max(2, round(menor * TRILHO_FRAC)),
+        max(6, round(menor * RAIO_TELA_FRAC)),
+    )
+
+
+def _caixa_externa(tela: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """(x0, y0, x1, y1) da borda EXTERNA do aparelho (bezel + trilho)."""
+    tela_x, tela_y, tela_l, tela_a = tela
+    bezel, trilho, _ = _espessuras(tela_l, tela_a)
+    margem = bezel + trilho
+    return (
+        tela_x - margem,
+        tela_y - margem,
+        tela_x + tela_l + margem,
+        tela_y + tela_a + margem,
+    )
+
+
+def area_legenda(
+    largura: int, altura: int, aparelho_em_pe: bool | None = None
+) -> tuple[int, int, int, int]:
+    """(x, y, largura, altura) da área em que a legenda do Short pode morar.
+
+    Com o aparelho ALINHADO ao quadro, é a TELA — a legenda mora dentro do
+    celular, como desde 2026-08-09.
+
+    Com ele DEITADO num quadro EM PÉ (Short com clipe horizontal), a tela vira
+    uma faixa de ~440px de altura, e a legenda ali cobriria o clipe inteiro.
+    Então ela desce para a CAMA, na faixa abaixo do aparelho: é o único lugar do
+    quadro com espaço, e sobra de sobra — o aparelho deitado ocupa menos de um
+    terço da altura do Short. Vale só para o formato curto; o longo não tem
+    legenda queimada.
+
+    A faixa vai do aparelho até LEGENDA_RODAPE_FRAC do fim do quadro, não até a
+    base: o resto é da interface do Shorts/TikTok.
+    """
+    tela = retangulo_tela(largura, altura, aparelho_em_pe)
+    em_pe = _orientacao(largura, altura, aparelho_em_pe)
+    if em_pe or largura > altura:
+        return tela
+    x0, _, x1, y1 = _caixa_externa(tela)
+    base = round(altura * (1 - LEGENDA_RODAPE_FRAC))
+    topo = y1 + round(altura * LEGENDA_FOLGA_FRAC)
+    return (x0, topo, x1 - x0, max(1, base - topo))
 
 
 def _cobrir(foto: Image.Image, largura: int, altura: int) -> Image.Image:
@@ -323,18 +420,18 @@ def _desenhar_botoes(
 
 
 def gerar_cenario_celular(
-    largura: int, altura: int, destino: Path
+    largura: int, altura: int, destino: Path, aparelho_em_pe: bool | None = None
 ) -> tuple[Path, tuple[int, int, int, int]]:
     """Renderiza a cena e devolve (PNG, (x, y, largura, altura) da tela).
 
     O PNG é opaco em tudo menos no retângulo da tela. Quem monta põe o conteúdo
-    atrás e sobrepõe este PNG.
+    atrás e sobrepõe este PNG. `aparelho_em_pe` é a orientação do material (ver
+    o cabeçalho do módulo); omitida, o aparelho segue o quadro.
     """
-    tela_x, tela_y, tela_l, tela_a = retangulo_tela(largura, altura)
+    em_pe = _orientacao(largura, altura, aparelho_em_pe)
+    tela_x, tela_y, tela_l, tela_a = retangulo_tela(largura, altura, em_pe)
     menor = min(tela_l, tela_a)
-    bezel = max(3, round(menor * MOLDURA_FRAC))
-    trilho = max(2, round(menor * TRILHO_FRAC))
-    raio_tela = max(6, round(menor * RAIO_TELA_FRAC))
+    bezel, trilho, raio_tela = _espessuras(tela_l, tela_a)
     # Raios CONCÊNTRICOS: cada camada soma a própria espessura ao raio de
     # dentro. É o que mantém as três curvas paralelas no canto — raio repetido
     # em espessuras diferentes é o defeito clássico de moldura desenhada.
@@ -378,7 +475,7 @@ def gerar_cenario_celular(
     )
     _desenhar_trilho(img, fora, raio_fora, corpo, raio_corpo, trilho)
     _desenhar_botoes(
-        ImageDraw.Draw(img), fora, altura >= largura, trilho,
+        ImageDraw.Draw(img), fora, em_pe, trilho,
         (tela_x, tela_y, tela_l, tela_a),
     )
 
@@ -425,7 +522,6 @@ def gerar_cenario_celular(
     # opaco dentro dele: lente preta, aro de metal e um ponto de luz no vidro.
     desenho = ImageDraw.Draw(img)
     furo = max(3, round(menor * 0.021))
-    em_pe = altura >= largura
     if em_pe:
         cx, cy = tela_x + tela_l // 2, tela_y + round(menor * 0.060)
     else:

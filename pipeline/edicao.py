@@ -13,12 +13,20 @@ clipe daquela conta está nela.
 
 MOLDURA DE SMARTPHONE SOBRE UMA CAMA (2026-08-09, pedido do usuário). Nada
 ocupa mais o quadro inteiro: o clipe, as cartelas e as figuras aparecem dentro
-da TELA de um celular apoiado numa cama (cenario.py), nos DOIS formatos. O
-aparelho fica EM PÉ quando o vídeo é vertical (Short 9:16) e DEITADO quando é
-16:9 (formato longo). Substituiu a sala de estar com TV, que só o formato longo
-usava. A área útil do clipe passa a ser o retângulo da TELA — o fundo borrado
-preenche a tela quando o clipe não tem a proporção dela, e o PNG do cenário
-entra por cima recortando tudo na moldura do aparelho.
+da TELA de um celular apoiado numa cama (cenario.py), nos DOIS formatos.
+Substituiu a sala de estar com TV, que só o formato longo usava. A área útil do
+clipe passa a ser o retângulo da TELA — o fundo borrado preenche a tela quando
+o clipe não tem a proporção dela, e o PNG do cenário entra por cima recortando
+tudo na moldura do aparelho.
+
+A ORIENTAÇÃO DO APARELHO VEM DO MATERIAL (2026-08-10, pedido do usuário), não
+do quadro: `orientacao_dominante` mede os clipes com o ffprobe (respeitando a
+rotação dos vídeos de celular), pesa cada um pelo TEMPO que fica na tela e
+decide. Clipe horizontal deita o celular mesmo num Short vertical; clipe
+vertical o levanta mesmo no 16:9. Antes a orientação vinha do quadro, e um
+clipe 16:9 dentro de um aparelho em pé ficava numa faixa no meio da tela, com o
+resto preenchido pelo fundo borrado dele mesmo — aparelho e material apontando
+para lados diferentes.
 
 CARROSSEL. As cartelas de imagem (cartelas.py) e as figuras do gpt-image-2
 (figuras.py) deixaram de ser cartões sobrepostos ao clipe: elas agora ocupam a
@@ -46,6 +54,7 @@ rodapé esquerdo da tela, para não se confundir com material próprio do canal.
 marca é por clipe: os demais da mesma montagem seguem coloridos e sem etiqueta.
 """
 
+import json
 import subprocess
 import shutil
 from pathlib import Path
@@ -99,6 +108,12 @@ CREDITO_TEXTOS = {
 # As frações abaixo são da TELA do celular, não do quadro: é dentro dela que o
 # crédito mora desde que a moldura entrou.
 CREDITO_FONTE_FRAC = 0.030  # tamanho da fonte como fração do lado menor da tela
+# PISO do corpo do crédito, como fração do lado menor do QUADRO. Com o aparelho
+# deitado num Short (clipe horizontal), o lado menor da tela cai de ~710 para
+# ~440px e a fração sozinha entregaria uma fonte de 13px num quadro de 1080 —
+# ilegível, e o crédito da conta de origem é justamente o que não pode sumir. O
+# piso não muda os dois enquadramentos antigos: neles a fração já ganha.
+CREDITO_FONTE_PISO_FRAC = 0.018
 CREDITO_MARGEM_FRAC = 0.035  # distância da borda direita (fração da largura da tela)
 CREDITO_Y_FRAC = 0.045  # distância do topo da tela como fração da altura dela
 CREDITO_ENTRELINHA = 1.55  # distância entre as duas linhas (fração da fonte)
@@ -116,6 +131,7 @@ REPR_TEXTOS = {
     "usa": "ILLUSTRATIVE FOOTAGE",
 }
 REPR_FONTE_FRAC = 0.028  # fração do lado menor da tela (mesma lógica do crédito)
+REPR_FONTE_PISO_FRAC = 0.017  # piso pelo quadro, pelo mesmo motivo do crédito
 REPR_MARGEM_FRAC = 0.035  # distância da borda esquerda da tela
 REPR_Y_FRAC = 0.912  # distância do topo da tela como fração da altura dela
 
@@ -142,6 +158,43 @@ def duracao_audio(audio: Path) -> float:
         check=True,
     )
     return float(saida.stdout.strip())
+
+
+def dimensoes_video(caminho: Path) -> tuple[int, int] | None:
+    """(largura, altura) EXIBIDAS do clipe; None se o ffprobe não souber dizer.
+
+    O ffprobe devolve as dimensões CODIFICADAS. Vídeo gravado de celular vem
+    com uma matriz de rotação de ±90° no `side_data_list`, e é o ffmpeg que
+    gira na decodificação — conferido no ffprobe 8.1: um arquivo 640x360 com
+    `rotation: 90` entrega quadros de 360x640. Sem trocar os lados aqui, todo
+    clipe vertical gravado deitado seria lido como horizontal e o aparelho
+    sairia na orientação errada justamente nos clipes de celular, que são a
+    maior parte do material do X.
+    """
+    saida = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height:stream_side_data=rotation",
+            "-of", "json", str(caminho),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if saida.returncode != 0:
+        return None
+    try:
+        fluxos = json.loads(saida.stdout).get("streams") or []
+        fluxo = fluxos[0]
+        largura, altura = int(fluxo["width"]), int(fluxo["height"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+    rotacao = 0.0
+    for lado in fluxo.get("side_data_list") or []:
+        if lado.get("rotation") is not None:
+            rotacao = float(lado["rotation"])
+    if round(abs(rotacao)) % 180 == 90:
+        largura, altura = altura, largura
+    return (largura, altura)
 
 
 # Extensões aceitas nas sobreposições (clipes dos posts do X baixados pelo
@@ -234,6 +287,40 @@ def intervalos_imagens(
     Mantido para as legendas decidirem a posição de cada trecho.
     """
     return _calcular_janelas(_ordenar(sobreposicoes), duracao)
+
+
+def orientacao_dominante(
+    sobreposicoes: list[dict], duracao: float, padrao: bool
+) -> bool:
+    """True se o aparelho deve ficar EM PÉ, decidido pelos clipes.
+
+    Pesa cada clipe pelo TEMPO que ele fica na tela, não pela contagem: um
+    clipe que segura 12s manda mais que dois de 2s, e é o tempo de tela que o
+    espectador percebe como "o material deste vídeo". Clipe quadrado não vota
+    (cabe igual nas duas orientações) e clipe que o ffprobe não conseguiu medir
+    também não.
+
+    `padrao` (a orientação do quadro) resolve o empate e o caso de nenhum voto
+    — medir errado não pode derrubar o vídeo, e o quadro é o palpite que valia
+    antes de 2026-08-10.
+    """
+    ordenadas = _ordenar(sobreposicoes)
+    tempo = {True: 0.0, False: 0.0}
+    for s, (ini, fim) in zip(ordenadas, _calcular_janelas(ordenadas, duracao)):
+        dimensoes = dimensoes_video(Path(s["caminho"]))
+        if dimensoes is None:
+            print(
+                f"[edicao] aviso: não deu para medir {Path(s['caminho']).name}; "
+                "o clipe não vota na orientação do aparelho."
+            )
+            continue
+        largura, altura = dimensoes
+        if largura == altura:
+            continue
+        tempo[altura > largura] += max(0.0, fim - ini)
+    if tempo[True] == tempo[False]:
+        return padrao
+    return tempo[True] > tempo[False]
 
 
 def _caminho_filtro(caminho: Path) -> str:
@@ -335,6 +422,7 @@ def montar_video(
     figuras: list[dict] | None = None,
     publico: str = "brasil",
     formato: str = "curto",
+    aparelho_em_pe: bool | None = None,
 ) -> Path:
     """Monta o vídeo final: celular sobre a cama, com o clipe do X na tela.
 
@@ -361,8 +449,14 @@ def montar_video(
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
 
     `formato`: "curto" (Shorts 9:16, com legendas queimadas) ou "longo"
-    (--long-take: 16:9, sem legendas) — muda a orientação do aparelho (em pé /
-    deitado, via cenario.py) e a tolerância de tempo de cada clipe na tela.
+    (--long-take: 16:9, sem legendas) — muda a tolerância de tempo de cada
+    clipe na tela.
+
+    `aparelho_em_pe`: orientação do celular, que desde 2026-08-10 vem do
+    MATERIAL e não do quadro. Omitida, é calculada aqui pelos próprios clipes
+    (`orientacao_dominante`); quem chama de fora passa o valor que já usou para
+    medir as legendas e as cartelas, porque as duas contas têm que dar o mesmo
+    retângulo de tela.
     """
     _exigir_ffmpeg()
     if not FONTE_CREDITO.is_file():
@@ -380,9 +474,14 @@ def montar_video(
         (cartelas or []) + (figuras or []), key=lambda c: float(c["inicio_s"])
     )
 
-    # Celular sobre a cama: a área útil de TUDO passa a ser o retângulo da tela.
+    # Celular sobre a cama: a área útil de TUDO passa a ser o retângulo da tela,
+    # e a orientação do aparelho vem dos clipes que vão aparecer nele.
+    if aparelho_em_pe is None:
+        aparelho_em_pe = orientacao_dominante(
+            sobreposicoes, duracao, altura >= largura
+        )
     cenario, (tela_x, tela_y, tela_l, tela_a) = gerar_cenario_celular(
-        largura, altura, destino.parent / "cenario_celular.png"
+        largura, altura, destino.parent / "cenario_celular.png", aparelho_em_pe
     )
 
     sobreposicoes = _ordenar(sobreposicoes)
@@ -560,7 +659,11 @@ def montar_video(
     # visível e o crédito dele creditaria a coisa errada (a imagem traz o seu).
     rotulo_fixo, rotulo_conta = CREDITO_TEXTOS.get(publico, CREDITO_TEXTOS["brasil"])
     menor_tela = min(tela_l, tela_a)
-    fonte = round(menor_tela * CREDITO_FONTE_FRAC)
+    menor_quadro = min(largura, altura)
+    fonte = max(
+        round(menor_tela * CREDITO_FONTE_FRAC),
+        round(menor_quadro * CREDITO_FONTE_PISO_FRAC),
+    )
     margem = round(tela_l * CREDITO_MARGEM_FRAC)
     pad = max(6, round(fonte * CREDITO_TARJA_PAD_FRAC))
     y1 = tela_y + round(tela_a * CREDITO_Y_FRAC)
@@ -598,7 +701,10 @@ def montar_video(
     # emissora aparece um trecho sem aviso nenhum — que é justamente o que a
     # marcação existe para impedir.
     texto_repr = REPR_TEXTOS.get(publico, REPR_TEXTOS["brasil"])
-    fonte_repr = round(menor_tela * REPR_FONTE_FRAC)
+    fonte_repr = max(
+        round(menor_tela * REPR_FONTE_FRAC),
+        round(menor_quadro * REPR_FONTE_PISO_FRAC),
+    )
     margem_repr = tela_x + round(tela_l * REPR_MARGEM_FRAC)
     pad_repr = max(6, round(fonte_repr * CREDITO_TARJA_PAD_FRAC))
     y_repr = tela_y + round(tela_a * REPR_Y_FRAC)

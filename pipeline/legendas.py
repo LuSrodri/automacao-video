@@ -11,10 +11,17 @@ fonte é o mesmo, só a proporção fica mais baixa e condensada, que é o que d
 ar editorial e minimalista.
 
 Desde a moldura de celular (2026-08-09, cenario.py) a legenda é medida e
-posicionada contra a TELA DO APARELHO, não contra o quadro: `area` traz o
-retângulo da tela, e dele saem o tamanho da fonte, as margens laterais e a
-altura da faixa inferior. Sem isso a palavra transbordaria do celular e cairia
-sobre a cama, que é o único lugar do quadro onde ela não deveria estar.
+posicionada contra uma ÁREA dada, não contra o quadro: `area` traz o retângulo,
+e dele saem o tamanho da fonte, as margens laterais e a altura da faixa
+inferior. Quem decide o retângulo é `cenario.area_legenda`, e ele é a TELA DO
+APARELHO na maior parte dos casos — sem isso a palavra transbordaria do celular
+e cairia sobre a cama.
+
+A exceção é o Short com o celular DEITADO (clipe horizontal, desde 2026-08-10):
+ali a tela tem ~440px de altura e a legenda dentro dela cobriria o clipe
+inteiro, então a área passa a ser a faixa de CAMA abaixo do aparelho — com o
+rodapé do quadro reservado, porque é onde o Shorts e o TikTok desenham a
+própria interface.
 """
 
 import re

@@ -119,10 +119,11 @@ crédito de reprodução no canto superior direito — com outra direção edito
   Falha aqui não aborta (cai na capa automática do YouTube), e o upload da
   capa exige **canal verificado** — sem verificação o YouTube devolve 403 e o
   log avisa. Só no formato longo: no Short o feed mostra o vídeo rodando.
-- **Celular deitado sobre a cama** (`pipeline/cenario.py`): o quadro 16:9 põe o
-  aparelho **deitado**. Não é mais identidade só do longo — desde 2026-08-09 a
-  moldura de smartphone vale para os dois formatos (ver "Como funciona a
-  moldura de celular"), e substituiu a sala de estar com TV.
+- **Celular sobre a cama** (`pipeline/cenario.py`): a orientação do aparelho
+  vem do **material** (clipe horizontal deita, vertical levanta), não do
+  quadro. Não é mais identidade só do longo — desde 2026-08-09 a moldura de
+  smartphone vale para os dois formatos (ver "Como funciona a moldura de
+  celular"), e substituiu a sala de estar com TV.
 - **Material**: até **8 clipes** de vídeo do X (consultando até 16 posts da
   trend, e baixando 11 para a auditoria escolher 8), trocando a cada 8-20s;
   clipe vertical aparece como faixa central sobre o próprio clipe borrado. Até
@@ -406,7 +407,24 @@ Pedido do usuário em **2026-08-09**: *"troque o formato para uma moldura de um 
 
 **O aparelho** é montado em duas peças concêntricas com a tela, cada uma somando a própria espessura ao raio de dentro (curvas paralelas no canto — raio repetido em espessuras diferentes é o defeito clássico de moldura desenhada): um **trilho de alumínio** externo, com gradiente vertical e dois reflexos — o especular forte na aresta de cima, de onde vem a luz, e um fraco na de baixo, que é a luz da colcha voltando no metal —, e o **bezel preto** fino por dentro dele. Completam a peça os **botões** de power e volume (vinco escuro mais face clara, salientes no perfil do trilho — uma cor só sumia no meio do gradiente), a **sombra em duas camadas** (a de contato, curta e escura, que gruda o aparelho no tecido; a ambiente, larga e difusa, que dá o peso), a **sombra interna** na borda da tela, por onde o conteúdo do vídeo passa ganhando profundidade de vidro, e um **reflexo** diagonal de alfa baixo. Substituiu (**2026-08-10**) a moldura de borda única com um fio de luz correndo por dentro dela, que lia como adesivo: celular nenhum tem esse contorno.
 
-**A orientação vem do vídeo**: quadro vertical (Short 9:16) põe o aparelho **em pé**, quadro deitado (16:9) põe **deitado**. É o que mantém a tela grande nos dois casos — celular em pé dentro de um quadro 16:9 sobraria moldura por todo lado e encolheria o clipe. A tela é 19,5:9, dimensionada para caber nos dois eixos (`retangulo_tela`), e sai em **1080×1920 → 708×1534** e **1920×1080 → 1574×726**. Ela passou a ser a **área útil de tudo**: o clipe é escalado para ela, as legendas são medidas e posicionadas contra ela (`area` em `legendas.py` — sem isso a palavra transbordaria do aparelho e cairia sobre a cama) e o crédito de reprodução mora dentro dela.
+**A orientação vem do MATERIAL** (**2026-08-10**, pedido do usuário: *"quando o material é na horizontal, o celular não fica na mesma orientação"*). Clipe horizontal deita o aparelho **mesmo num Short vertical**; clipe vertical o levanta **mesmo no 16:9**. Até então a orientação vinha do quadro, e um clipe 16:9 dentro de um celular em pé ficava numa faixa no meio da tela com o resto preenchido pelo fundo borrado dele mesmo — aparelho e material apontando para lados diferentes.
+
+Quem decide é `orientacao_dominante` (`edicao.py`): mede cada clipe com o **ffprobe** e pesa pelo **tempo que ele fica na tela**, não pela contagem — um clipe que segura 12s manda mais que dois de 2s. A medição respeita a **matriz de rotação**: vídeo de celular vem 640×360 com `rotation: 90` no `side_data_list` e o ffmpeg entrega 360×640, então sem trocar os lados todo clipe vertical gravado deitado seria lido como horizontal. Clipe quadrado não vota, clipe que o ffprobe não mediu também não, e o empate cai na orientação do quadro. A decisão é **uma por vídeo** e sai em `main.py` **antes** das legendas e das imagens, porque as três são medidas contra a tela; o mesmo valor desce para `montar_video`.
+
+A tela é 19,5:9, dimensionada para caber nos dois eixos (`retangulo_tela`), com o limite de ocupação escolhido pela combinação aparelho × quadro (`MAX_OCUPACAO`) — **alinhado** sobra moldura nos dois eixos, **cruzado** só o lado curto do quadro aperta:
+
+| quadro | clipe | aparelho | tela |
+|---|---|---|---|
+| 1080×1920 | vertical | em pé | 708×1534 |
+| 1080×1920 | horizontal | deitado | 950×438 |
+| 1920×1080 | horizontal | deitado | 1574×726 |
+| 1920×1080 | vertical | em pé | 438×950 |
+
+O clipe nítido não encolhe na troca: um 16:9 num Short rende **725×408 deitado** contra 708×398 em pé — o que muda é o aparelho passar a envolver o clipe em vez de sobrar tela em cima e embaixo dele.
+
+A tela é a **área útil de tudo**: o clipe é escalado para ela, as cartelas e as figuras são renderizadas no tamanho dela (o gpt-image-2 troca para paisagem sozinho, porque `figuras.py` lê a proporção da tela e não o formato) e o crédito de reprodução mora dentro dela — com um **piso de corpo** desde 2026-08-10 (`CREDITO_FONTE_PISO_FRAC`), senão a tela deitada de 438px de altura entregaria uma fonte de 13px num quadro de 1080.
+
+**A legenda do Short** continua dentro da tela quando o aparelho está em pé. Com ele **deitado**, a tela tem ~440px de altura e a palavra cobriria o clipe inteiro, então ela desce para a **cama, abaixo do aparelho** (`cenario.area_legenda`) — sobra espaço de sobra, já que o celular deitado ocupa menos de um terço da altura. Os últimos **14%** do quadro ficam reservados: é onde o Shorts e o TikTok desenham título, @ e botões.
 
 **O carrossel de duas posições.** O clipe está na posição 0 e a imagem do momento na posição 1, à direita, fora da tela. Um único **deslocamento** `s(t)` — 0 com o vídeo na tela, 1 com a imagem — move as duas coisas: o clipe sai para `−tela_l · s` e a imagem entra em `tela_l · (1 − s)`. Como o offset é o mesmo, a borda de uma encosta na da outra durante todo o deslize, sem rasgo nem preto no meio. O que sai da tela some atrás do corpo do aparelho.
 

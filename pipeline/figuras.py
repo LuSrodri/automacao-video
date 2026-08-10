@@ -62,8 +62,10 @@ INICIO_MINIMO = 3.0
 # das cartelas (ver edicao.py). Aqui só se renderiza a imagem parada.
 
 # Tamanhos aceitos pelo gpt-image-2 (arestas múltiplas de 16, proporção até
-# 3:1, total de pixels dentro da faixa permitida). Retrato para o Short,
-# paisagem para o formato longo.
+# 3:1, total de pixels dentro da faixa permitida). Qual dos dois é usado sai da
+# TELA do celular (`vertical = tela[1] > tela[0]`), não do formato: desde
+# 2026-08-10 a orientação do aparelho vem do material, então um Short com clipe
+# horizontal pede figura em paisagem.
 TAMANHO_VERTICAL = "1024x1536"
 TAMANHO_HORIZONTAL = "1536x1024"
 
