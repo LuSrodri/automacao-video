@@ -143,12 +143,13 @@ crédito de reprodução no canto superior direito — com outra direção edito
 - **Janela de coleta maior (`JANELA_HORAS=48` nos crons longos)**: o gargalo do
   formato não é a edição, é achar **um acontecimento com vários posts de vídeo
   nativo**. Video de um fato específico é raro — a maior parte dos posts sobre
-  ele é texto. Com a janela de 4h dos Shorts, execuções reais achavam trends com
-  0, 1 ou 2 clipes e abortavam no piso de 3. Alargar para 48h **não custa mais
-  na X API** (o teto de leitura é o `X_MAX_POSTS`), só troca *quais* posts
-  entram: os mais relevantes de dois dias em vez de os de quatro horas. Case a
-  janela com a **cadência do cron** — 4h para quem roda de 4 em 4 horas, 48h
-  para quem roda segunda/quarta/sexta.
+  ele é texto. Com a janela de 4h que os Shorts usavam, execuções reais achavam
+  trends com 0, 1 ou 2 clipes e abortavam no piso de 3. Alargar para 48h **não
+  custa mais na X API** (o teto de leitura é o `X_MAX_POSTS`), só troca *quais*
+  posts entram: os mais relevantes de dois dias em vez de os de quatro horas.
+  Case a janela com a **cadência do cron** — 24h para os Shorts, que desde
+  2026-08-11 rodam **1x por dia** em cada canal, e 48h para quem roda
+  segunda/quarta/sexta.
 
 A duração final segue a narração: o roteirista escreve dentro de uma faixa
 dura de palavras (~277 a 316 faladas, calculada a partir do ritmo real medido
@@ -167,7 +168,7 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | `X_MAX_POSTS_VIDEO` | `60` | Leituras extras de uma varredura `has:videos` sobre as **mesmas** contas — a coleta normal ordena por relevância e não prefere vídeo, então o post com clipe perdia vaga para texto. Nenhuma fonte nova; `0` desliga |
 | `X_MAX_POSTS_BUSCA` | `30` (só `--long-take`) | Busca **aberta** por clipes do assunto, fora das contas do canal. Fontes **não curadas** — a auditoria é a única guarda, e ela julga pertinência, não veracidade; `0` desliga |
 | `X_MAX_POSTS_TIMELINE` | `60` | Leituras da **timeline** das contas (`/2/users/:id/tweets`), cronológica: é ela que pega o post fresco que a busca por relevância ainda não ranqueou. Custa **1 requisição por conta**, então o orçamento cobre um subconjunto **rotativo** por execução; `0` desliga |
-| `JANELA_HORAS` | `24` | Idade máxima dos posts coletados. Alargar **não** custa mais na X API (o teto é o `X_MAX_POSTS`; a janela só decide de que intervalo saem esses posts). Case com a **cadência do cron**, não com o formato: em produção os Shorts rodam com `4` (de 4 em 4 horas) e os crons `--long-take` com `48` — ver a nota abaixo |
+| `JANELA_HORAS` | `24` | Idade máxima dos posts coletados. Alargar **não** custa mais na X API (o teto é o `X_MAX_POSTS`; a janela só decide de que intervalo saem esses posts). Case com a **cadência do cron**, não com o formato: em produção os Shorts rodam com `24` (**1 por dia** em cada canal desde 2026-08-11; eram 6, de 4 em 4 horas, com janela `4`) e os crons `--long-take` com `48` — ver a nota abaixo |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
 | `NUM_NOTICIAS` | `6` | Quantas notícias (Firecrawl news) buscar para enriquecer a trend |
 | `TEXT_MODEL` | `gpt-5.6-luna` | Modelo do roteiro, da sumarização das trends e da visão |

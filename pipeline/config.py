@@ -433,10 +433,13 @@ def carregar_config() -> Config:
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
         num_noticias=int(os.getenv("NUM_NOTICIAS", "6")),
-        # Ambos ZERADOS no curto: leitura da X API é paga por post, os Shorts
-        # rodam 12x por dia somados e NÃO travam por falta de clipe (precisam
-        # de 3, não de 8). Quem precisa é o longo, e ativar_formato_longo sobe
-        # os dois. Para ligar no curto, basta o .env.
+        # Ambos ZERADOS no curto: leitura da X API é paga por post e os Shorts
+        # NÃO travam por falta de clipe (precisam de 3, não de 8). Quem precisa
+        # é o longo, e ativar_formato_longo sobe os dois. Para ligar no curto,
+        # basta o .env — desde 2026-08-11 os Shorts rodam 1x por dia em cada
+        # canal (2 execuções somadas, contra 12 antes), então o argumento de
+        # custo pesa bem menos; o que continua valendo é que eles não têm o
+        # problema que essa varredura resolve.
         x_max_posts_video=int(os.getenv("X_MAX_POSTS_VIDEO", "0")),
         x_max_posts_busca=int(os.getenv("X_MAX_POSTS_BUSCA", "0")),
         x_max_posts_timeline=int(os.getenv("X_MAX_POSTS_TIMELINE", "60")),
@@ -516,9 +519,8 @@ def ativar_formato_longo(cfg: Config) -> Config:
     # A coleta precisa devolver posts suficientes para o lookup achar os clipes.
     cfg.max_urls_trend = cfg.max_posts_midia
     # Varredura de vídeo e busca aberta: só o longo precisa de vários clipes do
-    # MESMO fato, e é ele que trava por falta deles. Ligar isto nos Shorts
-    # custaria leitura paga 12x por dia para resolver um problema que eles não
-    # têm.
+    # MESMO fato, e é ele que trava por falta deles. Ligar isto nos Shorts seria
+    # pagar leitura extra para resolver um problema que eles não têm.
     cfg.x_max_posts_video = int(os.getenv("X_MAX_POSTS_VIDEO", "60"))
     cfg.x_max_posts_busca = int(os.getenv("X_MAX_POSTS_BUSCA", "30"))
     cfg.num_noticias = int(os.getenv("LONG_NUM_NOTICIAS", str(LONGO_NUM_NOTICIAS)))
