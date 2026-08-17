@@ -1,8 +1,16 @@
-"""Coleta dos posts da lista fixa de contas do X e sumarização das trends via GPT.
+"""Coleta dos posts das contas que o usuário SEGUE no X e sumarização das
+trends via GPT.
+
+A FONTE DA PAUTA É A LISTA DE SEGUIDAS (2026-08-16, pedido do usuário). Até
+então havia uma lista fixa de 192 handles no código (`CONTAS_PADRAO`), curada e
+verificada à mão, que precisava de commit e deploy para mudar. Agora o pipeline
+lê `/2/users/:id/following` do handle em X_USERNAME a cada execução: seguir ou
+deixar de seguir alguém no X passou a ser a forma de mexer na pauta do canal.
+X_ACCOUNTS no .env continua existindo como escape hatch e, quando preenchido,
+substitui a lista inteira.
 
 Usa a X API oficial v2 em modo pay-per-use (a mesma credencial do download de
-mídias em midia_x.py) e lê as contas configuradas (CONTAS_PADRAO em config.py,
-ou X_ACCOUNTS no .env) por DOIS caminhos complementares:
+mídias em midia_x.py) e lê essas contas por DOIS caminhos complementares:
 
 - /2/tweets/search/recent, por relevância (a coleta principal, mais uma
   varredura opcional `has:videos` atrás de material de vídeo);
@@ -34,6 +42,11 @@ from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
 USERS_ENDPOINT = "https://api.x.com/2/users/by"
+USER_POR_HANDLE_ENDPOINT = "https://api.x.com/2/users/by/username/{handle}"
+# Contas que uma conta segue. Aceita o mesmo bearer OAuth 2.0 App-Only da busca
+# — conferido contra a API real em 2026-08-16, com o handle do usuário (200 e
+# 167 contas na primeira página). Não é preciso contexto de usuário aqui.
+FOLLOWING_ENDPOINT = "https://api.x.com/2/users/{id}/following"
 # Timeline de posts de uma conta. Aceita OAuth 2.0 App-Only (o mesmo bearer da
 # busca), devolve em ordem CRONOLÓGICA REVERSA e aceita start_time — por isso
 # ela enxerga o post recém-publicado que a busca por relevância ainda não
@@ -67,6 +80,20 @@ ESTADO_ROTACAO_TIMELINE = RAIZ / ".rotacao_timeline"
 # só para reconverter os mesmos nomes.
 CACHE_IDS = RAIZ / ".contas_ids.json"
 CACHE_IDS_DIAS = 30
+# Última lista de seguidas lida com sucesso. Serve de REDE, não de economia: a
+# leitura é feita fresca a cada execução (é ela que faz "seguir alguém" mudar a
+# pauta no mesmo dia), e o cache só entra quando a X API falha — perder a pauta
+# inteira por um 503 transitório seria caro demais para o que a chamada custa.
+#
+# No Render o arquivo NÃO sobrevive de uma execução para a outra (cada run do
+# cron é um container novo, e o .json é gitignored), então lá a rede não existe
+# e a falha da API aborta mesmo. Vale para o uso local e para execuções
+# encadeadas na mesma máquina.
+CACHE_SEGUIDAS = RAIZ / ".contas_seguidas.json"
+# Página da lista de seguidas. 1000 é o teto da API; com ele as ~170 contas do
+# usuário cabem numa requisição só.
+SEGUIDAS_POR_PAGINA = 1000
+SEGUIDAS_MAX_PAGINAS = 5  # teto de segurança (até 5.000 contas)
 
 
 def obter_bearer(cfg: Config) -> str | None:
@@ -91,6 +118,95 @@ def _get(token: str, url: str, params: dict) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ---- Contas seguidas (/2/users/:id/following) --------------------------------
+
+
+def _seguidas_do_cache() -> dict[str, str]:
+    """Última lista de seguidas gravada; {} se não houver ou estiver ilegível."""
+    try:
+        bruto = json.loads(CACHE_SEGUIDAS.read_text(encoding="utf-8"))
+        return dict(bruto.get("contas") or {})
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def contas_seguidas(cfg: Config, token: str) -> dict[str, str]:
+    """Contas que ``cfg.x_username`` segue no X: mapa @conta -> id numérico.
+
+    É a fonte da pauta desde 2026-08-16: em vez da lista fixa de handles que
+    vivia em config.py, o canal acompanha quem o usuário acompanha, e seguir
+    alguém novo no X muda a coleta da próxima execução — sem commit, sem
+    deploy.
+
+    A leitura é FRESCA a cada execução (é isso que dá o efeito imediato) e
+    custa uma requisição, porque as ~170 contas cabem numa página de 1000. O
+    resultado é gravado em CACHE_SEGUIDAS e, quando a X API falha, é a lista
+    gravada que segue valendo: um erro transitório não pode zerar a pauta
+    depois de o pipeline já ter pago o token. Sem lista nenhuma (primeira
+    execução + API fora), ABORTA — coletar de zero contas não produz vídeo, só
+    gasta.
+
+    O id vem de brinde na mesma resposta, então a leitura de timeline
+    (endereçada por ID) não precisa mais do lookup em /2/users/by para estas
+    contas.
+    """
+    handle = (cfg.x_username or "").strip().lstrip("@")
+    try:
+        dados = _get(token, USER_POR_HANDLE_ENDPOINT.format(handle=handle), {})
+        usuario_id = dados["data"]["id"]
+
+        contas: dict[str, str] = {}
+        pagina = None
+        for _ in range(SEGUIDAS_MAX_PAGINAS):
+            params = {
+                "max_results": SEGUIDAS_POR_PAGINA,
+                "user.fields": "username",
+            }
+            if pagina:
+                params["pagination_token"] = pagina
+            corpo = _get(token, FOLLOWING_ENDPOINT.format(id=usuario_id), params)
+            for u in corpo.get("data") or []:
+                contas[u["username"]] = u["id"]
+            pagina = (corpo.get("meta") or {}).get("next_token")
+            if not pagina:
+                break
+
+        if not contas:
+            raise ValueError(f"@{handle} não segue nenhuma conta")
+    except (requests.RequestException, KeyError, ValueError, TypeError) as erro:
+        cache = _seguidas_do_cache()
+        if not cache:
+            raise SystemExit(
+                f"Não deu para ler as contas que @{handle} segue no X ({erro}) "
+                "e não há lista gravada de execuções anteriores — sem contas "
+                "não há coleta. Confira X_USERNAME e as credenciais da X API, "
+                "ou preencha X_ACCOUNTS no .env com uma lista fixa."
+            ) from erro
+        print(
+            f"[aviso] Leitura das contas seguidas por @{handle} falhou "
+            f"({erro}); usando as {len(cache)} contas da última leitura."
+        )
+        return cache
+
+    try:
+        CACHE_SEGUIDAS.write_text(
+            json.dumps(
+                {
+                    "data": datetime.now(timezone.utc).isoformat(),
+                    "usuario": handle,
+                    "contas": contas,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except OSError as erro:
+        print(f"[aviso] Não consegui salvar a lista de contas seguidas: {erro}")
+
+    print(f"[x] @{handle} segue {len(contas)} contas — é delas que sai a pauta.")
+    return contas
 
 
 def _lotes_de_query(contas: list[str]) -> list[str]:
@@ -260,7 +376,9 @@ def _ids_das_contas(token: str, contas: list[str]) -> dict[str, str]:
     return {c: cache[c.lower()] for c in contas if c.lower() in cache}
 
 
-def _coletar_timelines(cfg: Config, token: str, contas: list[str]) -> list[dict]:
+def _coletar_timelines(
+    cfg: Config, token: str, contas: list[str], ids: dict[str, str] | None = None
+) -> list[dict]:
     """Posts recentes lidos direto da TIMELINE de um subconjunto das contas.
 
     Por que existe, além da busca: `search/recent` ordena por RELEVÂNCIA, e
@@ -274,12 +392,17 @@ def _coletar_timelines(cfg: Config, token: str, contas: list[str]) -> list[dict]
     (X_MAX_POSTS_TIMELINE) é dividido em `posts por conta` e cobre só um
     punhado de contas por execução — um cursor circular persistido faz o rodízio
     entre execuções, como nos lotes da busca. X_MAX_POSTS_TIMELINE=0 desliga.
+
+    `ids` são os IDs numéricos que a leitura das contas seguidas já devolveu de
+    graça (o /2/users/:id/following traz id e username juntos). Ausentes — o
+    caminho de X_ACCOUNTS, que só tem handles —, os IDs são resolvidos com o
+    lookup em /2/users/by, como antes.
     """
     orcamento = getattr(cfg, "x_max_posts_timeline", 0) or 0
     if orcamento <= 0:
         return []
 
-    ids = _ids_das_contas(token, contas)
+    ids = ids or _ids_das_contas(token, contas)
     if not ids:
         print("[aviso] Nenhum ID de conta resolvido; leitura de timelines pulada.")
         return []
@@ -322,7 +445,9 @@ def _por_engajamento(post: dict) -> int:
     return post["likes"] + 3 * post["reposts"] + post["respostas"]
 
 
-def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
+def _coletar_posts(
+    cfg: Config, token: str, contas: list[str], ids: dict[str, str] | None = None
+) -> list[dict]:
     """Posts das contas na janela, limitados a cfg.x_max_posts (leitura é paga).
 
     Três passadas sobre as MESMAS contas — nenhuma fonte nova entra aqui:
@@ -386,7 +511,11 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
 
     # Timeline cronológica: o post fresco que a relevância ainda não viu.
     vistos = {p["url"] for p in posts}
-    frescos = [p for p in _coletar_timelines(cfg, token, contas) if p["url"] not in vistos]
+    frescos = [
+        p
+        for p in _coletar_timelines(cfg, token, contas, ids)
+        if p["url"] not in vistos
+    ]
     if frescos:
         print(
             f"[x] Timelines trouxeram {len(frescos)} post(s) recentes que a "
@@ -400,8 +529,8 @@ def _coletar_posts(cfg: Config, token: str, contas: list[str]) -> list[dict]:
 def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     """URLs de posts com clipe sobre o assunto, de QUALQUER conta do X.
 
-    A coleta e a varredura `has:videos` só enxergam as contas do canal, então o
-    material fica limitado ao que essas 50 contas publicaram sobre ESTE fato —
+    A coleta e a varredura `has:videos` só enxergam as contas seguidas, então o
+    material fica limitado ao que elas publicaram sobre ESTE fato —
     que é o gargalo real do formato longo (vídeo não falta no X; falta vídeo
     concentrado num mesmo acontecimento). Esta busca é aberta.
 
@@ -411,7 +540,7 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     orçamento aqui é modesto de propósito, e X_MAX_POSTS_BUSCA=0 desliga.
 
     Falha da API não aborta: devolve lista vazia e a execução segue com o
-    material das contas do canal.
+    material das contas seguidas.
     """
     orcamento = getattr(cfg, "x_max_posts_busca", 0) or 0
     consulta = (consulta or "").strip()
@@ -439,7 +568,7 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     posts = posts[:orcamento]
     print(
         f"[midia-x] Busca aberta achou {len(posts)} post(s) com clipe fora das "
-        "contas do canal (fontes não curadas; a auditoria decide o que entra)."
+        "contas seguidas (fontes não curadas; a auditoria decide o que entra)."
     )
     return [p["url"] for p in posts]
 
@@ -459,22 +588,24 @@ def _listar_posts(posts: list[dict]) -> str:
 
 
 INSTRUCOES_RESUMO = """\
-Você é curador de um canal de vídeos de ANÁLISE sobre TECNOLOGIA, INTELIGÊNCIA
-ARTIFICIAL, MERCADO DE TRABALHO e MERCADO FINANCEIRO. O canal trata cada pauta
-em formato EXPLICATIVO — análise ou educacional: o vídeo explica o que
-aconteceu, como funciona e por que importa.
+Você é curador de um canal de vídeos de ANÁLISE. O canal trata cada pauta em
+formato EXPLICATIVO — análise ou educacional: o vídeo explica o que aconteceu,
+como funciona e por que importa.
 
-FORA DE ESCOPO: guerra, conflito armado, geopolítica militar, inteligência,
-espionagem e defesa. Esses assuntos NÃO viram trend deste canal, nem quando
-dominam a conversa. Se um post falar de guerra ou de política externa, só
-aproveite o ângulo de tecnologia, empresa, emprego ou mercado que houver nele —
-e, se não houver, ignore o post.
+TODOS OS TEMAS SÃO ELEGÍVEIS (2026-08-16, pedido do usuário). O canal não tem
+mais recorte temático: tecnologia, IA, negócios, trabalho, mercado financeiro,
+ciência, saúde, política, mundo, esporte, cultura, entretenimento, crime,
+clima, educação, consumo — o que estiver acontecendo e render explicação entra.
+Não existe assunto vetado por tema, e não existe assunto obrigatório: o que
+decide é o VALOR DA INFORMAÇÃO abaixo e, depois dele, o que a audiência do
+canal assiste.
 
 Você recebe os posts publicados nas últimas {horas} horas pelas contas que o
-canal acompanha no X, com autor, data, métricas de engajamento e texto.
-Agrupe-os nas ATÉ {n} TRENDS mais quentes: anúncios e lançamentos, resultados,
-números divulgados, mudanças de preço, demissões e contratações, aquisições,
-regulação, quedas de serviço, pesquisas, rumores e disputas.
+usuário SEGUE no X, com autor, data, métricas de engajamento e texto. Agrupe-os
+nas ATÉ {n} TRENDS mais quentes: anúncios e lançamentos, resultados, números
+divulgados, mudanças de preço, demissões e contratações, aquisições, decisões e
+julgamentos, regulação, quedas de serviço, descobertas, pesquisas, acidentes e
+desastres, competições, rumores e disputas.
 
 ORDENE PELO VALOR DA INFORMAÇÃO, não pelo barulho. Sobem para o topo:
 1. VAZAMENTO, documento interno, memorando, print de comunicado, benchmark ou
@@ -628,7 +759,12 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
 
 
 def coletar_trends(cfg: Config) -> list[dict]:
-    """Posts da lista fixa de contas (X API) sumarizados em trends pelo GPT."""
+    """Posts das contas que o usuário segue (X API), resumidos em trends pelo GPT.
+
+    As contas vêm de ``contas_seguidas`` — a lista de "following" de X_USERNAME,
+    lida a cada execução. X_ACCOUNTS no .env, quando preenchido, substitui essa
+    lista (e aí os IDs voltam a ser resolvidos pelo lookup de handles).
+    """
     token = obter_bearer(cfg)
     if token is None:
         raise SystemExit(
@@ -636,16 +772,23 @@ def coletar_trends(cfg: Config) -> list[dict]:
             "e X_CONSUMER_SECRET no .env."
         )
 
-    contas = cfg.contas
+    if cfg.contas:
+        contas, ids = list(cfg.contas), None
+        print(f"[x] X_ACCOUNTS no .env: {len(contas)} contas fixas (a lista de "
+              "seguidas foi ignorada).")
+    else:
+        seguidas = contas_seguidas(cfg, token)
+        contas, ids = sorted(seguidas), seguidas
+
     print(
         f"[x] Coletando até {cfg.x_max_posts} posts das últimas "
         f"{cfg.janela_horas}h de {len(contas)} contas..."
     )
-    posts = _coletar_posts(cfg, token, contas)
+    posts = _coletar_posts(cfg, token, contas, ids)
     if not posts:
         raise SystemExit(
             f"Nenhum post encontrado nas últimas {cfg.janela_horas}h. "
-            "Aumente JANELA_HORAS no .env ou revise as contas."
+            "Aumente JANELA_HORAS no .env ou siga mais contas no X."
         )
     # Quantos posts trazem clipe é O número que decide se o formato longo tem
     # material: o vídeo é montado só com clipes, e eles precisam estar

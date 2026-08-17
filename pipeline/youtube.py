@@ -25,7 +25,7 @@ from pathlib import Path
 
 import requests
 
-from .config import Config, atualizar_env
+from .config import ENGAJAMENTO_MINIMO, Config, atualizar_env
 
 # Todos os escopos da YouTube Data API v3, conforme a lista oficial da Google
 # (https://developers.google.com/identity/protocols/oauth2/scopes#youtube).
@@ -233,13 +233,28 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
 
 
 def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
-    """Top `n` vídeos do canal em retenção, de todos os tempos.
+    """Top `n` vídeos do canal em ENGAJAMENTO, de todos os tempos.
 
-    Retenção combina duas métricas da YouTube Analytics API: a taxa de gancho
-    (``engagedViews/views`` — quem passou dos segundos iniciais vs quem ignorou
-    o Short no feed) e a profundidade (``averageViewPercentage`` — quanto do
-    vídeo quem ficou assistiu). Vídeos abaixo de VIEWS_MINIMO_RETENCAO views
-    ficam fora do ranking (retenção sem base estatística).
+    A métrica que manda é o GANCHO — ``engagedViews/views``, a fração de quem
+    abriu o vídeo e FICOU contra quem deslizou fora. É a tradução direta do
+    critério pedido em 2026-08-16 ("alto engajamento versus swipe-away, de 70%
+    ou mais"), e o ranking passou a ser ordenado por ele, com
+    ``averageViewPercentage`` (quanto do vídeo quem ficou assistiu) só como
+    desempate. Antes os dois eram multiplicados, o que deixava um vídeo de
+    gancho fraco e cauda longa empatar com um de gancho forte — exatamente a
+    confusão que a régua nova existe para desfazer.
+
+    O PISO (``ENGAJAMENTO_MINIMO``) filtra a lista: só sobem os vídeos que
+    seguraram esse percentual ou mais. Ele NÃO trava a execução — canal sem
+    nenhum vídeo acima do piso cai para os melhores disponíveis, com aviso no
+    log; quem lê o rótulo e decide é o prompt de seleção (escritor.py). Vídeos
+    abaixo de VIEWS_MINIMO_RETENCAO views ficam fora de qualquer jeito
+    (percentual sem base estatística).
+
+    Quando ``engagedViews`` não está disponível na conta, a Analytics devolve só
+    as métricas clássicas e o gancho fica desconhecido: aí o piso é aplicado
+    sobre ``averageViewPercentage``, que é a melhor aproximação de "ficou vs
+    saiu" que sobra.
 
     Requer o escopo ``yt-analytics.readonly`` no refresh token; tokens antigos
     precisam de reautorização (``--auth-youtube``/``--auth-youtube-usa``).
@@ -253,7 +268,7 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
         flag = "--auth-youtube-usa" if cfg.publico == "usa" else "--auth-youtube"
         raise SystemExit(
             f"Credenciais do YouTube do canal {canal} ausentes — sem elas não "
-            "dá para ler os campeões de retenção que guiam a seleção. "
+            "dá para ler a régua de engajamento que guia a seleção. "
             f"Configure o .env e rode 'python main.py {flag}'."
         )
 
@@ -305,17 +320,35 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
             r for r in linhas if float(r.get("views") or 0) >= VIEWS_MINIMO_RETENCAO
         ] or linhas  # canal novo: sem vídeos acima do piso, usa o que houver
 
-        def pontuacao(r: dict) -> float:
-            views = float(r.get("views") or 0)
-            gancho = (
-                float(r.get("engagedViews") or 0) / views
-                if views and "engagedViews" in r
-                else 1.0
-            )
-            profundidade = float(r.get("averageViewPercentage") or 0) / 100
-            return gancho * profundidade
+        def profundidade(r: dict) -> float:
+            """% do vídeo que quem ficou assistiu (desempate)."""
+            return float(r.get("averageViewPercentage") or 0)
 
-        top = sorted(candidatos, key=pontuacao, reverse=True)[:n]
+        def engajamento(r: dict) -> float:
+            """% de quem abriu e FICOU, contra quem deslizou fora.
+
+            Sem ``engagedViews`` na conta, cai para a profundidade — não é a
+            mesma coisa, mas é o único sinal de "ficou vs saiu" disponível, e
+            usar 100% como antes fazia todo vídeo passar no piso.
+            """
+            views = float(r.get("views") or 0)
+            if views and "engagedViews" in r:
+                return float(r.get("engagedViews") or 0) / views * 100
+            return profundidade(r)
+
+        # Ordena por ENGAJAMENTO, desempata pela profundidade.
+        ordenados = sorted(
+            candidatos, key=lambda r: (engajamento(r), profundidade(r)), reverse=True
+        )
+        acima = [r for r in ordenados if engajamento(r) >= ENGAJAMENTO_MINIMO]
+        if not acima:
+            print(
+                f"[youtube] aviso: nenhum vídeo do canal segurou "
+                f"{ENGAJAMENTO_MINIMO}% ou mais de quem abriu; a régua cai para "
+                "os melhores disponíveis (a seleção marca cada um abaixo do "
+                "piso, e o modelo sabe que são contraexemplo)."
+            )
+        top = (acima or ordenados)[:n]
 
         # Títulos dos escolhidos (Data API), numa única chamada
         ids = ",".join(str(r.get("video", "")) for r in top)
@@ -335,26 +368,28 @@ def top_retencao(cfg: Config, n: int = 6) -> list[dict]:
         campeoes = []
         for r in top:
             views = float(r.get("views") or 0)
-            gancho = (
-                round(float(r.get("engagedViews") or 0) / views * 100)
-                if views and "engagedViews" in r
-                else None
-            )
             campeoes.append(
                 {
                     "titulo": titulos.get(str(r.get("video")), str(r.get("video"))),
                     "views": int(views),
-                    "retencao_gancho": gancho,
-                    "retencao_media": round(
-                        float(r.get("averageViewPercentage") or 0)
-                    ),
+                    # O rótulo de ALTO ENGAJAMENTO no prompt sai deste número
+                    # (escritor._resumo_campeoes), então ele é o MESMO que o
+                    # filtro usou — inclusive na queda para a profundidade.
+                    "retencao_gancho": round(engajamento(r)),
+                    "retencao_media": round(profundidade(r)),
                 }
             )
-        print(f"[youtube] {len(campeoes)} campeões de retenção carregados.")
+        acima_do_piso = sum(
+            1 for c in campeoes if c["retencao_gancho"] >= ENGAJAMENTO_MINIMO
+        )
+        print(
+            f"[youtube] {len(campeoes)} vídeos de referência carregados "
+            f"({acima_do_piso} com engajamento de {ENGAJAMENTO_MINIMO}% ou mais)."
+        )
         return campeoes
     except Exception as erro:  # noqa: BLE001 — sem os campeões a seleção degrada
         raise SystemExit(
-            "Falha ao ler os campeões de retenção do canal — eles guiam a "
+            "Falha ao ler a régua de engajamento do canal — ela guia a "
             f"seleção da trend; abortando: {erro}"
         ) from erro
 

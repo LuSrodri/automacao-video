@@ -4,8 +4,8 @@ Duas etapas:
 1. `selecionar_trend` — escolha guiada SOMENTE pela audiência (diretriz de
    2026-07-18: sem pesos nem filtros editoriais): o modelo recebe as
    candidatas do dia, os últimos vídeos publicados COM as métricas reais
-   (views/likes da Data API) e os campeões de retenção, e escolhe a trend com
-   a maior chance de performar com o público DESTE canal. As métricas de cada
+   (views/likes da Data API) e a régua de ENGAJAMENTO do canal, e escolhe a
+   trend com a maior chance de performar com o público DESTE canal. As métricas de cada
    vídeo recente vão para o prompt NORMALIZADAS PELA IDADE (views por hora ao
    lado das views brutas): views brutas medem idade tanto quanto qualidade, e
    comparar um vídeo de 7 dias com um de 3 horas fazia o tema do último pico
@@ -19,15 +19,19 @@ Duas etapas:
    fato reformulado); e (b) só nos SHORTS, o RODÍZIO DE TEMAS (2026-08-04): as
    candidatas do macrotema do Short anterior saem da disputa antes da escolha,
    de modo que cada Short saia de um tema diferente do anterior. Devolve também
-   uma consulta de notícias para enriquecer o material.
-2. `gerar_roteiro` — com a trend escolhida + notícias do Firecrawl, escreve o
+   uma consulta curta do assunto, usada pela busca aberta de clipes do formato
+   longo. A régua de audiência prioriza ENGAJAMENTO (quem abriu e ficou, contra
+   quem deslizou fora): os vídeos publicados que seguraram ENGAJAMENTO_MINIMO%
+   ou mais de quem abriu entram no prompt marcados como ALTO ENGAJAMENTO, e é
+   com eles que a candidata escolhida precisa se parecer (2026-08-16).
+2. `gerar_roteiro` — com a trend escolhida e os posts do X, escreve o
    roteiro em enquadramento de ANÁLISE/EDUCACIONAL (formato explicativo), em
    tom adulto e inteligente (ritmo de fala natural, vocabulário preciso de
    telejornal, estrutura PERGUNTA ESQUISITA → CONTEXTUALIZAÇÃO →
    DESENVOLVIMENTO → CONSEQUÊNCIA → CONCLUSÃO, com a conclusão respondendo a
    pergunta de um jeito que emenda de volta nela no reinício — o loop), SEMPRE
-   citando as fontes (contas do X e veículos das notícias do Firecrawl),
-   dentro de uma FAIXA dura de palavras (piso e teto derivados de
+   citando as fontes (as contas do X que trouxeram o fato, e o veículo que elas
+   citam), dentro de uma FAIXA dura de palavras (piso e teto derivados de
    VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
    duração-alvo). Ao final, a AUDITORIA
    PRÓ-LEIGO (`_auditar_leigo`, chamada própria ao GPT) confere título,
@@ -80,6 +84,7 @@ from .config import (
     CURTO_MARGEM_FRAC,
     CURTO_MARGEM_MIN_S,
     CURTO_MIN_S,
+    ENGAJAMENTO_MINIMO,
     LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
     LONGO_MIN_S,
@@ -203,14 +208,15 @@ ESQUEMA_SELECAO = {
                     "reais do canal (que vídeos parecidos performaram e como)."
                 ),
             },
-            "consulta_noticias": {
+            "consulta_clipes": {
                 "type": "string",
                 "description": (
-                    "Consulta CURTA de busca de NOTÍCIAS em inglês: 3 a 6 "
-                    "palavras, só os nomes próprios principais + o acontecimento "
-                    "central (ex.: 'Anthropic Claude global outage'). NÃO empilhe "
-                    "detalhes, sintomas, códigos de erro nem sinônimos — consulta "
-                    "longa demais zera os resultados."
+                    "Consulta CURTA do assunto em inglês: 3 a 6 palavras, só os "
+                    "nomes próprios principais + o acontecimento central (ex.: "
+                    "'Anthropic Claude global outage'). É com ela que o formato "
+                    "longo procura clipes do fato fora das contas seguidas. NÃO "
+                    "empilhe detalhes, sintomas, códigos de erro nem sinônimos — "
+                    "consulta longa demais zera os resultados."
                 ),
             },
             "consulta_youtube": {
@@ -222,14 +228,14 @@ ESQUEMA_SELECAO = {
                     "inteligência artificial', 'nvidia corte preço chip'). É com "
                     "ela que o pipeline descobre que outros vídeos sobre este "
                     "fato já saíram hoje. Não é a mesma coisa que a consulta de "
-                    "notícias: aqui é linguagem de espectador, não de agência."
+                    "clipes: aqui é linguagem de espectador, não de agência."
                 ),
             },
         },
         "required": [
             "trend",
             "motivo",
-            "consulta_noticias",
+            "consulta_clipes",
             "consulta_youtube",
         ],
     },
@@ -251,7 +257,7 @@ COMENTARIO_PROPRIEDADE = {
         "Comentário do DONO do canal, para ser postado no vídeo assim que ele "
         "sair. Duas frases, no idioma definido nas instruções, até 280 "
         "caracteres. Frase 1: o dado, número ou contexto REAL que não coube "
-        "nos segundos do vídeo (algo das notícias ou dos posts recebidos — "
+        "nos segundos do vídeo (algo dos posts recebidos — "
         "nunca inventado, nunca repetição literal da narração). Frase 2: uma "
         "pergunta aberta e concreta sobre a DISPUTA do assunto, que uma pessoa "
         "comum consiga responder com opinião a partir do que o vídeo mostrou "
@@ -565,7 +571,7 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "palavras, teto 22), vocabulário preciso de telejornal, "
                     "tom adulto de analista que respeita o espectador. Toda "
                     "afirmação central atribuída nominalmente à fonte "
-                    "(veículo de notícias ou conta do X), somente fontes das "
+                    "(a conta do X, ou o veículo que ela cita), somente fontes das "
                     "listas recebidas. O vídeo NÃO tem legendas nem texto na "
                     "tela: a narração precisa se sustentar sozinha, sem "
                     "'como você vê aqui' nem referência a imagem."
@@ -665,9 +671,9 @@ ESQUEMA_AUDITORIA_LEIGO = {
 }
 
 INSTRUCOES_AUDITORIA_LEIGO = """\
-Você é o auditor pró-leigo de um canal de vídeos curtos de análise sobre
-tecnologia, IA, mercado de trabalho e mercado financeiro. Você recebe o título,
-a descrição e a narração de um vídeo e verifica as regras abaixo. O espectador
+Você é o auditor pró-leigo de um canal de vídeos curtos de análise, sem recorte
+temático (qualquer assunto pode virar vídeo). Você recebe o título, a descrição
+e a narração de um vídeo e verifica as regras abaixo. O espectador
 é um adulto leigo que NUNCA ouviu falar de modelos de IA, labs, startups e
 siglas de nicho — Google, iPhone, Elon Musk, ChatGPT ele conhece; Grok, Kimi
 K3, Anthropic, EBITDA, GPU ele NÃO conhece.
@@ -712,8 +718,6 @@ NARRAÇÃO:
 10. Nenhuma frase pode depender do que está na tela ("como você vê no
    gráfico", "veja a tabela") — as figuras entram por cima do vídeo, mas a
    narração tem que se sustentar de olhos fechados.
-11. FORA DE ESCOPO: se o vídeo for sobre guerra, conflito armado, geopolítica
-   militar, inteligência ou espionagem, REPROVA — não é assunto deste canal.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO
 invente problema: o que segue as regras passa, e "aprovado" = true com zero
@@ -768,8 +772,6 @@ NARRAÇÃO:
    ou dirigida ao espectador; pergunta que fica sem resposta.
 11. Fechamento: conclusão que responde a pergunta + próximo marco a observar.
    CTA falado, pedido de inscrição ou despedida REPROVAM.
-12. FORA DE ESCOPO: se o vídeo for sobre guerra, conflito armado, geopolítica
-   militar, inteligência ou espionagem, REPROVA — não é assunto deste canal.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
 problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\
@@ -814,8 +816,10 @@ português.\
 """
 
 INSTRUCOES_SELECAO = """\
-Você é editor de um canal de vídeos curtos (YouTube Shorts) de ANÁLISE sobre
-tecnologia, inteligência artificial, mercado de trabalho e mercado financeiro.
+Você é editor de um canal de vídeos curtos (YouTube Shorts) de ANÁLISE, SEM
+RECORTE TEMÁTICO: qualquer assunto pode virar vídeo — tecnologia, IA, negócios,
+trabalho, mercado, ciência, saúde, política, mundo, esporte, cultura, crime,
+clima, consumo. Nenhum tema é vetado e nenhum é obrigatório.
 
 Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema,
 imagem mental, VALOR INFORMATIVO e URGÊNCIA), os vídeos CAMPEÕES DE RETENÇÃO do
@@ -834,10 +838,6 @@ marcada como "apenas repercussão, sem fato novo" só vence se TODAS as outras
 também forem — repercussão de algo que a audiência já viu ontem é o pior vídeo
 possível, por mais quente que esteja o assunto.
 
-FORA DE ESCOPO: guerra, conflito armado, geopolítica militar, inteligência,
-espionagem e defesa. Se uma candidata for sobre isso, ela não é elegível —
-escolha outra, mesmo que os números apontem para ela.
-
 FORMATO DO CANAL: o vídeo é montado SOMENTE com os clipes de vídeo anexados
 aos posts do X da trend (até 3 clipes; nenhuma foto estática). Todas as
 candidatas listadas têm pelo menos 1 post com clipe, mas em empate prefira a
@@ -846,12 +846,21 @@ que tem MAIS clipes e o material em vídeo mais forte (veja "apelo visual").
 AUDIÊNCIA — O QUE DECIDE ENTRE AS ELEGÍVEIS: escolha a trend com a
 maior chance de performar com a audiência DESTE canal, e a régua são os
 NÚMEROS listados, não opinião editorial. Os vídeos com o maior VIEWS/H e os
-campeões de retenção mostram o tipo de tema, tensão e promessa que este
+vídeos de ALTO ENGAJAMENTO mostram o tipo de tema, tensão e promessa que este
 público clica e assiste até o fim; os de VIEWS/H baixo mostram o que ele
 ignora. Compare cada candidata com esses dois grupos e escolha a que mais se
 parece com o que está performando. NÃO aplique preferência própria por tema
 "nobre" nem equilíbrio de pauta: escolha entre as candidatas que você recebeu a
 que os números apontam, e nada mais.
+
+ENGAJAMENTO ACIMA DE TUDO NA RÉGUA — {piso}% OU MAIS: a métrica que manda é o
+GANCHO, a porcentagem de quem abriu o vídeo e FICOU em vez de deslizar para o
+próximo. Os vídeos marcados como ALTO ENGAJAMENTO na lista de campeões seguraram
+{piso}% ou mais de quem abriu — são eles o molde. Prefira sempre a candidata que
+mais se parece com esses, e trate os vídeos abaixo de {piso}% como contraexemplo,
+mesmo quando tiverem muitas views: views sem gancho é alcance que o feed
+empurrou e o espectador recusou, e repetir esse tipo de pauta é o jeito mais
+rápido de o canal encolher.
 
 O RODÍZIO DE TEMAS JÁ FOI APLICADO ANTES DE VOCÊ: as candidatas do tema do
 Short anterior já foram removidas da lista pelo pipeline, porque o canal
@@ -877,9 +886,10 @@ já publicado, sem nenhum fato novo. Cobertura contínua do mesmo assunto com
 desenvolvimento novo (novo ataque, nova declaração, novo número) é bem-vinda —
 é exatamente o que a audiência está acompanhando.
 
-Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
-nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
-longa e cheia de detalhes zera os resultados — seja enxuto.
+Gere também uma consulta CURTA do assunto (em inglês, 3 a 6 palavras: nomes
+próprios principais + o acontecimento) para a trend escolhida. Ela é o que a
+busca aberta de clipes usa no formato longo. Consulta longa e cheia de detalhes
+zera os resultados — seja enxuto.
 
 E uma consulta de busca do YOUTUBE, no IDIOMA DO CANAL, com 2 a 5 palavras, do
 jeito que um espectador digitaria na barra de busca. Ela serve para descobrir
@@ -890,7 +900,8 @@ Responda somente com o JSON pedido.\
 
 INSTRUCOES_SELECAO_LONGO = """\
 Você é editor de um canal de vídeos de ANÁLISE (formato longo, 16:9, cerca de
-{duracao} segundos) sobre os grandes acontecimentos contemporâneos.
+{duracao} segundos) sobre os grandes acontecimentos contemporâneos, SEM RECORTE
+TEMÁTICO: qualquer assunto pode virar vídeo, e nenhum tema é vetado.
 
 Você recebe as trends mais faladas do X hoje (cada uma com resumo, macrotema e
 imagem mental), os vídeos CAMPEÕES DE RETENÇÃO do canal e os últimos vídeos
@@ -904,14 +915,9 @@ absoluto da lista muito depois de ter esfriado.
 
 O QUE O VÍDEO LONGO É: uma análise educacional que explica um acontecimento
 atual cobrindo de {topicos_min} a {topicos_max} TÓPICOS — recortes diferentes
-do mesmo fato, tipicamente pelas quatro óticas do canal (tecnologia e IA,
-negócios, mercado de trabalho e mercado financeiro) — e entrega valor prático
-para o espectador principal: o adulto que está PROCURANDO EMPREGO ou EM
-TRANSIÇÃO DE CARREIRA e quer entender para onde o mundo (e o trabalho dele)
-está indo.
-
-FORA DE ESCOPO: guerra, conflito armado, geopolítica militar, inteligência,
-espionagem e defesa. Candidata sobre isso não é elegível — escolha outra.
+do mesmo fato (quem faz, quem paga, quem ganha, quem perde, o que vem depois) —
+e entrega valor prático para o espectador principal: o adulto que quer entender
+para onde o mundo está indo e o que isso muda na vida dele.
 
 CRITÉRIOS, nesta ordem:
 1. VALOR DA INFORMAÇÃO: prefira a candidata que entrega o que ainda não é
@@ -931,7 +937,11 @@ CRITÉRIOS, nesta ordem:
    números de dinheiro, investimento, vagas, contratos ou regulação.
 4. AUDIÊNCIA: entre as candidatas que passam nos anteriores, escolha a que mais se
    parece com o que o público DESTE canal assiste, segundo os números
-   listados. Repetir o tipo de assunto que performa é bem-vindo.
+   listados. A métrica que manda é o GANCHO — a porcentagem de quem abriu e
+   FICOU em vez de deslizar: os vídeos marcados como ALTO ENGAJAMENTO seguraram
+   {piso}% ou mais de quem abriu e são o molde; os abaixo disso são
+   contraexemplo, por mais views que tenham. Repetir o tipo de assunto que
+   performa é bem-vindo.
 5. MATERIAL EM VÍDEO: o vídeo é montado SOMENTE com os clipes anexados aos
    posts do X da trend (até {max_clipes} clipes, nenhuma foto estática). Em
    empate, vence a candidata com MAIS posts com clipe.
@@ -939,9 +949,10 @@ CRITÉRIOS, nesta ordem:
 Não escolha uma candidata que renderia uma análise IDÊNTICA a um vídeo longo
 já publicado, sem nenhum fato novo.
 
-Gere também uma consulta CURTA de busca de NOTÍCIAS (em inglês, 3 a 6 palavras:
-nomes próprios principais + o acontecimento) para a trend escolhida. Consulta
-longa e cheia de detalhes zera os resultados — seja enxuto.
+Gere também uma consulta CURTA do assunto (em inglês, 3 a 6 palavras: nomes
+próprios principais + o acontecimento) para a trend escolhida. Ela é o que a
+busca aberta de clipes usa no formato longo. Consulta longa e cheia de detalhes
+zera os resultados — seja enxuto.
 
 E uma consulta de busca do YOUTUBE, no IDIOMA DO CANAL, com 2 a 5 palavras, do
 jeito que um espectador digitaria na barra de busca. Ela serve para descobrir
@@ -998,13 +1009,13 @@ qualquer um deles é PROIBIDO.\
 """
 
 INSTRUCOES_ROTEIRO = """\
-Você é roteirista de vídeos curtos (YouTube Shorts/Reels/TikTok) de ANÁLISE
-sobre tecnologia, inteligência artificial, mercado de trabalho e mercado
-financeiro. {foco}
+Você é roteirista de vídeos curtos (YouTube Shorts) de ANÁLISE, sem recorte
+temático: o assunto do vídeo é o que estiver acontecendo, seja ele qual for.
+{foco}
 
-Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
-X que originaram a trend e NOTÍCIAS recentes sobre ela. Use as notícias para
-acertar fatos, nomes, empresas, datas e números — não invente.
+Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca) e os POSTS DO
+X que originaram a trend. Fatos, nomes, empresas, datas e números saem DAÍ —
+não invente nada, e não use fato que não esteja no material recebido.
 
 ENQUADRAMENTO — SEMPRE análise ou educacional, em formato EXPLICATIVO: o vídeo
 explica o que aconteceu, como funciona e por que importa — nunca é um grito de
@@ -1015,15 +1026,11 @@ formato explicativo em ordem de aula bem dada — pergunta, contexto,
 desenvolvimento, consequência, resposta. Explicar NÃO é palestrar: o tom
 continua de jornalista afiado, não de professor.
 
-ASSUNTOS FORA DO CANAL: guerra, conflito armado, geopolítica militar,
-inteligência, espionagem e defesa. Se a trend recebida encostar nisso, escreva
-pelo ângulo de tecnologia, empresa, emprego ou mercado — nunca pelo militar.
-
 FONTES — OBRIGATÓRIO citar a fonte na narração: todo fato central do vídeo é
-atribuído a quem o publicou — o veículo de notícias ("segundo a Reuters", "o
-Financial Times revelou") ou a conta do X ("no post de @sentdefender", "Elon
-Musk postou"). Cite SOMENTE fontes que estão nas listas recebidas (posts do X
-e notícias); cite pelo menos uma, no ponto onde o fato dela entra, embutida na
+atribuído a quem o publicou — a conta do X que trouxe o fato ("no post de
+@unusual_whales", "Elon Musk postou") ou o veículo que a própria conta cita
+("segundo a Reuters"). Cite SOMENTE fontes que estão na lista de posts
+recebida; cite pelo menos uma, no ponto onde o fato dela entra, embutida na
 frase — nunca em bloco de leitura de créditos. Nome de veículo ou de conta
 citado como fonte NÃO conta no teto de nomes próprios desconhecidos.
 
@@ -1193,17 +1200,14 @@ Responda somente com o JSON pedido.\
 INSTRUCOES_ROTEIRO_LONGO = """\
 Você é roteirista de vídeos de ANÁLISE (formato longo, 16:9, {duracao}
 segundos) que explicam os grandes acontecimentos contemporâneos cobrindo de
-{topicos_min} a {topicos_max} TÓPICOS, tipicamente pelas quatro óticas do
-canal: TECNOLOGIA E IA, NEGÓCIOS, MERCADO DE TRABALHO e MERCADO
-FINANCEIRO. Guerra, conflito armado, geopolítica militar, inteligência e
-espionagem estão FORA do canal — se a trend encostar nisso, escreva pelo ângulo
-de tecnologia, empresa, emprego ou mercado.
+{topicos_min} a {topicos_max} TÓPICOS. O canal NÃO tem recorte temático:
+qualquer assunto pode virar vídeo, e o que decide o valor do vídeo é a
+explicação, não o tema.
 {foco}
 
-Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
-X que originaram a trend e NOTÍCIAS recentes sobre ela. Use as notícias para
-acertar fatos, nomes, empresas, datas e números — não invente nada. Fato que
-não está no material recebido não entra no vídeo.
+Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca) e os POSTS DO
+X que originaram a trend. Fatos, nomes, empresas, datas e números saem DAÍ —
+não invente nada. Fato que não está no material recebido não entra no vídeo.
 
 ESPECTADOR — A REGRA QUE MANDA EM TODAS AS OUTRAS: um adulto leigo (25 a 54
 anos, sem formação técnica) que está PROCURANDO EMPREGO ou EM TRANSIÇÃO DE
@@ -1223,10 +1227,10 @@ PROIBIDO "como você vê aqui", "na imagem", "no gráfico", ou qualquer frase qu
 dependa de algo escrito na tela.
 
 FONTES — OBRIGATÓRIO citar nominalmente: cada afirmação central é atribuída a
-quem a publicou — o veículo ("segundo a Reuters", "o Financial Times revelou")
-ou a conta do X ("no post de @unusual_whales"). Cite SOMENTE fontes das listas
-recebidas, pelo menos DUAS ao longo do vídeo, embutidas na frase — nunca em
-bloco de créditos. "Segundo fontes", sem nome, continua proibido. Nome de
+quem a publicou — a conta do X ("no post de @unusual_whales") ou o veículo que
+ela cita ("segundo a Reuters"). Cite SOMENTE fontes da lista de posts recebida,
+pelo menos DUAS ao longo do vídeo, embutidas na frase — nunca em bloco de
+créditos. "Segundo fontes", sem nome, continua proibido. Nome de
 veículo ou de conta citado como fonte não conta como nome próprio de nicho.
 
 TOM: analista adulto e afiado — jornalismo econômico de bom nível, não
@@ -1263,14 +1267,12 @@ ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
    {topicos_min} a {topicos_max} TÓPICOS, os mesmos que você listou no campo
    `topicos` e na mesma ordem. Tópico é um recorte DIFERENTE do mesmo
    acontecimento, com dado próprio — não é o anterior repetido com outras
-   palavras, e não é assunto de outra notícia. As quatro óticas do canal são a
-   fonte natural deles: TECNOLOGIA E IA (o que a tecnologia permite ou destrói
-   aqui), NEGÓCIOS (dinheiro, empresas, investimento, quem paga a conta),
-   MERCADO DE TRABALHO (o que acontece com as vagas) e MERCADO FINANCEIRO (o
-   que os investidores, a bolsa, os juros ou o crédito fazem com isso) — mas
-   elas NÃO são uma cota: se o fato não tem leitura financeira real, cubra
-   outro recorte (a regulação, o concorrente, o usuário, o precedente
-   histórico) em vez de inventar uma. Duas a quatro frases por tópico,
+   palavras, e não é assunto de outra notícia. Os recortes saem do PRÓPRIO
+   fato: quem fez e por quê, quem paga a conta, quem ganha e quem perde, o que
+   a regra ou a lei diz, o precedente histórico, o concorrente, o efeito no
+   dinheiro, no trabalho ou no dia a dia de quem assiste, e o que vem depois.
+   Nenhum deles é cota: cubra os que o fato realmente sustenta, com dado, em
+   vez de inventar um ângulo que não existe. Duas a quatro frases por tópico,
    ENCADEADAS por causa e efeito ("por isso", "o efeito disso", "e aí entra o
    dinheiro") — nunca uma lista de bullets falados. Cada tópico carrega pelo
    menos um dado concreto do material recebido, e todos são costurados pela sua
@@ -1456,20 +1458,36 @@ def _resumo_recentes(
 
 
 def _resumo_campeoes(campeoes: list[dict] | None) -> str:
+    """Bloco dos campeões, com o GANCHO marcado contra o piso de engajamento.
+
+    O rótulo ALTO ENGAJAMENTO / abaixo do piso é escrito em CÓDIGO, e não
+    deixado para o modelo comparar de cabeça: a régua pedida em 2026-08-16 é um
+    número (``ENGAJAMENTO_MINIMO``), e regra numérica embutida em prosa é
+    exatamente o tipo de instrução que se perde no meio de cem linhas de
+    contexto. Assim o prompt só precisa dizer "use os marcados como molde".
+    """
     if not campeoes:
         return ""
     linhas = []
     for c in campeoes:
+        gancho = c.get("retencao_gancho")
         partes = []
-        if c.get("retencao_gancho") is not None:
-            partes.append(f"gancho segura {c['retencao_gancho']}% de quem abre")
+        if gancho is not None:
+            partes.append(f"gancho segura {gancho}% de quem abre")
         partes.append(f"assistem em média {c.get('retencao_media', '?')}% do vídeo")
         partes.append(f"{c.get('views', '?')} views")
-        linhas.append(f"- {c.get('titulo', '')} ({'; '.join(partes)})")
+        if gancho is None:
+            marca = " [engajamento não medido]"
+        elif gancho >= ENGAJAMENTO_MINIMO:
+            marca = " [ALTO ENGAJAMENTO]"
+        else:
+            marca = f" [abaixo do piso de {ENGAJAMENTO_MINIMO}%]"
+        linhas.append(f"- {c.get('titulo', '')}{marca} ({'; '.join(partes)})")
     return (
-        "\n\nVídeos CAMPEÕES DE RETENÇÃO deste canal, de todos os tempos (o tipo "
-        "de vídeo que o público assiste até o fim — priorize trends com este "
-        "DNA):\n" + "\n".join(linhas)
+        "\n\nVídeos deste canal ordenados por ENGAJAMENTO (quem abriu e ficou, "
+        f"contra quem deslizou fora). Os marcados como ALTO ENGAJAMENTO seguraram "
+        f"{ENGAJAMENTO_MINIMO}% ou mais de quem abriu — é com ESSES que a "
+        "candidata escolhida precisa se parecer:\n" + "\n".join(linhas)
     )
 
 
@@ -1662,7 +1680,7 @@ def selecionar_trend(
 
     Diretriz de 2026-07-18: sem pesos nem filtros editoriais. O prompt entrega
     ao modelo os últimos vídeos publicados COM as métricas reais (views/likes)
-    e os campeões de retenção (``youtube.top_retencao``), e o critério é um só
+    e a régua de engajamento (``youtube.top_retencao``), e o critério é um só
     — a maior chance de performar com a audiência DESTE canal.
 
     Regras duras, APLICADAS aqui e não só pedidas no prompt:
@@ -1821,9 +1839,10 @@ def selecionar_trend(
             max_clipes=cfg.max_clipes,
             topicos_min=TOPICOS_MIN,
             topicos_max=TOPICOS_MAX,
+            piso=ENGAJAMENTO_MINIMO,
         )
         if longo
-        else INSTRUCOES_SELECAO
+        else INSTRUCOES_SELECAO.format(piso=ENGAJAMENTO_MINIMO)
     )
     while True:
         conteudo = (
@@ -1870,18 +1889,6 @@ def selecionar_trend(
     print(f"[roteiro] Trend escolhida: {selecao['trend']}")
     print(f"[roteiro] Motivo: {selecao['motivo']}")
     return selecao
-
-
-def _resumo_noticias(noticias: list[dict]) -> str:
-    if not noticias:
-        return "(nenhuma notícia recuperada — baseie-se no resumo da trend.)"
-    linhas = []
-    for n in noticias:
-        data = f" ({n['data']})" if n.get("data") else ""
-        veiculo = urlparse(n.get("url", "")).netloc.removeprefix("www.")
-        fonte = f" [fonte: {veiculo}]" if veiculo else ""
-        linhas.append(f"- {n['titulo']}{data}{fonte}: {n.get('resumo', '')}")
-    return "\n".join(linhas)
 
 
 def _fontes_x(urls: list[str]) -> str:
@@ -2096,12 +2103,15 @@ def gerar_roteiro(
     cfg: Config,
     selecao: dict,
     trends: list[dict],
-    noticias: list[dict],
     videos_recentes: list[dict] | None = None,
     campeoes: list[dict] | None = None,
     panorama: dict | None = None,
 ) -> dict:
-    """Gera o roteiro completo da trend escolhida, enriquecido com notícias.
+    """Gera o roteiro completo da trend escolhida, a partir dos posts do X.
+
+    A busca de NOTÍCIAS (Firecrawl) que enriquecia este material foi removida em
+    2026-08-16: os fatos, nomes e números saem agora só do resumo da trend e dos
+    posts que a originaram, e são essas contas as fontes citáveis na narração.
 
     `panorama` é o retrato do assunto no YouTube de hoje (``seo.py``): os
     vídeos que outros canais já publicaram sobre o mesmo fato nas últimas
@@ -2128,8 +2138,6 @@ def gerar_roteiro(
         f"daqui): {trend_escolhida.get('imagem_mental', '?')}\n\n"
         "POSTS DO X QUE ORIGINARAM A TREND (fontes citáveis na narração):\n"
         + _fontes_x(trend_escolhida.get("posts") or [])
-        + "\n\nNOTÍCIAS RECENTES SOBRE A TREND (o veículo entre colchetes é a "
-        "fonte citável):\n" + _resumo_noticias(noticias)
         + _resumo_estilo(videos_recentes, campeoes, cfg.formato)
         + resumo_para_prompt(panorama)
     )

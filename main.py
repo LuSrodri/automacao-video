@@ -1,35 +1,49 @@
-"""Automação de vídeos de análise sobre tecnologia, inteligência artificial,
-mercado de trabalho e mercado financeiro, a partir das trends do X.
+"""Automação de vídeos de análise sobre o que está acontecendo, a partir das
+trends do X.
+
+SEM RECORTE TEMÁTICO (2026-08-16, pedido do usuário): qualquer assunto pode
+virar vídeo — tecnologia, IA, negócios, trabalho, mercado, ciência, saúde,
+política, mundo, esporte, cultura, crime, clima, consumo. Não há tema vetado
+nem tema obrigatório; o que decide a pauta é o valor da informação e, entre as
+candidatas, o que a audiência do canal assiste até o fim.
 
 Fluxo:
-1. X API coleta os posts das últimas 24h da lista fixa de contas (CONTAS_PADRAO
-   em config.py, ou X_ACCOUNTS no .env) por dois caminhos — busca por
-   relevância e TIMELINE cronológica de um subconjunto rotativo das contas, que
-   é o que enxerga o post fresco (vazamento, comunicado) ainda sem engajamento
-   — e o GPT os sumariza nas 10 trends mais quentes, ordenadas pelo VALOR DA
-   INFORMAÇÃO (vazamento, exclusivo, urgência, número inédito) antes do
-   engajamento.
+1. X API coleta os posts das últimas 24h DAS CONTAS QUE O USUÁRIO SEGUE
+   (`/2/users/:id/following` de X_USERNAME, lido a cada execução; X_ACCOUNTS no
+   .env substitui a lista) por dois caminhos — busca por relevância e TIMELINE
+   cronológica de um subconjunto rotativo das contas, que é o que enxerga o
+   post fresco (vazamento, comunicado) ainda sem engajamento — e o GPT os
+   sumariza nas 10 trends mais quentes, ordenadas pelo VALOR DA INFORMAÇÃO
+   (vazamento, exclusivo, urgência, número inédito) antes do engajamento.
+   Seguir alguém novo no X muda a pauta da próxima execução, sem commit nem
+   deploy.
 2. GPT classifica cada candidata (macrotema + imagem mental) — sem filtro
    nem score: todas as candidatas seguem vivas para a seleção.
 3. GPT escolhe a trend: primeiro corte pelo VALOR DA INFORMAÇÃO (vazamento,
    exclusivo, urgência, número inédito), e entre as elegíveis decide pela
    audiência — recebe os últimos vídeos publicados do canal com as métricas
-   reais (views/likes, YouTube Data API) e os campeões de retenção (YouTube
-   Analytics). Regra dura: a escolhida passa por uma verificação
-   anti-repetição (GPT confere se ela cobriria o mesmo fato de um vídeo
-   publicado nas últimas 36h; se sim, sai da disputa e a seleção refaz).
-   Define também uma consulta de notícias e uma consulta de busca do YouTube.
-4. Firecrawl (sources=news) busca notícias recentes que complementam a trend.
-4b. PANORAMA DO DIA (SEO/GEO, pipeline/seo.py): a YouTube Data API devolve os
+   reais (views/likes, YouTube Data API) e a RÉGUA DE ENGAJAMENTO (YouTube
+   Analytics): os vídeos que seguraram ENGAJAMENTO_MINIMO% ou mais de quem
+   abriu, contra quem deslizou fora, entram marcados como ALTO ENGAJAMENTO e
+   são o molde a imitar; os abaixo do piso são contraexemplo, por mais views
+   que tenham. Regra dura: a escolhida passa por uma verificação anti-repetição
+   (GPT confere se ela cobriria o mesmo fato de um vídeo publicado nas últimas
+   36h; se sim, sai da disputa e a seleção refaz). Define também uma consulta
+   curta do assunto (busca de clipes) e uma consulta de busca do YouTube.
+4. PANORAMA DO DIA (SEO/GEO, pipeline/seo.py): a YouTube Data API devolve os
    vídeos que OUTROS canais publicaram sobre o mesmo assunto nas últimas
    JANELA_HORAS, com views/hora e o vocabulário de tags deles. É a única
    leitura do pipeline sobre a disputa FORA do canal, e alimenta título,
    descrição, tags e capa. Falha aqui só avisa (SEO_PANORAMA=0 desliga).
+   A busca de NOTÍCIAS no Firecrawl que existia aqui foi REMOVIDA em
+   2026-08-16: os fatos vêm só dos posts do X, e o pipeline não tem mais
+   dependência nenhuma do Firecrawl.
 5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
-   citando as fontes (contas do X e veículos das notícias), na estrutura
-   PERGUNTA ESQUISITA -> CONTEXTUALIZAÇÃO -> DESENVOLVIMENTO -> CONSEQUÊNCIA
-   -> CONCLUSÃO, com a conclusão respondendo a pergunta de um jeito que emenda
-   de volta nela quando o Short reinicia (loop).
+   citando as fontes (as contas do X que trouxeram o fato, e o veículo que elas
+   citam), na estrutura PERGUNTA ESQUISITA -> CONTEXTUALIZAÇÃO ->
+   DESENVOLVIMENTO -> CONSEQUÊNCIA -> CONCLUSÃO, com a conclusão respondendo a
+   pergunta de um jeito que emenda de volta nela quando o Short reinicia
+   (loop).
 6. X API baixa um POOL de clipes de vídeo dos posts originais da trend (mais
    do que os 3 que entram na montagem, como folga para a auditoria), junto das
    fotos dos posts, que alimentam as cartelas. Imagem estática nunca ocupa a
@@ -55,40 +69,35 @@ Fluxo:
 9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
    o momento exato da narração (citações do texto -> timestamps do
    alinhamento).
-10. Cartelas de imagem nos momentos-chave: foto do post da trend ou og:image
-    da notícia, auditada igual aos clipes, tomando a TELA DO CELULAR quando a
-    narração nomeia o que ela mostra.
+10. Cartelas de imagem nos momentos-chave: foto do post da trend, auditada
+    igual aos clipes, tomando a TELA INTEIRA quando a narração nomeia o que ela
+    mostra.
 11. Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
     infográfico, diagrama ou cartaz DESENHADO a partir dos números que a
     narração diz — ancorado na citação literal do trecho, e só com dado que a
     narração falou. São a ÚNICA fonte de "big number" na tela: os infográficos
     que o ffmpeg montava a partir de PNGs do Pillow foram removidos em
     2026-08-04. Cartelas e figuras entram e saem pelo CARROSSEL (item 12).
-12. ffmpeg monta TUDO DENTRO DA TELA DE UM CELULAR APOIADO NUMA CAMA
-    (cenario.py, sobre a foto fundo-cama.png). A ORIENTAÇÃO DO APARELHO VEM DO
-    MATERIAL, não do quadro: clipe horizontal deita o celular mesmo num Short
-    vertical, clipe vertical o levanta mesmo no 16:9 (orientacao_dominante, que
-    pesa cada clipe pelo tempo de tela). Fundo = o próprio clipe borrado
+12. ffmpeg monta o vídeo em TELA CHEIA (2026-08-16, pedido do usuário): o
+    conteúdo ocupa o QUADRO INTEIRO, com o preenchimento de fundo em desfoque
+    do próprio clipe. Saíram os cenários que embrulhavam o vídeo — a moldura de
+    celular sobre uma cama e, antes dela, a sala com TV —, e com eles o módulo
+    cenario.py e a foto fundo-cama.png. Fundo = o próprio clipe borrado
     (cobertura total, sem instante vazio) + clipe nítido centrado + crossfade
     curto + legendas grandes (Archivo Black, altura levemente reduzida) +
-    crédito de reprodução no canto superior direito da tela ("Reprodução
-    Imagem: X" + conta do post). Com o celular deitado num Short a legenda
-    desce para a cama, abaixo do aparelho. As cartelas e as figuras entram por
-    um CARROSSEL de duas posições: o conteúdo desliza para a esquerda e a
-    imagem ocupa a tela; no fim da janela ela desliza de volta e o vídeo
-    retorna. SEM música de fundo.
+    crédito de reprodução no canto superior direito ("Reprodução Imagem: X" +
+    conta do post). As cartelas e as figuras entram por um CARROSSEL de duas
+    posições: o conteúdo desliza para a esquerda e a imagem ocupa a tela; no
+    fim da janela ela desliza de volta e o vídeo retorna. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
     YouTube (o horário de publicação é o do cronjob que dispara a execução)
     com TAGS de busca (que iam vazias até 2026-08-07) e com a descrição
     montada em pipeline/seo.py: parágrafo do payload, par P:/R: (a parte de
     GEO — a frase autossuficiente que um buscador com IA consegue citar),
-    capítulos no formato longo, fontes reais e as hashtags por último.
-14. TikTok (opcional, TIKTOK_PUBLICAR=1, só no canal brasileiro): o MESMO
-    arquivo é publicado no TikTok na mesma execução, sem gerar nada de novo —
-    o custo adicional é zero. A publicação passa pelo Zernio (zernio.py), que
-    é um cliente auditado do TikTok e por isso consegue postar PÚBLICO; falar
-    direto com a API do TikTok exigiria auditoria do próprio app. Falha aqui
-    só avisa, porque o vídeo já está no ar no YouTube quando isso roda.
+    capítulos no formato longo, fontes reais e as hashtags por último. O
+    YouTube é o ÚNICO destino: a publicação secundária no TikTok (via Zernio)
+    foi removida em 2026-08-16 a pedido do usuário — não reintroduzir sem
+    pedido explícito.
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - padrão: Short vertical 1080x1920 de ~25s (era 60 até 2026-08-09), com
@@ -98,10 +107,9 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 120 a 150 segundos
   (o piso de 120s é duro: abaixo dele a execução aborta), SEM legendas e em
   velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
-  explica um acontecimento contemporâneo cobrindo de 3 a 5 TÓPICOS,
-  tipicamente pelas quatro óticas do canal (tecnologia/IA, negócios, mercado de
-  trabalho, mercado financeiro), e o payload é o que aquilo muda para quem
-  procura emprego ou está em transição de carreira. Usa até 8 clipes do X, até
+  explica um acontecimento contemporâneo cobrindo de 3 a 5 TÓPICOS — recortes
+  diferentes do mesmo fato, tirados do próprio acontecimento (quem fez, quem
+  paga, quem ganha, quem perde, o que vem depois). Usa até 8 clipes do X, até
   4 cartelas, até 4 figuras geradas, e a descrição sai com a lista de fontes
   reais.
 
@@ -119,7 +127,6 @@ from datetime import datetime
 from pipeline.audio import gerar_narracao
 from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
-from pipeline.cenario import area_legenda, retangulo_tela
 from pipeline.classificacao import classificar_trends
 from pipeline.config import (
     CURTO_MIN_S,
@@ -136,13 +143,11 @@ from pipeline.edicao import (
     duracao_audio,
     intervalos_imagens,
     montar_video,
-    orientacao_dominante,
 )
 from pipeline.escritor import gerar_roteiro, selecionar_trend
 from pipeline.figuras import gerar_figuras
 from pipeline.legendas import gerar_legendas
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
-from pipeline.noticias import buscar_noticias
 from pipeline.registro import registrar
 from pipeline.seo import (
     capitulos,
@@ -153,8 +158,6 @@ from pipeline.seo import (
 from pipeline.silencio import aparar_silencios
 from pipeline.thumbnail import gerar_thumbnail
 from pipeline.x_client import buscar_posts_com_video, coletar_trends
-from pipeline.zernio import credenciais_ausentes as zernio_credenciais_ausentes
-from pipeline.zernio import publicar as publicar_tiktok
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
 from pipeline.youtube import top_retencao, ultimos_publicados
@@ -209,31 +212,6 @@ def main() -> None:
             f"{LONGO_MAX_S}s), até {cfg.max_clipes} clipes, sem legendas"
         )
 
-    # O TikTok é publicação SECUNDÁRIA do canal BRASILEIRO: o mesmo vídeo que
-    # vai para o YouTube é postado lá na mesma execução (custo adicional zero,
-    # nada é gerado de novo). A conta @lusrodri é brasileira, e idioma é regra
-    # de canal — então no `-usa`, que narra em inglês, a publicação não acontece
-    # mesmo que a env var esteja ligada por engano no cron errado.
-    postar_tiktok = cfg.tiktok_publicar and cfg.publico == "brasil"
-    if cfg.tiktok_publicar and cfg.publico != "brasil":
-        print(
-            "[config] TIKTOK_PUBLICAR está ligado, mas esta execução é do canal "
-            "em inglês e a conta do TikTok é a brasileira (@"
-            f"{cfg.tiktok_usuario}) — nada será postado lá."
-        )
-    # Credencial do TikTok conferida AQUI, junto do fail-fast do YouTube: se
-    # falta token, é melhor abortar antes de gastar X, OpenAI e ElevenLabs do
-    # que descobrir isso na última linha da execução, com tudo já pago.
-    if postar_tiktok:
-        faltando = zernio_credenciais_ausentes(cfg)
-        if faltando:
-            raise SystemExit(
-                f"TIKTOK_PUBLICAR está ligado, mas falta {', '.join(faltando)} "
-                "— a execução abortou antes de gastar qualquer chamada paga. "
-                "Pegue a chave em https://zernio.com (a conta do TikTok precisa "
-                "estar conectada lá), ou desligue TIKTOK_PUBLICAR."
-            )
-
     # Leituras do canal PRIMEIRO (fail-fast): se as credenciais do YouTube
     # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
     # e sem os recentes (com as métricas) a seleção pela audiência é cega.
@@ -261,8 +239,6 @@ def main() -> None:
             cfg, trends, videos_recentes=recentes, campeoes=campeoes,
             excluir=tentadas,
         )
-        noticias = buscar_noticias(cfg, selecao["consulta_noticias"])
-
         # SEO/GEO: quem MAIS publicou sobre este assunto hoje. É a única leitura
         # do pipeline sobre o lado de fora do canal — os últimos publicados e os
         # campeões de retenção calibram o tom com o próprio público, mas não
@@ -274,7 +250,7 @@ def main() -> None:
         )
 
         roteiro = gerar_roteiro(
-            cfg, selecao, trends, noticias,
+            cfg, selecao, trends,
             videos_recentes=recentes, campeoes=campeoes, panorama=panorama,
         )
 
@@ -299,7 +275,7 @@ def main() -> None:
         # cada candidata custaria uma consulta por candidata — em troca, a
         # busca não socorre uma candidata que já tenha sido barrada no portão
         # da seleção.
-        extras = buscar_posts_com_video(cfg, selecao.get("consulta_noticias", ""))
+        extras = buscar_posts_com_video(cfg, selecao.get("consulta_clipes", ""))
         if extras:
             urls = trend_video.get("posts") or []
             # `posts` vem com os posts de vídeo na frente (x_client), e o
@@ -460,27 +436,6 @@ def main() -> None:
             encoding="utf-8",
         )
 
-    # ORIENTAÇÃO DO APARELHO (2026-08-10, pedido do usuário): vem do MATERIAL,
-    # não do quadro. Clipe horizontal deita o celular mesmo num Short vertical,
-    # clipe vertical o levanta mesmo no 16:9 — antes o aparelho seguia o quadro
-    # e um clipe 16:9 dentro de um celular em pé ficava numa faixa no meio da
-    # tela, apontando para o lado contrário do aparelho. Decidido AQUI, antes
-    # das legendas e das imagens, porque todas são medidas contra a tela; o
-    # mesmo valor desce para `montar_video`, senão as duas contas divergiriam.
-    aparelho_em_pe = orientacao_dominante(sobreposicoes, duracao, altura >= largura)
-    print(
-        f"[cenario] Clipes majoritariamente "
-        f"{'verticais' if aparelho_em_pe else 'horizontais'}: celular "
-        f"{'em pé' if aparelho_em_pe else 'deitado'} no quadro "
-        f"{largura}x{altura}."
-    )
-
-    # Tela do celular: desde a moldura de smartphone (cenario.py) é ela, e não
-    # o quadro, a área útil de tudo que aparece — legendas, cartelas e figuras.
-    # O retângulo é calculado aqui, sem renderizar nada; `montar_video` chega
-    # ao mesmo pela mesma função.
-    tela_x, tela_y, tela_l, tela_a = retangulo_tela(largura, altura, aparelho_em_pe)
-
     # Formato longo é SEM legendas queimadas (pedido do usuário): a narração
     # se sustenta sozinha e a tela fica limpa para o clipe.
     legendas = None
@@ -493,23 +448,19 @@ def main() -> None:
             altura,
             pasta / "legendas.ass",
             intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
-            # Com o celular DEITADO num Short (clipe horizontal), a tela vira
-            # uma faixa baixa e a legenda desce para a cama, abaixo do
-            # aparelho — dentro da tela ela cobriria o clipe inteiro.
-            area=area_legenda(largura, altura, aparelho_em_pe),
         )
 
-    # Cartelas: a imagem do momento-chave (foto do post da trend ou og:image da
-    # notícia) toma a tela do celular pelo deslize, no lugar do clipe.
+    # Cartelas: a foto do post da trend toma a tela inteira pelo deslize, no
+    # lugar do clipe. Renderizada no tamanho do QUADRO desde a volta da tela
+    # cheia (2026-08-16) — antes era o tamanho da tela do celular desenhado.
     cartelas = gerar_cartelas(
         cfg,
         roteiro["texto_video"],
         fotos,
-        noticias,
         alinhamento,
         duracao,
         pasta,
-        tela=(tela_l, tela_a),
+        tela=(largura, altura),
     )
 
     # Figuras geradas (gpt-image-2): gráfico, tabela, infográfico, diagrama ou
@@ -523,11 +474,10 @@ def main() -> None:
         cfg,
         roteiro["texto_video"],
         trend_video,
-        noticias,
         alinhamento,
         duracao,
         pasta,
-        tela=(tela_l, tela_a),
+        tela=(largura, altura),
         ocupadas=ocupadas,
     )
 
@@ -542,7 +492,6 @@ def main() -> None:
         figuras=figuras,
         publico=cfg.publico,
         formato=cfg.formato,
-        aparelho_em_pe=aparelho_em_pe,
     )
 
     # CAPÍTULOS (só no formato longo): cada tópico do roteiro trouxe uma citação
@@ -566,7 +515,6 @@ def main() -> None:
         cfg.publico,
         formato=cfg.formato,
         trend=trend_video,
-        noticias=noticias,
         marcos=marcos,
     )
 
@@ -596,29 +544,11 @@ def main() -> None:
         comentario=roteiro.get("comentario"),
     )
 
-    # TikTok: o MESMO arquivo, na mesma execução. Roda depois do YouTube de
-    # propósito — o YouTube é o canal principal e a falha dele aborta; aqui
-    # falha só avisa, porque a essa altura o vídeo já está no ar.
-    url_tiktok = ""
-    if postar_tiktok:
-        url_tiktok = publicar_tiktok(
-            cfg,
-            video_final,
-            roteiro["titulo"],
-            # A descrição CRUA, sem a lista de fontes que o formato longo anexa:
-            # link não é clicável na legenda do TikTok, e dez URLs comeriam o
-            # espaço da frase que explica o vídeo.
-            roteiro["descricao"],
-            tags=roteiro.get("tags"),
-        )
-
     print("\nConcluído!")
     print(f"  Vídeo final: {video_final}")
     print(f"  Título: {roteiro['titulo']}")
     print(f"  Descrição:\n{descricao}")
     print(f"  YouTube: {url_youtube}")
-    if url_tiktok:
-        print(f"  TikTok: {url_tiktok}")
 
 
 if __name__ == "__main__":

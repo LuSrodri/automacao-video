@@ -3,8 +3,7 @@ tabelas, infográficos, diagramas e cartazes.
 
 O corpo do vídeo continua sendo SÓ clipe de vídeo do X — a regra de que imagem
 estática não ocupa a tela segue valendo. A figura é outra coisa: uma imagem que
-TOMA A TELA do celular no instante em que a narração diz o dado que ela
-desenha, e sai. Mesma família visual das cartelas (cartelas.py), com uma
+TOMA O QUADRO no instante em que a narração diz o dado que ela desenha, e sai. Mesma família visual das cartelas (cartelas.py), com uma
 diferença de origem: aqui a imagem não vem de lugar nenhum do mundo real — ela
 é DESENHADA a partir dos números que a própria narração já falou.
 
@@ -19,12 +18,11 @@ CITAÇÃO LITERAL do texto narrado, e os rótulos e valores desenhados são os q
 o modelo extraiu daquele trecho. Isso não é preciosismo — é o que impede o
 vídeo de exibir na tela um número que ninguém falou.
 
-ANIMAÇÃO (2026-08-09, pedido do usuário): a figura entra e sai pelo CARROSSEL
-do celular — o conteúdo desliza para a esquerda e a figura ocupa a tela inteira
-no lugar do vídeo; no fim da janela ela desliza de volta para a direita (ver
-edicao.py; a mão que empurrava o carrossel saiu em 2026-08-10). Substituiu a
-subida de baixo do quadro. Este módulo só renderiza a imagem parada, do tamanho
-da tela; o movimento é todo do ffmpeg.
+ANIMAÇÃO (2026-08-09, pedido do usuário): a figura entra e sai pelo CARROSSEL —
+o conteúdo desliza para a esquerda e a figura ocupa o quadro inteiro no lugar do
+vídeo; no fim da janela ela desliza de volta para a direita (ver edicao.py).
+Substituiu a subida de baixo do quadro. Este módulo só renderiza a imagem
+parada, do tamanho do quadro; o movimento é todo do ffmpeg.
 
 Etapa opcional: qualquer falha (OpenAI, rede, Pillow, citação não encontrada)
 só deixa o vídeo sem figuras — nunca derruba o pipeline.
@@ -57,15 +55,14 @@ GAP_FIGURAS = 1.2  # s; respiro mínimo entre figuras e para as outras camadas
 # O gancho decide o swipe: os primeiros segundos ficam com o clipe limpo.
 INICIO_MINIMO = 3.0
 
-# Movimento (2026-08-09): a figura deixou de subir por cima do clipe e passou a
-# ocupar a TELA INTEIRA do celular, entrando pelo deslize — o mesmo carrossel
-# das cartelas (ver edicao.py). Aqui só se renderiza a imagem parada.
+# Movimento (2026-08-09): a figura não sobe por cima do clipe — ela ocupa o
+# QUADRO INTEIRO, entrando pelo deslize do carrossel das cartelas (ver
+# edicao.py). Aqui só se renderiza a imagem parada.
 
 # Tamanhos aceitos pelo gpt-image-2 (arestas múltiplas de 16, proporção até
 # 3:1, total de pixels dentro da faixa permitida). Qual dos dois é usado sai da
-# TELA do celular (`vertical = tela[1] > tela[0]`), não do formato: desde
-# 2026-08-10 a orientação do aparelho vem do material, então um Short com clipe
-# horizontal pede figura em paisagem.
+# orientação do QUADRO (`vertical = tela[1] > tela[0]`): Short 9:16 pede figura
+# em retrato, o formato longo 16:9 pede em paisagem.
 TAMANHO_VERTICAL = "1024x1536"
 TAMANHO_HORIZONTAL = "1536x1024"
 
@@ -400,17 +397,14 @@ def _no_idioma_do_canal(figura: dict, publico: str) -> bool:
 
 
 def _planejar(
-    cfg: Config, texto_video: str, trend: dict, noticias: list[dict], maximo: int
+    cfg: Config, texto_video: str, trend: dict, maximo: int
 ) -> list[dict]:
     contexto = (trend or {}).get("resumo", "")
-    manchetes = "\n".join(
-        f"- {(n.get('titulo') or '').strip()}" for n in (noticias or [])[:6]
-    )
     conteudo = (
         AVISO_DADOS_EXTERNOS + "\n\n"
         f"NARRAÇÃO DO VÍDEO (é daqui que saem os dados):\n{texto_video}\n\n"
         f"CONTEXTO DA PAUTA (só para você entender o assunto — NÃO tire números "
-        f"daqui):\n{contexto}\n{manchetes}"
+        f"daqui):\n{contexto}"
     )
     idioma = nome_do_idioma(cfg.publico)
     esquema = _esquema(cfg.publico)
@@ -496,7 +490,6 @@ def gerar_figuras(
     cfg: Config,
     texto_video: str,
     trend: dict,
-    noticias: list[dict],
     alinhamento: dict,
     dur_total: float,
     pasta: Path,
@@ -509,8 +502,8 @@ def gerar_figuras(
     quando a narração não tem dado que renda figura ou quando qualquer etapa
     falha (a camada é opcional por construção).
 
-    `tela`: (largura, altura) da TELA do celular em px — é nesse tamanho que a
-    figura é renderizada, porque ela ocupa a tela inteira do aparelho.
+    `tela`: (largura, altura) do QUADRO do vídeo em px — é nesse tamanho que a
+    figura é renderizada, porque ela ocupa a tela inteira.
 
     `ocupadas`: janelas (início, fim) já usadas pelas cartelas; nenhuma figura
     entra em cima delas — dois deslizes ao mesmo tempo viram poluição.
@@ -528,7 +521,7 @@ def gerar_figuras(
         return []
 
     try:
-        plano = _planejar(cfg, texto_video, trend, noticias, maximo)
+        plano = _planejar(cfg, texto_video, trend, maximo)
     except Exception as erro:  # noqa: BLE001 — figura nunca derruba o vídeo
         print(f"[aviso] Planejamento das figuras falhou ({erro}); seguindo sem.")
         return []

@@ -10,18 +10,11 @@ sombra suave, com a ALTURA do glifo levemente reduzida (ESCALA_Y) — o corpo da
 fonte é o mesmo, só a proporção fica mais baixa e condensada, que é o que dá o
 ar editorial e minimalista.
 
-Desde a moldura de celular (2026-08-09, cenario.py) a legenda é medida e
-posicionada contra uma ÁREA dada, não contra o quadro: `area` traz o retângulo,
-e dele saem o tamanho da fonte, as margens laterais e a altura da faixa
-inferior. Quem decide o retângulo é `cenario.area_legenda`, e ele é a TELA DO
-APARELHO na maior parte dos casos — sem isso a palavra transbordaria do celular
-e cairia sobre a cama.
-
-A exceção é o Short com o celular DEITADO (clipe horizontal, desde 2026-08-10):
-ali a tela tem ~440px de altura e a legenda dentro dela cobriria o clipe
-inteiro, então a área passa a ser a faixa de CAMA abaixo do aparelho — com o
-rodapé do quadro reservado, porque é onde o Shorts e o TikTok desenham a
-própria interface.
+A legenda é medida e posicionada contra o QUADRO INTEIRO: dele saem o tamanho
+da fonte, as margens laterais e a altura da faixa inferior. Entre 2026-08-09 e
+2026-08-16 ela era medida contra a tela de um celular desenhado sobre uma cama
+(`cenario.area_legenda`); com a volta da tela cheia esse retângulo intermediário
+sumiu, e o quadro voltou a ser a área útil — como era antes das molduras.
 """
 
 import re
@@ -176,19 +169,16 @@ def gerar_legendas(
     altura: int,
     destino: Path,
     intervalos_imagens: list[tuple[float, float]] | None = None,
-    area: tuple[int, int, int, int] | None = None,
 ) -> Path:
     """Gera o .ass das legendas sincronizadas e devolve seu caminho.
 
     `intervalos_imagens`: janelas (início, fim) em que há imagem na tela; nesses
     trechos a legenda vai para a parte inferior, nos demais fica centralizada.
-
-    `area`: (x, y, largura, altura) da TELA do celular dentro do quadro. É
-    contra ela que a tipografia é dimensionada e posicionada. Omitida, o quadro
-    inteiro é a área — o comportamento anterior à moldura de celular.
     """
     intervalos = intervalos_imagens or []
-    area_x, area_y, area_l, area_a = area or (0, 0, largura, altura)
+    # Área útil = o quadro inteiro (tela cheia). Os quatro nomes continuam
+    # porque a tipografia é toda medida contra este retângulo.
+    area_x, area_y, area_l, area_a = 0, 0, largura, altura
     palavras = _palavras_com_tempos(texto, alinhamento, dur_total)
     eventos = _agrupar(palavras)
 
@@ -209,8 +199,6 @@ def gerar_legendas(
         escala_y=ESCALA_Y,
         margem_l=margem_l,
         margem_r=margem_r,
-        # A faixa inferior é medida a partir da BASE DA ÁREA (a base da tela do
-        # celular), não da base do quadro: é dentro da tela que a legenda mora.
         margem_v=round(altura - (area_y + area_a) + area_a * 0.26),
     )
 

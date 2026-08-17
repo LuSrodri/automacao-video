@@ -13,9 +13,8 @@ ENV_PATH = RAIZ / ".env"
 def atualizar_env(chave: str, valor: str) -> None:
     """Cria ou atualiza ``chave=valor`` no arquivo ``.env``.
 
-    Mora aqui (e não no módulo de publicação) porque os dois fluxos de
-    autorização gravam token de longa duração no mesmo arquivo: o do YouTube e
-    o do TikTok.
+    Mora aqui (e não no módulo de publicação) porque é o fluxo de autorização
+    do YouTube que grava token de longa duração no arquivo.
     """
     linhas = (
         ENV_PATH.read_text(encoding="utf-8").splitlines()
@@ -159,7 +158,6 @@ LONGO_LARGURA = 1920
 LONGO_ALTURA = 1080
 LONGO_MAX_CLIPES = 8  # clipes do X por vídeo (3 seguram mal 2 minutos de tela)
 LONGO_MAX_POSTS_MIDIA = 16  # posts da trend consultados p/ achar esses clipes
-LONGO_NUM_NOTICIAS = 10  # mais notícias = mais material para a análise
 LONGO_MAX_CARTELAS = 4  # cartelas de imagem sobrepostas (dobro de tempo de tela)
 LONGO_MAX_FOTOS = 6  # fotos dos posts baixadas para alimentar as cartelas
 LONGO_MAX_FIGURAS = 4  # figuras/gráficos gerados (dobro de tempo de tela)
@@ -195,89 +193,39 @@ LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 # publicação cai mais rápido do que a chance de ele existir.
 TENTATIVAS_TREND = 3
 
-# Privacidades que a Content Posting API do TikTok aceita. Quais valem para a
-# conta é o creator-info que diz — em 2026-08-06 a do canal aceitava
-# PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS e SELF_ONLY.
-PRIVACIDADES_TIKTOK = {
-    "PUBLIC_TO_EVERYONE",
-    "MUTUAL_FOLLOW_FRIENDS",
-    "FOLLOWER_OF_CREATOR",
-    "SELF_ONLY",
-}
-
-# Contas fixas do X que alimentam a coleta. X_ACCOUNTS no .env, quando
-# preenchido, substitui esta lista inteira.
+# --- Piso de engajamento (2026-08-16, pedido do usuário) ---------------------
+# "Sempre priorizando alto engajamento (versus swipe-away) de 70% ou mais."
 #
-# FOCO DO CANAL (2026-07-30, pedido do usuário): TECNOLOGIA, INTELIGÊNCIA
-# ARTIFICIAL, MERCADO DE TRABALHO e MERCADO FINANCEIRO. Saíram todas as contas
-# de inteligência/OSINT, defesa e geopolítica (sentdefender, Faytuks, Osint613,
-# WhiteHouse, FBI, SecRubio, exercitooficial, EmbaixadaEUA) e os veículos
-# político-generalistas brasileiros que vinham junto (CNNBrasil, brasilparalelo,
-# revistaoeste) — o canal deixou de cobrir guerra e geopolítica.
+# A métrica é o GANCHO: `engagedViews / views` da YouTube Analytics — a fração
+# de quem abriu o vídeo e FICOU, contra quem deslizou para o próximo. É a
+# tradução direta de "engajamento versus swipe-away", e não deve ser confundida
+# com `averageViewPercentage` (quanto do vídeo quem ficou assistiu), que mede
+# outra coisa e serve de desempate.
 #
-# Todos os handles abaixo foram VERIFICADOS um a um contra /2/users/by da X API
-# em 2026-07-30 (existência e grafia). Handle que não resolve é conta morta:
-# ela ocupa espaço na query de 512 caracteres e não devolve post nenhum.
-CONTAS_PADRAO = [
-    # --- Laboratórios e empresas de IA -------------------------------------
-    "OpenAI", "OpenAIDevs", "sama", "gdb", "kevinweil", "polynoamial",
-    "AnthropicAI", "DarioAmodei", "claudeai", "ClaudeDevs", "alexalbert__",
-    "GoogleDeepMind", "demishassabis", "GoogleAI", "googlegemma",
-    "OfficialLoganK", "xai", "MistralAI", "deepseek_ai", "Alibaba_Qwen",
-    "Kimi_Moonshot", "perplexity_ai", "AravSrinivas", "thinkymachines", "ssi",
-    "cohere", "scale_AI", "alexandr_wang", "mustafasuleyman", "AIatMeta",
-    "huggingface", "ClementDelangue", "midjourney", "runwayml", "LumaLabsAI",
-    "StabilityAI", "EMostaque",
-    # --- Análise e cobertura de IA -----------------------------------------
-    "karpathy", "ylecun", "fchollet", "AndrewYNg", "drfeifei", "JeffDean",
-    "DrJimFan", "emollick", "hardmaru", "simonw", "goodside", "_akhaliq",
-    "rowancheung", "TheRundownAI", "kimmonismus", "scaling01", "btibor91",
-    "testingcatalog", "bindureddy", "minchoi", "intheworldofai", "chetaslua",
-    "deedydas", "tszzl", "swyx", "jeremyphoward", "ArtificialAnlys",
-    "EpochAIResearch", "StanfordAILab",
-    # --- Chips, big tech e ferramentas de desenvolvimento -------------------
-    "nvidia", "AMD", "AIatAMD", "intel", "Microsoft", "satyanadella",
-    "Google", "sundarpichai", "Apple", "tim_cook", "Meta", "Tesla",
-    "elonmusk", "SpaceX", "PalantirTech", "databricks", "github", "vercel",
-    "cursor_ai", "Replit", "amasad", "mckaywrigley", "addyosmani", "rakyll",
-    "bcherny", "trq212", "dhh", "ID_AA_Carmack", "tobi", "stripe",
-    "levelsio", "arena",
-    # --- Negócios, venture capital e imprensa de tecnologia ----------------
-    "ycombinator", "paulg", "garrytan", "naval", "balajis", "sriramk",
-    "packyM", "benedictevans", "stratechery", "theinformation",
-    "EricNewcomer", "alexrkonrad", "KateClarkTweets", "mattturck",
-    "gregisenberg", "nikitabier", "eriktorenberg", "chamath", "Jason",
-    "jasonlk", "hnshah", "levie", "Austen", "shl", "business",
-    "TheEconomist", "FT", "Reuters", "axios", "CNBC",
-    # --- Mercado financeiro -------------------------------------------------
-    "unusual_whales", "DeItaone", "zerohedge", "FirstSquawk", "LiveSquawk",
-    "markets", "WSJmarkets", "YahooFinance", "TheStalwart", "biancoresearch",
-    "charliebilello", "KobeissiLetter", "GRDecter", "StockMKTNewz",
-    "Barchart", "elerianm", "LizAnnSonders", "RampCapitalLLC",
-    "dailychartbook", "MacroAlf", "LynAldenContact", "michaelbatnick",
-    "morganhousel", "Ritholtz", "NickTimiraos", "SoberLook", "JavierBlas",
-    "lisaabramowicz1", "federalreserve", "Nasdaq", "NYSE", "SECGov",
-    "IMFNews", "Kalshi", "WatcherGuru", "APompliano",
-    # --- Mercado de trabalho ------------------------------------------------
-    "LinkedInNews", "BLS_gov", "USDOL", "ADP", "indeed", "Glassdoor",
-    "Josh_Bersin", "Layoffsfyi", "LayoffsTracker", "AnnieLowrey", "OECD",
-    # --- Brasil: tecnologia e finanças --------------------------------------
-    "infomoney", "exame", "valoreconomico", "BrazilJournal", "Tecnoblog",
-    "olhardigital", "canaltech", "xpinvestimentos", "B3_Oficial", "nubank",
-    "BancoCentralBR", "Felippe_Hermes",
-    # --- Contas que o usuário acompanha de perto -----------------------------
-    "dfolloni", "noahzweben", "_cyberhusky", "lucasjvds", "Sam_Acqua",
-]
+# O piso vale como PRIORIDADE, não como veto: quem escolhe a pauta é o modelo, e
+# o que este número faz é decidir quais vídeos publicados entram na lista de
+# molde ("é com estes que a candidata precisa se parecer") — ver
+# youtube.top_retencao e o prompt de seleção em escritor.py. Canal sem nenhum
+# vídeo acima do piso não trava: a lista cai para os melhores disponíveis, com
+# aviso no log, porque bloquear a publicação por causa da régua deixaria o canal
+# sem vídeo justamente quando ele mais precisa de material novo.
+ENGAJAMENTO_MINIMO = 70
 
 
 @dataclass
 class Config:
     openai_api_key: str
     elevenlabs_api_key: str
-    firecrawl_api_key: str
-    contas: list[str]
     x_consumer_key: str  # X API oficial: coleta dos posts + mídias
     x_consumer_secret: str
+    # Handle do X cujas CONTAS SEGUIDAS alimentam a coleta (X_USERNAME). Desde
+    # 2026-08-16 a fonte da pauta é a lista de "following" desta conta, lida da
+    # X API a cada execução (x_client.contas_seguidas) — não há mais lista fixa
+    # de handles no código. Seguir alguém novo no X passa a mudar o canal.
+    x_username: str = ""
+    # X_ACCOUNTS no .env: quando preenchido, SUBSTITUI a lista de seguidas.
+    # Escape hatch para testar um recorte de contas sem mexer em quem se segue.
+    contas: list[str] = field(default_factory=list)
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
     # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
     # coleta normal ordena por relevância e não prefere vídeo, então o post com
@@ -316,7 +264,6 @@ class Config:
     velocidade: float = 1.25
     janela_horas: int = 24
     num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
-    num_noticias: int = 6  # quantas notícias buscar (Firecrawl news) p/ enriquecer
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
     formato: str = "curto"  # "curto" (Shorts 9:16) ou "longo" (--long-take, 16:9)
     max_clipes: int = 3  # clipes de vídeo do X usados na montagem
@@ -327,7 +274,7 @@ class Config:
     # só teria como resultado abortar o vídeo.
     pool_extra_clipes: int = 3
     max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
-    # Imagens que tomam a tela do celular pelo deslize do carrossel, por vídeo.
+    # Imagens que tomam o quadro pelo deslize do carrossel, por vídeo.
     # Caiu de 2 para 1 em 2026-08-09, junto com o Short de 25 segundos: cada
     # imagem tira ~4s de clipe da tela, e 2 cartelas + 2 figuras deixariam a
     # maior parte do Short em imagem parada — o oposto do formato.
@@ -358,28 +305,6 @@ class Config:
     # (auditoria.py). Desligar aceita de volta o busto falante e a foto com
     # áudio como fundo do vídeo.
     veto_clipe_parado: bool = True
-    # --- TikTok via Zernio (publicação secundária, só no canal brasileiro) --
-    # O mesmo vídeo que vai para o YouTube é postado no TikTok na MESMA
-    # execução: nada é gerado de novo, então o custo adicional é zero. Ligado
-    # por TIKTOK_PUBLICAR nos crons do canal BR (ver zernio.py).
-    #
-    # A publicação passa pelo Zernio, e não pela API do TikTok direto, porque
-    # o TikTok só libera post PÚBLICO para app que passou pela auditoria dele —
-    # e a auditoria exige site, política de privacidade e vídeo de demonstração
-    # de uma interface que este pipeline não tem. O Zernio já é auditado.
-    tiktok_publicar: bool = False
-    zernio_api_key: str = ""
-    # Só é necessário se houver mais de uma conta de TikTok no Zernio; vazio
-    # faz o pipeline descobrir a única conectada.
-    zernio_account_id: str = ""
-    tiktok_usuario: str = "lusrodri"
-    # PUBLIC_TO_EVERYONE confirmado como disponível na conta em 2026-08-06
-    # (creator-info do Zernio). SELF_ONLY serve para testar sem publicar.
-    tiktok_privacy: str = "PUBLIC_TO_EVERYONE"
-    # Rótulo de conteúdo gerado por IA (videoMadeWithAi). Vale True porque a
-    # narração é sintetizada (ElevenLabs) e as figuras da tela são desenhadas
-    # por modelo de imagem — o TikTok pede o rótulo nesse caso.
-    tiktok_aigc: bool = True
     output_dir: Path = field(default_factory=lambda: RAIZ / "output")
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
@@ -392,7 +317,6 @@ def carregar_config() -> Config:
         for nome in (
             "OPENAI_API_KEY",
             "ELEVENLABS_API_KEY",
-            "FIRECRAWL_API_KEY",
             "X_CONSUMER_KEY",
             "X_CONSUMER_SECRET",
         )
@@ -404,21 +328,22 @@ def carregar_config() -> Config:
             "Copie o .env.example para .env e preencha as chaves."
         )
 
-    # X_ACCOUNTS é opcional: vazio = usa a lista fixa CONTAS_PADRAO;
-    # preenchido = usa somente as contas listadas no .env.
+    # X_ACCOUNTS é opcional: vazio = a coleta usa as CONTAS QUE X_USERNAME SEGUE
+    # (lidas da X API em x_client.contas_seguidas); preenchido = usa somente as
+    # contas listadas no .env.
     contas = [
         c.strip().lstrip("@")
         for c in os.getenv("X_ACCOUNTS", "").split(",")
         if c.strip()
-    ] or list(CONTAS_PADRAO)
+    ]
 
     cfg = Config(
         openai_api_key=os.environ["OPENAI_API_KEY"],
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
-        firecrawl_api_key=os.environ["FIRECRAWL_API_KEY"],
         contas=contas,
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
+        x_username=(os.getenv("X_USERNAME", "") or "").strip().lstrip("@"),
         x_max_posts=int(os.getenv("X_MAX_POSTS", "200")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
@@ -432,7 +357,6 @@ def carregar_config() -> Config:
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", "1.25")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
-        num_noticias=int(os.getenv("NUM_NOTICIAS", "6")),
         # Ambos ZERADOS no curto: leitura da X API é paga por post e os Shorts
         # NÃO travam por falta de clipe (precisam de 3, não de 8). Quem precisa
         # é o longo, e ativar_formato_longo sobe os dois. Para ligar no curto,
@@ -462,17 +386,17 @@ def carregar_config() -> Config:
         in ("1", "true", "sim", "yes"),
         veto_clipe_parado=os.getenv("VETO_CLIPE_PARADO", "1").strip().lower()
         in ("1", "true", "sim", "yes"),
-        tiktok_publicar=os.getenv("TIKTOK_PUBLICAR", "0").strip().lower()
-        in ("1", "true", "sim", "yes"),
-        zernio_api_key=os.getenv("ZERNIO_API_KEY", ""),
-        zernio_account_id=os.getenv("ZERNIO_ACCOUNT_ID", ""),
-        tiktok_usuario=os.getenv("TIKTOK_USUARIO", "lusrodri"),
-        tiktok_privacy=os.getenv(
-            "TIKTOK_PRIVACY", "PUBLIC_TO_EVERYONE"
-        ).strip().upper(),
-        tiktok_aigc=os.getenv("TIKTOK_AIGC", "1").strip().lower()
-        in ("1", "true", "sim", "yes"),
     )
+
+    # Sem lista manual, a coleta depende de saber DE QUEM ler as seguidas.
+    # Fail-fast aqui (e não na primeira chamada da X API) porque sem contas não
+    # há pauta nenhuma, e descobrir isso depois de pagar token e lookup é caro.
+    if not (cfg.contas or cfg.x_username):
+        raise SystemExit(
+            "Sem contas para coletar: preencha X_USERNAME no .env com o seu "
+            "handle do X (a coleta lê as contas que ele SEGUE) ou X_ACCOUNTS "
+            "com uma lista fixa de handles."
+        )
 
     # A duração final segue o áudio da narração; este valor orienta o
     # tamanho do roteiro gerado. O piso é CURTO_MIN_S porque Short abaixo
@@ -489,12 +413,6 @@ def carregar_config() -> Config:
             "VIDEO_VELOCIDADE deve estar entre 0.5 e 2.0 (1.0 = velocidade "
             f"normal; recebido: {cfg.velocidade})."
         )
-    if cfg.tiktok_privacy not in PRIVACIDADES_TIKTOK:
-        raise SystemExit(
-            f"TIKTOK_PRIVACY inválida ({cfg.tiktok_privacy}). Valores aceitos: "
-            f"{', '.join(sorted(PRIVACIDADES_TIKTOK))}."
-        )
-
     cfg.output_dir.mkdir(exist_ok=True)
     return cfg
 
@@ -523,7 +441,6 @@ def ativar_formato_longo(cfg: Config) -> Config:
     # pagar leitura extra para resolver um problema que eles não têm.
     cfg.x_max_posts_video = int(os.getenv("X_MAX_POSTS_VIDEO", "60"))
     cfg.x_max_posts_busca = int(os.getenv("X_MAX_POSTS_BUSCA", "30"))
-    cfg.num_noticias = int(os.getenv("LONG_NUM_NOTICIAS", str(LONGO_NUM_NOTICIAS)))
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
     cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))
     cfg.max_figuras = int(os.getenv("LONG_MAX_FIGURAS", str(LONGO_MAX_FIGURAS)))

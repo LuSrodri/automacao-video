@@ -8,8 +8,9 @@ sobrou desta etapa é a anotação que a seleção ainda precisa:
 
 - macrotema: rotula a candidata para a seleção poder ler a régua de audiência
   por TEMA e não vídeo a vídeo ("os 'mercado-trabalho' fazem 15 mil views, os
-  'dev-software' fazem 200" — ver escritor.py). Já alimentou um teto de
-  macrotemas seguidos, removido em 2026-07-28;
+  'dev-software' fazem 200" — ver escritor.py). É também o que alimenta o
+  RODÍZIO de temas dos Shorts, e por isso a lista precisa cobrir todos os
+  assuntos possíveis desde que o canal deixou de ter recorte temático;
 - imagem_mental: o que a pessoa visualiza ao ouvir a notícia; é a matéria-prima
   do HOOK na hora do roteiro.
 
@@ -23,14 +24,17 @@ from openai import OpenAI
 
 from .config import AVISO_DADOS_EXTERNOS, Config
 
-# Macrotemas do canal. No formato CURTO eles voltaram a ter efeito de regra: o
-# RODÍZIO de temas dos Shorts (2026-08-04, escritor.py) veta as candidatas cujo
-# macrotema é o dos últimos Shorts publicados, para que cada Short saia de um
-# tema diferente do anterior. No formato longo eles seguem só como contexto.
-# "guerra-geopolitica" saiu em 2026-07-30 junto com as
-# contas de inteligência/defesa: o canal deixou de cobrir o assunto, e manter o
-# rótulo só serviria para rotular como "outro" disfarçado o que já não é pauta.
-# "mercado-financeiro" entrou no lugar, com o novo foco do canal.
+# Macrotemas do canal. No formato CURTO eles têm efeito de regra: o RODÍZIO de
+# temas dos Shorts (2026-08-04, escritor.py) veta as candidatas cujo macrotema é
+# o dos últimos Shorts publicados, para que cada Short saia de um tema diferente
+# do anterior. No formato longo eles seguem só como contexto.
+#
+# A LISTA COBRE TODOS OS TEMAS desde 2026-08-16 (pedido do usuário): o canal
+# deixou de ter recorte temático, e uma lista só de rótulos de tecnologia
+# empurraria metade das pautas novas para "outro" — que é o balde de descarte e
+# NÃO entra no rodízio, ou seja, o rodízio pararia de funcionar justamente nos
+# assuntos recém-admitidos. Voltou por isso "mundo-conflitos", que tinha saído
+# em 2026-07-30 quando guerra e geopolítica foram vetadas.
 MACROTEMAS = [
     "ia",
     "criacoes-ia",
@@ -40,6 +44,14 @@ MACROTEMAS = [
     "mercado-trabalho",
     "mercado-financeiro",
     "ciencia-espaco",
+    "saude-bem-estar",
+    "politica-sociedade",
+    "mundo-conflitos",
+    "crime-justica",
+    "clima-ambiente",
+    "esporte",
+    "cultura-entretenimento",
+    "consumo-cotidiano",
     "outro",
 ]
 
@@ -63,12 +75,23 @@ MACROTEMAS_DESCRICAO = """\
 - mercado-financeiro: bolsa, juros, inflação, resultados, investimento,
   regulação financeira, cripto
 - ciencia-espaco: ciência, espaço, energia
-- outro: o que não couber acima\
+- saude-bem-estar: medicina, remédios, epidemias, saúde pública, alimentação
+- politica-sociedade: governo, eleições, leis, decisões públicas, protestos,
+  costumes, religião, educação
+- mundo-conflitos: guerra, conflito armado, geopolítica, diplomacia, defesa,
+  fronteiras, migração
+- crime-justica: crimes, investigações, prisões, julgamentos, tribunais
+- clima-ambiente: clima, desastres naturais, meio ambiente, catástrofes
+- esporte: competições, atletas, resultados, transferências, federações
+- cultura-entretenimento: cinema, séries, música, games, celebridades, internet
+- consumo-cotidiano: preços, produtos, varejo, viagem, transporte, moradia
+- outro: o que não couber em NENHUM dos anteriores (use com parcimônia)\
 """
 
 INSTRUCOES_CLASSIFICACAO = """\
-Você anota notícias candidatas a vídeo de um canal de análise sobre
-tecnologia, inteligência artificial, mercado de trabalho e mercado financeiro.
+Você anota notícias candidatas a vídeo de um canal de análise SEM RECORTE
+TEMÁTICO: qualquer assunto pode virar vídeo, então classifique o que receber
+sem julgar se o tema "combina" com o canal.
 
 Para CADA notícia, preencha:
 - "macrotema": UM macrotema da lista:
