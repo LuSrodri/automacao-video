@@ -177,6 +177,18 @@ LONGO_MIN_CLIPES_APROVADOS = 3
 # material igual ao piso raramente sobrevive inteiro.
 LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 
+# Mesma ideia no CURTO, com uma diferença que importa (2026-08-17). O piso da
+# auditoria aqui é 1 clipe, e a disputa já exigia 1 post com vídeo — o que na
+# prática garantia zero folga: a candidata entrava com um clipe único e, se a
+# auditoria o reprovasse, a tentativa inteira morria. Foi o que aconteceu nas
+# execuções do dia 17, uma atrás da outra, com pools de 1 e 2 clipes de recorte
+# de telejornal, enquanto a COLETA tinha 30 clipes espalhados por outras trends.
+# Este portão é PREFERÊNCIA, não veto: se nenhuma candidata tiver a folga, ele
+# cede e a melhor serviçal disputa mesmo assim — igual ao rodízio de temas, e
+# ao contrário do portão do longo, que aborta. Trocar um vídeo ruim por nenhum
+# vídeo é um preço que preferência não paga.
+CURTO_MIN_POSTS_VIDEO = 2
+
 # --- Fallback de tema (2026-08-05) ------------------------------------------
 # Candidatas tentadas por execução antes de desistir do vídeo. A trend é
 # escolhida por um sinal INDIRETO de material (quantos posts dela têm clipe

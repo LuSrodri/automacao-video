@@ -84,6 +84,7 @@ from .config import (
     AVISO_DADOS_EXTERNOS,
     CURTO_MARGEM_FRAC,
     CURTO_MARGEM_MIN_S,
+    CURTO_MIN_POSTS_VIDEO,
     CURTO_MIN_S,
     LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
@@ -1807,6 +1808,28 @@ def selecionar_trend(
                 "acompanhadas."
             )
         candidatas = com_material
+
+    # PORTÃO DE MATERIAL DO CURTO (2026-08-17): candidata com um clipe só entra
+    # sem folga nenhuma contra o piso de 1 da auditoria — reprovou, a tentativa
+    # morreu. Prefere quem tem CURTO_MIN_POSTS_VIDEO, e cede quando ninguém tem.
+    if not longo:
+        servidas = [
+            t for t in candidatas
+            if (t.get("posts_com_video") or 0) >= CURTO_MIN_POSTS_VIDEO
+        ]
+        if servidas and len(servidas) < len(candidatas):
+            print(
+                f"[portao] {len(candidatas) - len(servidas)} candidata(s) com "
+                f"menos de {CURTO_MIN_POSTS_VIDEO} posts com clipe fora da "
+                f"disputa ({len(servidas)} seguem, com folga para a auditoria)."
+            )
+            candidatas = servidas
+        elif not servidas:
+            print(
+                f"[portao] nenhuma candidata tem {CURTO_MIN_POSTS_VIDEO} posts "
+                "com clipe; o portão cede e a disputa segue com o que há — "
+                "melhor tentar com um clipe do que não tentar."
+            )
 
     # RODÍZIO DE TEMAS DOS SHORTS (2026-08-04): o macrotema do(s) último(s)
     # Short(s) publicado(s) sai da disputa, para que cada Short saia de um tema

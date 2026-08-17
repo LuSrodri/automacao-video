@@ -80,7 +80,16 @@ TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
 # "vídeo de gente falando" que o canal deixou de usar. Fica separado de
 # TIPOS_VETADOS porque a mesma cena vira uma cartela legítima — a foto do
 # executivo que a narração acabou de nomear.
-TIPOS_VETADOS_CLIPE = {"estudio_ou_podcast"}
+#
+# VAZIO desde 2026-08-17: 'estudio_ou_podcast' saiu daqui. O veto que ele fazia
+# é o mesmo do busto falante, e desde a medição por frames quem decide é a
+# FRAÇÃO — nos clipes medidos, os três rotulados 'estudio_ou_podcast' tinham
+# 8/8, 7/8 e 5/8 frames falando e caem pelo LIMITE_FALANDO sozinho. O rótulo
+# vinha do modelo, aplicado ao clipe INTEIRO, e era o último resquício do
+# julgamento global que a medida substituiu: um clipe com 2 frames de gente
+# falando em 8 morria pelo nome, sem ninguém medir. Mantido como conjunto (e
+# não removido do código) porque a regra é boa e pode voltar a ter membro.
+TIPOS_VETADOS_CLIPE: set[str] = set()
 
 # Fração de frames com busto falante a partir da qual o clipe É busto falante
 # (2026-08-17). Meia tela: acima da metade o vídeo é uma pessoa falando com

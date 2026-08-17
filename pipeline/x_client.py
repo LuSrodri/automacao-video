@@ -62,7 +62,16 @@ MAX_QUERY = 512  # limite de caracteres da query do search/recent
 # em 512 caracteres cravados e a passada `has:videos` os empurrava para 523,
 # estourando o limite: 3 dos 8 lotes voltavam 400 em toda execução e um terço
 # das contas nunca era varrido atrás de clipe (2026-08-05).
-SUFIXO_BUSCA = " -is:retweet -is:reply"
+# REPOSTS ENTRAM desde 2026-08-17 (antes: " -is:retweet -is:reply"). Medido em
+# 100 posts de um lote de contas: 7 posts com vídeo sem eles, 15 com eles — o
+# repost DOBRAVA o material de clipe e trazia contas que nunca apareciam
+# (@ycombinator sozinha rendeu 8). Faz sentido: repostar é como boa parte das
+# contas compartilha vídeo alheio, e o filtro jogava isso fora inteiro. A
+# curadoria não se perde — quem reposta é uma conta que o usuário segue, ao
+# contrário da busca aberta, que ele preferiu manter só no longo. O que muda é o
+# CRÉDITO na tela: `_normalizar_posts` resolve o repost para o post ORIGINAL,
+# então aparece a @ de quem publicou, que pode não ser conta seguida.
+SUFIXO_BUSCA = " -is:reply"
 SUFIXO_VIDEO = " has:videos"
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 MIN_RESULTS_TIMELINE = 5  # mínimo aceito por max_results em /2/users/:id/tweets
@@ -288,17 +297,40 @@ def _normalizar_posts(dados: dict, usuario_padrao: str = "") -> list[dict]:
         m.get("media_key"): m.get("type") for m in includes.get("media") or []
     }
 
+    # Posts ORIGINAIS de reposts, que a expansão referenced_tweets.id devolve
+    # junto. É neles que mora a mídia: o repost em si não tem `attachments`, e
+    # sem esta resolução todo repost passaria batido como post sem vídeo.
+    originais = {t.get("id"): t for t in includes.get("tweets") or []}
+
     posts = []
     for post in dados.get("data") or []:
         metricas = post.get("public_metrics") or {}
         usuario = autores.get(post.get("author_id"), "") or usuario_padrao
+        # REPOST vira o post ORIGINAL (2026-08-17): a mídia, o texto íntegro (o
+        # do repost vem truncado em "RT @fulano: …") e o crédito de reprodução
+        # pertencem a quem publicou. Baixar pelo id do repost não traria clipe
+        # nenhum — /2/tweets do repost devolve o mesmo envelope vazio.
+        id_post = post["id"]
+        for ref in post.get("referenced_tweets") or []:
+            if ref.get("type") != "retweeted":
+                continue
+            original = originais.get(ref.get("id"))
+            if not original:
+                continue
+            id_post = original.get("id", id_post)
+            usuario = autores.get(original.get("author_id"), "") or usuario
+            post = {**post, "text": original.get("text", post.get("text", ""))}
+            chaves_orig = (original.get("attachments") or {}).get("media_keys")
+            if chaves_orig:
+                post["attachments"] = {"media_keys": chaves_orig}
+            break
         chaves = (post.get("attachments") or {}).get("media_keys") or []
         tem_video = any(
             tipo_midia.get(c) in ("video", "animated_gif") for c in chaves
         )
         posts.append(
             {
-                "url": f"https://x.com/{usuario}/status/{post['id']}",
+                "url": f"https://x.com/{usuario}/status/{id_post}",
                 "usuario": usuario,
                 "texto": post.get("text", ""),
                 "data": (post.get("created_at") or "")[:16].replace("T", " "),
@@ -329,8 +361,15 @@ def _consultar(
                 "max_results": max_results,
                 "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "sort_order": "relevancy",
-                "tweet.fields": "created_at,public_metrics,text",
-                "expansions": "author_id,attachments.media_keys",
+                "tweet.fields": "created_at,public_metrics,text,referenced_tweets",
+                # As duas últimas expansões existem para o REPOST: sem elas o
+                # post original não vem no envelope e a mídia dele fica
+                # invisível (o repost não carrega `attachments` próprio).
+                "expansions": (
+                    "author_id,attachments.media_keys,referenced_tweets.id,"
+                    "referenced_tweets.id.attachments.media_keys,"
+                    "referenced_tweets.id.author_id"
+                ),
                 "user.fields": "username",
                 "media.fields": "type",
             },
@@ -444,9 +483,18 @@ def _coletar_timelines(
                 {
                     "max_results": por_conta,
                     "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "exclude": "retweets,replies",
-                    "tweet.fields": "created_at,public_metrics,text",
-                    "expansions": "attachments.media_keys",
+                    # Só respostas ficam de fora; o repost entra e é resolvido
+                    # para o post original em `_normalizar_posts` (ver
+                    # SUFIXO_BUSCA). Com `exclude=retweets` a timeline
+                    # descartava metade do vídeo que essas contas circulam.
+                    "exclude": "replies",
+                    "tweet.fields": "created_at,public_metrics,text,referenced_tweets",
+                    "expansions": (
+                        "author_id,attachments.media_keys,referenced_tweets.id,"
+                        "referenced_tweets.id.attachments.media_keys,"
+                        "referenced_tweets.id.author_id"
+                    ),
+                    "user.fields": "username",
                     "media.fields": "type",
                 },
             )
