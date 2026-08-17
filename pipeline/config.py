@@ -177,17 +177,36 @@ LONGO_MIN_CLIPES_APROVADOS = 3
 # material igual ao piso raramente sobrevive inteiro.
 LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 
-# Mesma ideia no CURTO, com uma diferença que importa (2026-08-17). O piso da
-# auditoria aqui é 1 clipe, e a disputa já exigia 1 post com vídeo — o que na
-# prática garantia zero folga: a candidata entrava com um clipe único e, se a
-# auditoria o reprovasse, a tentativa inteira morria. Foi o que aconteceu nas
-# execuções do dia 17, uma atrás da outra, com pools de 1 e 2 clipes de recorte
-# de telejornal, enquanto a COLETA tinha 30 clipes espalhados por outras trends.
-# Este portão é PREFERÊNCIA, não veto: se nenhuma candidata tiver a folga, ele
-# cede e a melhor serviçal disputa mesmo assim — igual ao rodízio de temas, e
-# ao contrário do portão do longo, que aborta. Trocar um vídeo ruim por nenhum
-# vídeo é um preço que preferência não paga.
-CURTO_MIN_POSTS_VIDEO = 2
+# O curto NÃO tem portão de quantidade. Um exigindo 2 posts com clipe foi
+# testado e removido no mesmo dia (2026-08-17): ele estreitava a disputa — numa
+# execução, 7 de 8 candidatas fora — e as que sobravam traziam o mesmo material
+# que a auditoria reprova, porque contar clipe não diz nada sobre a FONTE dele.
+# Quem trata isso é CONTAS_SEM_CLIPE, logo abaixo.
+
+# CONTAS VETADAS NA COLETA (2026-08-17, pedido do usuário). Saem da lista de
+# seguidas antes de qualquer leitura: não entram nos lotes da busca nem na
+# rotação de timelines. São contas que só publicam recorte de emissora ou
+# entrevista de estúdio — o material que o canal veta —, e nas execuções do dia
+# 17 TODOS os clipes reprovados vieram delas, com 6/8 a 8/8 frames de gente
+# falando e selo de Fox News, CNN Brasil, Bloomberg ou Brasil Paralelo.
+#
+# O ganho é de ORÇAMENTO, e foi por isso que o usuário pediu o veto da conta
+# inteira em vez de só do clipe: a leitura é paga por post e X_MAX_POSTS é um
+# teto rígido, então uma conta que despeja volume empurra as outras para fora.
+# Medido em 216 posts lidos, `@business` sozinha respondia por 79 — mais de um
+# terço da cota da execução, para entregar entrevista de bancada. Vetada, essa
+# cota vai para as contas cujo material o canal usa.
+#
+# O preço é perder a PAUTA que elas trouxessem; aceito conscientemente, porque
+# as 160+ contas restantes cobrem os mesmos fatos. Ampliar ou limpar pelo
+# .env/Render (CONTAS_VETADAS, separadas por vírgula) sem deploy — e o handle
+# vai sem o @. A lista é de FONTE: nada aqui veta assunto.
+CONTAS_VETADAS_PADRAO = (
+    "Osint613",  # recortes de Fox News; reprovado em toda execução de 17/08
+    "business",  # Bloomberg: estúdio e bancada; 79 de 216 posts lidos
+    "CNNBrasil",
+    "brasilparalelo",  # entrevista de estúdio
+)
 
 # --- Fallback de tema (2026-08-05) ------------------------------------------
 # Candidatas tentadas por execução antes de desistir do vídeo. A trend é
@@ -309,6 +328,11 @@ class Config:
     # X_ACCOUNTS no .env: quando preenchido, SUBSTITUI a lista de seguidas.
     # Escape hatch para testar um recorte de contas sem mexer em quem se segue.
     contas: list[str] = field(default_factory=list)
+    # Contas removidas da coleta mesmo estando entre as seguidas — ver
+    # CONTAS_VETADAS_PADRAO. Vale também sobre X_ACCOUNTS.
+    contas_vetadas: list[str] = field(
+        default_factory=lambda: list(CONTAS_VETADAS_PADRAO)
+    )
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
     # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
     # coleta normal ordena por relevância e não prefere vídeo, então o post com
@@ -424,11 +448,20 @@ def carregar_config() -> Config:
         for c in os.getenv("X_ACCOUNTS", "").split(",")
         if c.strip()
     ]
+    # CONTAS_VETADAS no .env SUBSTITUI a lista padrão (não soma), para dar como
+    # esvaziá-la sem deploy: CONTAS_VETADAS=" " volta a coletar tudo.
+    vetadas_env = os.getenv("CONTAS_VETADAS")
+    contas_vetadas = (
+        [c.strip().lstrip("@") for c in vetadas_env.split(",") if c.strip()]
+        if vetadas_env is not None
+        else list(CONTAS_VETADAS_PADRAO)
+    )
 
     cfg = Config(
         openai_api_key=os.environ["OPENAI_API_KEY"],
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
         contas=contas,
+        contas_vetadas=contas_vetadas,
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
         x_username=(os.getenv("X_USERNAME", "") or "").strip().lstrip("@"),

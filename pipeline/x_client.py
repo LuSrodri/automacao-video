@@ -850,6 +850,25 @@ def coletar_trends(cfg: Config) -> list[dict]:
         seguidas = contas_seguidas(cfg, token)
         contas, ids = sorted(seguidas), seguidas
 
+    # VETO DE FONTE (2026-08-17): as contas de CONTAS_VETADAS saem ANTES de
+    # qualquer leitura — não entram nos lotes da busca nem na rotação de
+    # timelines. O ganho é de orçamento: X_MAX_POSTS é teto rígido e pago, e uma
+    # conta que despeja volume (a @business fez 79 de 216 posts numa medição)
+    # empurra para fora as contas cujo material o canal usa. Ver
+    # CONTAS_VETADAS_PADRAO em config.py.
+    vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
+    if vetadas:
+        antes = len(contas)
+        contas = [c for c in contas if c.lower() not in vetadas]
+        if ids:
+            ids = {c: i for c, i in ids.items() if c.lower() not in vetadas}
+        if len(contas) < antes:
+            print(
+                f"[x] {antes - len(contas)} conta(s) vetada(s) fora da coleta "
+                f"(só publicam recorte de emissora; a cota de leitura vai para "
+                f"as outras {len(contas)})."
+            )
+
     print(
         f"[x] Coletando até {cfg.x_max_posts} posts das últimas "
         f"{cfg.janela_horas}h de {len(contas)} contas..."
