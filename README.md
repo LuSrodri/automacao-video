@@ -419,11 +419,17 @@ Os hits reais do BR (20k a 46k views) têm gancho de **43% a 53%** — todos aba
 
 O efeito prático era o inverso do pedido: o único "molde de alto engajamento" do canal BR era um vídeo de **183 views sobre IA**, e foi assim que saiu um Short sobre robô humanoide num canal cujos hits são todos de geopolítica.
 
-### Por que o engajamento não vira piso
+### O piso de engajamento vem da CURVA, não de uma métrica
 
-O "Continuaram assistindo" do Studio **não é exposto pela Analytics API**. Verificado em 2026-08-17: `swipeAways`, `skipRate`, `engagementRate`, `continuedWatching` e `audienceRetentionPercentage` devolvem todos *Unknown identifier*. O único campo próximo, `engagedViews/views`, mede outra escala — no agregado de 28 dias do canal ele dá **46,7%** onde o Studio mostra **66,8%**, e a razão entre os dois varia de 1,43 a 1,61 por vídeo, então não há conversão. Reconstruí-lo exigiria a curva `audienceWatchRatio` (`dimensions=elapsedVideoTimeRatio`), que **existe** mas custa **uma chamada por vídeo, de 10 a 30 segundos cada** — inviável a cada execução, 12 vezes por dia.
+O "Continuaram assistindo" do Studio **não é exposto pela Analytics API**. Verificado em 2026-08-17: `swipeAways`, `skipRate`, `engagementRate`, `continuedWatching` e `audienceRetentionPercentage` devolvem todos *Unknown identifier*. O único campo próximo, `engagedViews/views`, mede outra escala — no agregado de 28 dias do canal ele dá **46,7%** onde o Studio mostra **66,8%**, e a razão entre os dois varia de 1,43 a 1,61 por vídeo, então não há conversão. Mas ele é **reconstruível pela curva** `audienceWatchRatio` (`dimensions=elapsedVideoTimeRatio`): a queda da audiência nos primeiros segundos **é** o "continuou vs deslizou fora". `_gancho_pela_curva` lê quanto da audiência do instante inicial ainda está lá aos **3 segundos** (`SEGUNDO_DO_GANCHO`).
 
-Por isso o gancho voltou a ser o que era **antes** de 2026-08-16: um termo de **ordenação** (`gancho × profundidade`), não um corte. Aquela versão funcionava justamente porque ordenava — ordenação devolve os melhores do canal seja qual for a escala da métrica, enquanto um piso absoluto numa escala que nunca alcança o número pedido reprova o catálogo inteiro.
+O custo é **uma chamada por vídeo**. Ele só é viável porque roda **depois** do corte de `LIMITE_REFERENCIA` e **em paralelo** (`CURVAS_PARALELAS`, 16 threads): medido, **30 curvas em ~44 segundos**, contra ~4 minutos se rodasse sobre o catálogo inteiro. Foi para isso que o teto de 50 existe.
+
+**Atenção à escala.** Este número não é idêntico ao do Studio. Medido nos mesmos vídeos, ele lê cerca de **8 pontos acima** — 77,3% aqui onde o Studio mostra 70,5% — e a diferença varia de 5 a 13 pontos, sem conversão. Então `ENGAJAMENTO_MINIMO = 70` é mais **permissivo** que os 70% do Studio; o equivalente à seletividade real do Studio fica perto de **78**.
+
+Hoje o piso **não corta ninguém**: os 30 vídeos do BR ficam entre 77,2% e 87,1%, porque retenção acima de 100% já seleciona quem segura o começo. É uma **guarda** contra o vídeo de retenção boa e gancho ruim, não um filtro ativo. Vídeo **sem curva** (novo demais, erro de rede) **não é reprovado** — ausência de medição não é sinal de nada — e se o piso esvaziar a lista, ele cede.
+
+Já a **ordenação** é `gancho × profundidade`, a pontuação de **antes** de 2026-08-16 — com o `engagedViews/views` barato, que serve para ordenar mesmo sem servir para cortar. Aquela versão funcionava justamente porque ordenava: ordenação devolve os melhores do canal seja qual for a escala da métrica, enquanto um piso absoluto numa escala que nunca alcança o número pedido reprova o catálogo inteiro.
 
 ### Como está agora
 

@@ -25,7 +25,11 @@ from pathlib import Path
 
 import requests
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .config import (
+    CURVAS_PARALELAS,
+    ENGAJAMENTO_MINIMO,
     LIMITE_REFERENCIA,
     RETENCAO_MINIMA,
     VIEWS_MINIMO_REFERENCIA,
@@ -71,6 +75,57 @@ ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 # Piso de views para o ranking de retenção: vídeo com pouquíssimas views tem
 # retenção estatisticamente sem valor (3 amigos assistindo até o fim = 100%).
 VIEWS_MINIMO_RETENCAO = 50
+
+# Segundo em que o "continuou vs deslizou fora" é medido na curva de retenção.
+# 3s é a janela em que o espectador do feed decide, e é a leitura que o próprio
+# YouTube descreve como base do gráfico de engajamento do Studio.
+SEGUNDO_DO_GANCHO = 3
+
+
+def _gancho_pela_curva(
+    vid: str, duracao_s: int, headers: dict, fim: str
+) -> tuple[str, float | None]:
+    """Fração da audiência inicial que ainda está lá aos SEGUNDO_DO_GANCHO.
+
+    Esta é a única forma de chegar ao "continuaram assistindo": a Analytics API
+    não expõe esse número como métrica (ver ENGAJAMENTO_MINIMO em config.py),
+    mas expõe a CURVA, e a queda dela nos primeiros segundos é a mesma coisa.
+
+    Custa uma chamada por vídeo, então o chamador roda isto DEPOIS de cortar a
+    lista em LIMITE_REFERENCIA. Devolve None quando a curva não vem — vídeo
+    novo demais, sem dados, ou erro de rede. None NÃO reprova o vídeo: medir
+    errado é pior do que não medir, e a falta de curva não é sinal de nada.
+    """
+    try:
+        resp = requests.get(
+            ANALYTICS_URL,
+            params={
+                "ids": "channel==MINE",
+                "startDate": "2005-01-01",
+                "endDate": fim,
+                "dimensions": "elapsedVideoTimeRatio",
+                "metrics": "audienceWatchRatio",
+                "filters": f"video=={vid}",
+            },
+            headers=headers,
+            timeout=45,
+        )
+        if resp.status_code != 200:
+            return vid, None
+        linhas = resp.json().get("rows") or []
+        if not linhas:
+            return vid, None
+        curva = {float(x[0]): float(x[1]) for x in linhas}
+        ts = sorted(curva)
+        inicio = curva[ts[0]]
+        if not inicio:
+            return vid, None
+        # A curva é indexada por FRAÇÃO do vídeo, então o segundo alvo depende
+        # da duração. Sem duração conhecida, 20s é a mediana dos Shorts daqui.
+        alvo = SEGUNDO_DO_GANCHO / (duracao_s or 20)
+        return vid, curva[min(ts, key=lambda t: abs(t - alvo))] / inicio * 100
+    except Exception:  # noqa: BLE001 — sem a curva o vídeo segue sem nota
+        return vid, None
 
 
 def _refresh_token_do_publico(cfg: Config) -> str:
@@ -370,31 +425,70 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
             )
         top = acima or ordenados[:n_fallback]
 
-        # Títulos dos escolhidos (Data API). Sem o teto de 6, a lista passa dos
-        # 50 IDs que videos.list aceita por chamada (são 45 no BR e 51 no US),
-        # então vai em lotes — um id a mais devolvia 400 e a lista inteira
-        # ficava sem título.
-        titulos = {}
+        # Títulos e DURAÇÕES dos escolhidos (Data API). A duração é necessária
+        # porque a curva de retenção é indexada por fração do vídeo, não por
+        # segundo. O lote de 50 existe porque videos.list recusa mais que isso
+        # por chamada — com LIMITE_REFERENCIA=50 basta uma, mas o laço fica
+        # para o dia em que o teto subir.
+        titulos: dict[str, str] = {}
+        duracoes: dict[str, int] = {}
         todos_ids = [str(r.get("video", "")) for r in top]
         for i in range(0, len(todos_ids), 50):
             detalhes = requests.get(
                 VIDEOS_URL,
-                params={"part": "snippet", "id": ",".join(todos_ids[i : i + 50])},
+                params={
+                    "part": "snippet,contentDetails",
+                    "id": ",".join(todos_ids[i : i + 50]),
+                },
                 headers=headers,
                 timeout=60,
             )
             if detalhes.status_code == 200:
-                titulos.update(
-                    {
-                        item["id"]: item.get("snippet", {}).get("title", "")
-                        for item in detalhes.json().get("items", [])
-                    }
+                for item in detalhes.json().get("items", []):
+                    titulos[item["id"]] = item.get("snippet", {}).get("title", "")
+                    duracoes[item["id"]] = _duracao_iso(
+                        item.get("contentDetails", {}).get("duration", "")
+                    )
+
+        # ENGAJAMENTO pela curva de retenção — uma chamada por vídeo, em
+        # paralelo (elas só esperam rede). Roda AQUI, depois do corte de
+        # LIMITE_REFERENCIA, que é o que torna o custo viável.
+        with ThreadPoolExecutor(max_workers=CURVAS_PARALELAS) as executor:
+            ganchos = dict(
+                executor.map(
+                    lambda v: _gancho_pela_curva(
+                        v, duracoes.get(v, 0), headers, params["endDate"]
+                    ),
+                    todos_ids,
                 )
+            )
+        # Reprova só quem foi MEDIDO e ficou abaixo: sem curva (None) o vídeo
+        # segue, porque a ausência de medição não é sinal de nada. Se o piso
+        # esvaziar a lista, ele cede — a régua prioriza, não veta.
+        com_gancho = [
+            r
+            for r in top
+            if (ganchos.get(str(r.get("video"))) or ENGAJAMENTO_MINIMO + 1)
+            > ENGAJAMENTO_MINIMO
+        ]
+        if com_gancho and len(com_gancho) < len(top):
+            print(
+                f"[youtube] {len(top) - len(com_gancho)} vídeo(s) fora por "
+                f"engajamento abaixo de {ENGAJAMENTO_MINIMO}% aos "
+                f"{SEGUNDO_DO_GANCHO}s."
+            )
+            top = com_gancho
+        elif not com_gancho:
+            print(
+                f"[youtube] aviso: nenhum vídeo passou do piso de "
+                f"{ENGAJAMENTO_MINIMO}% de engajamento; o piso cede para não "
+                "deixar a seleção sem molde."
+            )
 
         campeoes = []
         for r in top:
             views = float(r.get("views") or 0)
-            g = engajamento(r)
+            g = ganchos.get(str(r.get("video")))
             campeoes.append(
                 {
                     "titulo": titulos.get(str(r.get("video")), str(r.get("video"))),

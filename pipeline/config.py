@@ -255,6 +255,33 @@ VIEWS_MINIMO_REFERENCIA = 1000
 # crescerem — e aí corta pelos piores, porque a lista já vem ordenada.
 LIMITE_REFERENCIA = 50
 
+# Piso de ENGAJAMENTO, pedido do usuário desde 2026-08-16 ("acima de 70%") e
+# implementado em 2026-08-17 depois que o teto de 50 tornou o custo viável.
+#
+# COMO É MEDIDO: pela curva de retenção (`audienceWatchRatio` com
+# `dimensions=elapsedVideoTimeRatio`), lendo quanto da audiência do instante
+# inicial ainda está lá aos 3 SEGUNDOS — que é a definição de "continuou vs
+# deslizou fora". É UMA CHAMADA POR VÍDEO, e é por isso que ela só roda depois
+# do corte de LIMITE_REFERENCIA: 30 curvas levam ~48s com 16 threads, contra
+# ~4min se rodasse sobre o catálogo inteiro.
+#
+# ATENÇÃO À ESCALA: este número NÃO é idêntico ao "Continuaram assistindo" do
+# Studio, que não é exposto por nenhuma métrica da API (ver RETENCAO_MINIMA).
+# Medido nos mesmos vídeos, ele lê cerca de 8 pontos ACIMA do Studio — 77,3%
+# aqui onde o Studio mostra 70,5% —, e a diferença varia de 5 a 13 pontos, sem
+# conversão possível. Então 70 aqui é mais PERMISSIVO que 70 lá; para apertar
+# até a seletividade real do Studio, o valor equivalente fica perto de 78.
+#
+# Hoje ele não corta ninguém: os 30 vídeos do BR ficam entre 77,2% e 87,1%,
+# porque o piso de retenção acima de 100% já seleciona quem segura o começo. É
+# uma GUARDA contra o vídeo de retenção boa e gancho ruim, não um filtro ativo.
+ENGAJAMENTO_MINIMO = 70
+
+# Quantas curvas de retenção buscar em paralelo. As chamadas são independentes
+# e passam a maior parte do tempo esperando a rede — medido: 2,4s a 27s cada,
+# 47,7s no total para 30 com 16 threads.
+CURVAS_PARALELAS = 16
+
 
 @dataclass
 class Config:
