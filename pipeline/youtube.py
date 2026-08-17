@@ -77,9 +77,26 @@ ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 VIEWS_MINIMO_RETENCAO = 50
 
 # Segundo em que o "continuou vs deslizou fora" é medido na curva de retenção.
-# 3s é a janela em que o espectador do feed decide, e é a leitura que o próprio
-# YouTube descreve como base do gráfico de engajamento do Studio.
-SEGUNDO_DO_GANCHO = 3
+#
+# CALIBRADO, não chutado (2026-08-17): com 6 vídeos cujo "Continuaram
+# assistindo" real foi lido no Studio, o ponto de leitura foi varrido de 1s a 8s
+# procurando o que melhor reproduz aquele número. Erro médio absoluto:
+#
+#     1s: 23,7 pts    4s:  6,6 pts    6,0s: 3,32 pts  (viés -0,4)
+#     2s: 13,8 pts    5s:  3,3 pts    6,5s: 3,31 pts  (viés -1,6)
+#     3s:  9,0 pts                    8,0s: 4,7 pts
+#
+# 6s ganha por causa do VIÉS: 6,5s empata no erro absoluto mas puxa a leitura
+# 1,6 ponto para baixo sistematicamente, enquanto 6s fica praticamente centrado.
+# Com 3s (a primeira tentativa) a medida lia ~8 pontos ALTO, o que tornava o
+# piso de 70% bem mais permissivo que os 70% do Studio; aos 6s o número é
+# comparável de verdade.
+#
+# Os 3,3 pontos que sobram são irredutíveis por este caminho: por vídeo o desvio
+# vai de -5 a +3, então a fórmula exata do Studio difere da nossa em algo que a
+# curva não revela. A janela (vida toda vs 28 dias) NÃO importa — testada, muda
+# o erro na terceira casa.
+SEGUNDO_DO_GANCHO = 6
 
 
 def _gancho_pela_curva(

@@ -265,16 +265,16 @@ LIMITE_REFERENCIA = 50
 # do corte de LIMITE_REFERENCIA: 30 curvas levam ~48s com 16 threads, contra
 # ~4min se rodasse sobre o catálogo inteiro.
 #
-# ATENÇÃO À ESCALA: este número NÃO é idêntico ao "Continuaram assistindo" do
-# Studio, que não é exposto por nenhuma métrica da API (ver RETENCAO_MINIMA).
-# Medido nos mesmos vídeos, ele lê cerca de 8 pontos ACIMA do Studio — 77,3%
-# aqui onde o Studio mostra 70,5% —, e a diferença varia de 5 a 13 pontos, sem
-# conversão possível. Então 70 aqui é mais PERMISSIVO que 70 lá; para apertar
-# até a seletividade real do Studio, o valor equivalente fica perto de 78.
+# ESCALA: o ponto de leitura foi CALIBRADO contra 6 vídeos cujo "Continuaram
+# assistindo" real foi lido no Studio (ver SEGUNDO_DO_GANCHO em youtube.py). Aos
+# 6s o erro médio é de 3,3 pontos com viés perto de zero, então 70 aqui vale
+# aproximadamente 70 lá. Na primeira versão a leitura era aos 3s e saía ~8
+# pontos alta, o que deixava este piso bem mais frouxo do que parecia.
 #
-# Hoje ele não corta ninguém: os 30 vídeos do BR ficam entre 77,2% e 87,1%,
-# porque o piso de retenção acima de 100% já seleciona quem segura o começo. É
-# uma GUARDA contra o vídeo de retenção boa e gancho ruim, não um filtro ativo.
+# Sobram 3,3 pontos de imprecisão, irredutíveis por este caminho: o desvio por
+# vídeo vai de -5 a +3 pontos. Então trate o piso como uma faixa, não como uma
+# fronteira exata — subir de 70 para 75 muda quem entra, mexer de 70 para 71
+# não significa nada.
 ENGAJAMENTO_MINIMO = 70
 
 # Quantas curvas de retenção buscar em paralelo. As chamadas são independentes
