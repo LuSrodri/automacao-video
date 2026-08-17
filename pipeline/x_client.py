@@ -62,16 +62,20 @@ MAX_QUERY = 512  # limite de caracteres da query do search/recent
 # em 512 caracteres cravados e a passada `has:videos` os empurrava para 523,
 # estourando o limite: 3 dos 8 lotes voltavam 400 em toda execução e um terço
 # das contas nunca era varrido atrás de clipe (2026-08-05).
-# REPOSTS ENTRAM desde 2026-08-17 (antes: " -is:retweet -is:reply"). Medido em
-# 100 posts de um lote de contas: 7 posts com vídeo sem eles, 15 com eles — o
-# repost DOBRAVA o material de clipe e trazia contas que nunca apareciam
-# (@ycombinator sozinha rendeu 8). Faz sentido: repostar é como boa parte das
-# contas compartilha vídeo alheio, e o filtro jogava isso fora inteiro. A
-# curadoria não se perde — quem reposta é uma conta que o usuário segue, ao
-# contrário da busca aberta, que ele preferiu manter só no longo. O que muda é o
-# CRÉDITO na tela: `_normalizar_posts` resolve o repost para o post ORIGINAL,
-# então aparece a @ de quem publicou, que pode não ser conta seguida.
-SUFIXO_BUSCA = " -is:reply"
+# REPOSTS FORA — testados e revertidos no mesmo dia (2026-08-17). Sem o filtro,
+# o material de clipe parecia dobrar (7 → 15 posts com vídeo em 100, e 24 depois
+# do veto de contas), mas a origem desmontou o ganho: 21 daqueles 100 posts eram
+# reposts de UMA conta só, a @DrFonts, que republica arte e tipografia em massa
+# (@goodguylolypop, @Mastermindraws, @DrawDesignStar, @typelabo — nenhuma delas
+# seguida pelo usuário). O repost não traz o vídeo que as contas de notícia
+# publicam; traz o volume de quem reposta por hábito, e ele entope a cota de
+# leitura com material fora da pauta do canal. O usuário decidiu voltar atrás.
+#
+# O mecanismo de resolução em `_normalizar_posts` e as expansões de
+# `referenced_tweets` FICAM: custam zero com o filtro ligado e são o que torna
+# religar isto uma mudança de uma linha — inclusive para o caso de religar só
+# para um recorte de contas.
+SUFIXO_BUSCA = " -is:retweet -is:reply"
 SUFIXO_VIDEO = " has:videos"
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 MIN_RESULTS_TIMELINE = 5  # mínimo aceito por max_results em /2/users/:id/tweets
@@ -483,11 +487,10 @@ def _coletar_timelines(
                 {
                     "max_results": por_conta,
                     "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    # Só respostas ficam de fora; o repost entra e é resolvido
-                    # para o post original em `_normalizar_posts` (ver
-                    # SUFIXO_BUSCA). Com `exclude=retweets` a timeline
-                    # descartava metade do vídeo que essas contas circulam.
-                    "exclude": "replies",
+                    # Repost fora aqui também, pelo mesmo motivo da busca (ver
+                    # SUFIXO_BUSCA): o que ele traz é o volume de quem reposta
+                    # por hábito, não o vídeo das contas de notícia.
+                    "exclude": "retweets,replies",
                     "tweet.fields": "created_at,public_metrics,text,referenced_tweets",
                     "expansions": (
                         "author_id,attachments.media_keys,referenced_tweets.id,"

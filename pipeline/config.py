@@ -206,6 +206,12 @@ CONTAS_VETADAS_PADRAO = (
     "business",  # Bloomberg: estúdio e bancada; 79 de 216 posts lidos
     "CNNBrasil",
     "brasilparalelo",  # entrevista de estúdio
+    # Reposta arte e tipografia em volume: 21 de 100 posts de um lote eram
+    # reposts dela (@goodguylolypop, @Mastermindraws, @DrawDesignStar,
+    # @typelabo). Entrou no veto quando os reposts ainda contavam; fica mesmo
+    # depois de eles saírem, porque o que ela publica também não é pauta do
+    # canal e a cota de leitura é disputada.
+    "DrFonts",
 )
 
 # --- Fallback de tema (2026-08-05) ------------------------------------------
