@@ -82,6 +82,16 @@ TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
 # executivo que a narração acabou de nomear.
 TIPOS_VETADOS_CLIPE = {"estudio_ou_podcast"}
 
+# Fração de frames com busto falante a partir da qual o clipe É busto falante
+# (2026-08-17). Meia tela: acima da metade o vídeo é uma pessoa falando com
+# alguma cena no meio; abaixo dela é uma cena com alguém falando nas pontas, e
+# o pedaço aproveitável está em `inicio_util_s` (midia_x). O veto não afrouxou —
+# ele passou a medir 8 frames em vez de 3, e a decidir pelo corpo do vídeo em
+# vez das pontas. Medido em 8 clipes reais: os vetos de 7/8 e 8/8 (entrevista de
+# estúdio) continuam vetados; o vídeo do FBI, com 5 frames de agentes em ação e
+# 3 de porta-voz, deixa de ser.
+LIMITE_FALANDO = 0.5
+
 # No FORMATO LONGO o material de telejornal deixa de ser vetado: entra MARCADO
 # como representação visual (dessaturado + etiqueta na tela, ver edicao.py).
 # 90-120s de tela raramente se sustentam só com cena crua, e a marcação resolve
@@ -306,7 +316,20 @@ def _veto_parado(laudo: dict) -> str:
     """
     if laudo.get("cena_estatica"):
         return "clipe estático (o mesmo quadro do começo ao fim)"
-    if laudo.get("pessoa_falando"):
+    fracao = laudo.get("fracao_falando")
+    if fracao is not None:
+        # MAIORIA dos frames, não um booleano do clipe inteiro (2026-08-17). A
+        # medida antiga vinha de 3 frames em 10%, 50% e 85%, e reprovava clipe
+        # com 3 de 8 frames de apresentador enquanto aprovava clipe com 5 de 8 —
+        # decidia pelas pontas do vídeo, onde o âncora sempre está. Acima da
+        # metade o clipe É busto falante e sai; abaixo dela ele tem miolo
+        # aproveitável, e quem escolhe o pedaço é `inicio_util_s`.
+        if fracao > LIMITE_FALANDO:
+            return (
+                f"clipe de pessoa falando para a câmera em "
+                f"{fracao * 100:.0f}% dos frames medidos"
+            )
+    elif laudo.get("pessoa_falando"):
         return "clipe de pessoa falando para a câmera"
     tipo = laudo.get("tipo_material", "")
     if tipo in TIPOS_VETADOS_CLIPE:
@@ -467,6 +490,11 @@ def auditar_midias(
             texto_estatico=bool(m["laudo"].get("texto_estatico")),
             cena_estatica=bool(m["laudo"].get("cena_estatica")),
             pessoa_falando=bool(m["laudo"].get("pessoa_falando")),
+            # Onde começa o miolo sem busto falante — a montagem entra por aqui
+            # em vez de pelo segundo zero, que num vídeo de veículo é a abertura
+            # com o apresentador (ver `_medir_frames` em midia_x.py).
+            inicio_util_s=m["laudo"].get("inicio_util_s"),
+            dur_util_s=m["laudo"].get("dur_util_s"),
             nivel_texto=max(_nivel_texto(m["laudo"]), 0),
             nota=nota,
             motivo=motivo,

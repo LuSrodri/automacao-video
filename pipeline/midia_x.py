@@ -49,6 +49,10 @@ MAX_POSTS = 12  # posts consultados por vídeo (cada um custa ~US$ 0,005)
 MAX_CLIPES = 3  # clipes de vídeo USADOS na montagem (o pool baixado é maior)
 POOL_EXTRA = 3  # clipes baixados além do necessário, como folga da auditoria
 MAX_FOTOS = 4  # fotos baixadas para as cartelas sobrepostas
+# Clipes que uma MESMA conta pode ocupar no pool antes de as vagas irem para
+# outras (2026-08-17). 2 permite um veículo mostrar dois ângulos do fato sem
+# tomar o pool inteiro; o que sobrar de vaga volta para quem foi adiado.
+MAX_CLIPES_POR_CONTA = 2
 MAX_VIDEO_BYTES = 60_000_000  # ~60 MB; vídeo maior que isso é descartado
 MAX_FOTO_BYTES = 25_000_000  # ~25 MB; foto maior que isso é descartada
 
@@ -220,13 +224,25 @@ def baixar_midias_posts(
         print("[midia-x] Nenhum clipe de vídeo anexado nos posts consultados")
 
     clipes: list[dict] = []
-    for k, m in enumerate(brutos[:pool], 1):
+    por_conta: dict[str, int] = {}
+    baixados = 0
+
+    def _conta_da(m: dict) -> str:
+        return conta_do_post.get(dono_da_midia.get(m.get("media_key", ""), ""), "")
+
+    def _para_o_pool(m: dict) -> None:
+        nonlocal baixados
         urls_mp4 = _variantes_mp4(m.get("variants") or [])
         if not urls_mp4:
-            continue
-        caminho = _baixar_melhor_variante(urls_mp4, pasta / f"clipe_x_{k}.mp4")
+            return
+        baixados += 1
+        caminho = _baixar_melhor_variante(
+            urls_mp4, pasta / f"clipe_x_{baixados}.mp4"
+        )
         if not caminho:
-            continue
+            return
+        conta = _conta_da(m)
+        por_conta[conta] = por_conta.get(conta, 0) + 1
         try:
             dur_s = duracao_audio(caminho)  # ffprobe format=duration
         except (subprocess.CalledProcessError, ValueError, OSError):
@@ -236,6 +252,35 @@ def baixar_midias_posts(
         print(
             f"[midia-x] {caminho.name} ({m.get('type')}, "
             f"{item['conta'] or 'conta desconhecida'})"
+        )
+
+    # TETO POR CONTA (2026-08-17): sem ele o pool virava a produção de uma conta
+    # só. Medido em 17/08: de 8 clipes coletados, 4 eram do @business e 2 do
+    # @HeyGen (anúncio de produto) — um pool que não representa a timeline e
+    # concentra o risco de a auditoria reprovar tudo de uma vez, porque material
+    # do mesmo veículo tem sempre o mesmo formato. Conta desconhecida não entra
+    # na conta do teto: sem saber de quem é, não há concentração a evitar.
+    adiados: list[dict] = []
+    for m in brutos:
+        if len(clipes) >= pool:
+            break
+        conta = _conta_da(m)
+        if conta and por_conta.get(conta, 0) >= MAX_CLIPES_POR_CONTA:
+            adiados.append(m)
+            continue
+        _para_o_pool(m)
+
+    # As vagas que sobrarem voltam para quem o teto adiou: diversidade é
+    # preferência, não sacrifício de material — pool menor é o que trava o
+    # vídeo no piso da auditoria.
+    for m in adiados:
+        if len(clipes) >= pool:
+            break
+        _para_o_pool(m)
+    if adiados and len(por_conta) > 1:
+        print(
+            f"[midia-x] Pool de {len(por_conta)} conta(s) distinta(s) "
+            f"(teto de {MAX_CLIPES_POR_CONTA} por conta)"
         )
 
     # Fotos: nunca entram em tela cheia (o formato proíbe), só nas cartelas.
@@ -271,7 +316,15 @@ def baixar_midias_posts(
 # ---- Descrição das mídias baixadas (GPT com visão) ----
 
 LADO_VISAO = 768  # px; lado máximo das imagens enviadas ao GPT (custo de visão)
-FRAMES_VIDEO = 3  # frames extraídos por vídeo (início, meio e fim)
+# Frames por vídeo (2026-08-17). Eram 3, em 10%, 50% e 85% da duração — e a
+# medição contra 8 clipes reais mostrou que essa amostragem DECIDIA POR SORTEIO:
+# clipes com 5 de 8 frames de busto falante passavam e clipes com 3 de 8 eram
+# vetados. A causa é onde os pontos caem: 10% e 85% de um vídeo de veículo são
+# abertura e encerramento, justo onde o apresentador aparece, e o miolo (a cena
+# que serve) entrava com um voto só. Um dos três ainda podia cair num flash de
+# transição, como caiu num clipe da Bloomberg. Agora são 8 frames no CENTRO de
+# fatias iguais: nenhum encosta nas pontas e o corpo do vídeo é que decide.
+FRAMES_VIDEO = 8
 
 # Classificação do material, base do veto duro da auditoria. O enum é fechado
 # de propósito: a reclamação do canal é sobre um padrão recorrente (material de
@@ -402,6 +455,20 @@ ESQUEMA_DESCRICAO = {
                     "tela) em vez de só falando."
                 ),
             },
+            "frames_busto_falante": {
+                "type": "array",
+                "items": {"type": "boolean"},
+                "description": (
+                    "UM ITEM POR FRAME RECEBIDO, na mesma ordem: true se AQUELE "
+                    "frame é dominado por pessoa(s) falando para a câmera ou "
+                    "entre si (entrevista, âncora, coletiva, depoimento, "
+                    "estúdio); false se ele mostra cena, ação, lugar, objeto, "
+                    "gráfico ou tela. Julgue cada frame POR SI, sem uniformizar "
+                    "o clipe: um vídeo que abre com o apresentador e mostra a "
+                    "cena no meio tem itens diferentes. Numa imagem estática, "
+                    "devolva um único item."
+                ),
+            },
         },
         "required": [
             "descricao",
@@ -413,6 +480,7 @@ ESQUEMA_DESCRICAO = {
             "texto_estatico",
             "cena_estatica",
             "pessoa_falando",
+            "frames_busto_falante",
         ],
     },
 }
@@ -438,8 +506,13 @@ mesmo quadro: compare-os de verdade, e responda true quando o que muda entre
 eles é irrelevante (um relógio, uma legenda) e o QUADRO é o mesmo.
 "pessoa_falando" é se o clipe é alguém falando para a câmera ou entre si —
 entrevista, podcast, coletiva, depoimento, âncora — e não uma cena em que
-pessoas AGEM. Nos dois campos, na dúvida responda true: material parado ou de
-busto falante é o que este canal não usa.
+pessoas AGEM. Em "cena_estatica", na dúvida responda true: material parado é o
+que este canal não usa.
+
+"frames_busto_falante" é a MEDIDA que decide, e ela é POR FRAME: um item para
+cada frame recebido, na ordem, julgando cada um por si. Não uniformize o clipe
+— vídeo de veículo costuma abrir e fechar com o apresentador e mostrar a cena no
+meio, e é essa diferença entre os frames que interessa aqui.
 
 Responda somente com o JSON pedido.\
 """
@@ -468,6 +541,16 @@ def _data_uri(caminho: Path) -> str:
     return f"data:image/jpeg;base64,{dados}"
 
 
+def _fatias(dur: float, n: int = FRAMES_VIDEO) -> list[tuple[float, float, float]]:
+    """(início, fim, meio) de `n` fatias iguais do vídeo.
+
+    O frame sai do MEIO de cada fatia, nunca das pontas do vídeo: é o que impede
+    a abertura e o encerramento — onde mora o apresentador — de valerem por um
+    quarto da amostra, como valiam com os pontos fixos de 10% e 85%.
+    """
+    return [(dur * i / n, dur * (i + 1) / n, dur * (i + 0.5) / n) for i in range(n)]
+
+
 def _imagens_da_midia(m: dict, pasta_tmp: Path) -> list[Path]:
     """Fotos viram um JPEG reduzido; vídeos, FRAMES_VIDEO frames espaçados."""
     caminho: Path = m["caminho"]
@@ -476,7 +559,9 @@ def _imagens_da_midia(m: dict, pasta_tmp: Path) -> list[Path]:
         return [jpeg] if jpeg else []
     dur = m.get("dur_s") or 0
     pontos = (
-        [dur * f for f in (0.1, 0.5, 0.85)][:FRAMES_VIDEO] if dur else [0.0, 1.0, 2.0]
+        [meio for _, _, meio in _fatias(dur)]
+        if dur
+        else [float(i) for i in range(FRAMES_VIDEO)]
     )
     frames = []
     for i, ponto in enumerate(pontos):
@@ -484,6 +569,55 @@ def _imagens_da_midia(m: dict, pasta_tmp: Path) -> list[Path]:
         if frame:
             frames.append(frame)
     return frames
+
+
+def _medir_frames(laudo: dict, n_frames: int, dur: float) -> None:
+    """Anota no laudo a FRAÇÃO de busto falante e o melhor trecho do clipe.
+
+    Escreve três campos:
+
+    - ``fracao_falando``: quantos dos frames medidos são busto falante. É o que
+      a auditoria passa a usar no lugar do booleano do clipe inteiro — um clipe
+      que abre e fecha com o apresentador mas mostra a cena no miolo deixa de
+      ser reprovado por causa das pontas.
+    - ``inicio_util_s`` e ``dur_util_s``: a maior sequência CONTÍGUA de frames
+      sem busto falante, convertida de volta para tempo. É o pedaço que a
+      montagem deve pôr no ar; sem isso o clipe entra sempre do segundo zero,
+      que num vídeo de veículo é justamente a abertura com o âncora.
+
+    Laudo sem o array (modelo antigo, chamada malsucedida) fica sem os campos, e
+    quem lê cai no comportamento anterior: a ausência da medida não é veredito.
+    """
+    marcas = laudo.get("frames_busto_falante")
+    if not isinstance(marcas, list) or not marcas:
+        return
+    marcas = [bool(x) for x in marcas[:n_frames]]
+    laudo["fracao_falando"] = sum(marcas) / len(marcas)
+    if not dur:
+        return
+
+    # O trecho vai de CENTRO a CENTRO de fatia, não de borda a borda: o que foi
+    # medido é o frame do meio, e a borda ainda pertence ao que veio antes. Com
+    # as bordas, o clipe do FBI começaria em 14,1s e entraria no ar mostrando o
+    # porta-voz — verificado extraindo o frame do vídeo montado.
+    melhor_ini = melhor_fim = corrente_ini = None
+    fatias = _fatias(dur, len(marcas))
+    for i, falando in enumerate(marcas):
+        if falando:
+            corrente_ini = None
+            continue
+        if corrente_ini is None:
+            corrente_ini = i
+        ini, fim = fatias[corrente_ini][2], fatias[i][2]
+        if melhor_ini is None or fim - ini > melhor_fim - melhor_ini:
+            melhor_ini, melhor_fim = ini, fim
+    if melhor_ini is not None:
+        laudo["inicio_util_s"] = round(melhor_ini, 2)
+        # Um bloco de uma fatia só tem centro único: a folga é meia fatia, o
+        # quanto se pode afirmar a partir de um frame.
+        laudo["dur_util_s"] = round(
+            max(melhor_fim - melhor_ini, dur / len(marcas) / 2), 2
+        )
 
 
 def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
@@ -535,6 +669,7 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
                 print(f"[aviso] Descrição de {m['caminho'].name} falhou: {erro}")
                 continue
             if (laudo.get("descricao") or "").strip():
+                _medir_frames(laudo, len(imagens), m.get("dur_s") or 0)
                 descricoes[str(m["caminho"])] = laudo
                 marca = (
                     f" [selo: {laudo.get('marca_visivel') or 'emissora'}]"
@@ -551,14 +686,23 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
                         + "]"
                     )
                 )
-                movimento = "".join(
-                    f" [{rotulo}]"
-                    for campo, rotulo in (
-                        ("cena_estatica", "cena parada"),
-                        ("pessoa_falando", "pessoa falando"),
+                movimento = " [cena parada]" if laudo.get("cena_estatica") else ""
+                marcas = laudo.get("frames_busto_falante") or []
+                if marcas:
+                    # A fração vai para o log porque é ela que veta agora: sem o
+                    # número na tela a decisão volta a ser inauditável, que foi
+                    # como o booleano de 3 frames passou meses errando calado.
+                    movimento += (
+                        f" [falando em {sum(bool(x) for x in marcas)}/{len(marcas)}"
+                        " frames]"
                     )
-                    if laudo.get(campo)
-                )
+                    if laudo.get("dur_util_s"):
+                        movimento += (
+                            f" [trecho útil {laudo['inicio_util_s']:.0f}s"
+                            f"+{laudo['dur_util_s']:.0f}s]"
+                        )
+                elif laudo.get("pessoa_falando"):
+                    movimento += " [pessoa falando]"
                 print(
                     f"[midia-x] {m['caminho'].name}: "
                     f"{laudo.get('tipo_material', '?')}{marca}{texto}{movimento}"

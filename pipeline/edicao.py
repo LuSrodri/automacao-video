@@ -448,7 +448,18 @@ def montar_video(
         fim_render = min(fim + CROSSFADE, duracao)
         dur_render = fim_render - ini
         # Clipe: repete em loop se for mais curto que a janela; -t corta.
-        comando += ["-stream_loop", "-1", "-t", f"{dur_render:.2f}",
+        # ENTRADA PELO MIOLO (2026-08-17): sem `-ss` o clipe começava sempre no
+        # segundo zero, que num vídeo de veículo é a abertura com o apresentador
+        # — o pedaço que o canal não usa ia ao ar mesmo no clipe aprovado.
+        # `inicio_util_s` é o começo da maior sequência de frames sem busto
+        # falante (midia_x._medir_frames); sem a medida, entra do zero como antes.
+        inicio_util = s.get("inicio_util_s")
+        seek = (
+            ["-ss", f"{float(inicio_util):.2f}"]
+            if inicio_util is not None and float(inicio_util) > 0
+            else []
+        )
+        comando += ["-stream_loop", "-1", *seek, "-t", f"{dur_render:.2f}",
                     "-i", str(s["caminho"])]
 
         idx = i + 2

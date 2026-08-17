@@ -392,6 +392,7 @@ def main() -> None:
             "fim_frac": None,
             "conta": m.get("conta", ""),
             "representacao": bool(m.get("representacao")),
+            "inicio_util_s": m.get("inicio_util_s"),
         }
         for k, m in enumerate(clipes)
     ]
@@ -423,9 +424,13 @@ def main() -> None:
         repr_por_caminho = {
             str(m["caminho"]): bool(m.get("representacao")) for m in clipes
         }
+        util_por_caminho = {
+            str(m["caminho"]): m.get("inicio_util_s") for m in clipes
+        }
         for p in plano:
             p["conta"] = conta_por_caminho.get(str(p["caminho"]), "")
             p["representacao"] = repr_por_caminho.get(str(p["caminho"]), False)
+            p["inicio_util_s"] = util_por_caminho.get(str(p["caminho"]))
         sobreposicoes = plano
         (pasta / "cortes.json").write_text(
             json.dumps(
