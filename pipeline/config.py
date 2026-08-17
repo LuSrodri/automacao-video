@@ -303,10 +303,16 @@ class Config:
     # clipe — o único material que o formato consegue usar — perdia vaga para
     # texto. Nenhuma fonte nova entra por aqui; 0 desliga a varredura.
     x_max_posts_video: int = 60
-    # Busca ABERTA por clipes do assunto, fora das contas do canal. Só o
-    # formato longo usa: é ele que precisa de vários clipes do mesmo fato, e
-    # as fontes aqui não são curadas — a auditoria vira a única guarda.
-    x_max_posts_busca: int = 30
+    # Busca ABERTA por clipes do assunto, fora das contas do canal. Era
+    # exclusiva do formato longo até 2026-08-17, quando a conta ficou clara: só
+    # 5,6% dos posts das contas seguidas trazem vídeo (216 lidos em 24h, 12 com
+    # clipe), e depois de repartidos entre os assuntos do dia a trend escolhida
+    # herda um ou dois — o Short vinha abortando no piso de 1 clipe pelo mesmo
+    # motivo que o longo aborta no de 3. As fontes aqui NÃO são curadas e a
+    # auditoria vira a única guarda; cada post lido custa ~US$ 0,005, e o
+    # orçamento do curto é menor porque ele roda 12x por dia (e até 3x por
+    # execução, uma por trend tentada). X_MAX_POSTS_BUSCA=0 desliga.
+    x_max_posts_busca: int = 15
     # Leituras da TIMELINE de cada conta (/2/users/:id/tweets). A busca por
     # relevância enterra o post recém-publicado — que ainda não teve tempo de
     # acumular engajamento — e é exatamente aí que moram o vazamento, o comunicado
@@ -428,12 +434,19 @@ def carregar_config() -> Config:
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", "1.25")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
-        # Ambos ZERADOS no curto: leitura da X API é paga por post, os Shorts
-        # rodam 12x por dia somados e NÃO travam por falta de clipe (precisam
-        # de 3, não de 8). Quem precisa é o longo, e ativar_formato_longo sobe
-        # os dois. Para ligar no curto, basta o .env.
-        x_max_posts_video=int(os.getenv("X_MAX_POSTS_VIDEO", "0")),
-        x_max_posts_busca=int(os.getenv("X_MAX_POSTS_BUSCA", "0")),
+        # LIGADOS no curto desde 2026-08-17. Ficaram zerados enquanto se
+        # acreditava que o Short "não trava por falta de clipe": ele travou o
+        # dia inteiro, nas 3 tentativas de trend, com pool de 1 clipe. A conta
+        # que faltava: só 5,6% dos posts das contas seguidas trazem vídeo (216
+        # lidos, 12 com clipe), e a coleta por relevância NÃO prefere vídeo —
+        # então o único material que o formato sabe usar disputava vaga em pé de
+        # igualdade com os 94% de texto, e a trend escolhida herdava um clipe.
+        # A varredura vem primeiro porque é sobre as contas CURADAS; a busca
+        # aberta é o complemento, com fontes não curadas e orçamento menor.
+        # Leitura é paga por post (~US$ 0,005) e a busca aberta roda uma vez por
+        # trend tentada: qualquer um dos dois volta a 0 pelo .env/Render.
+        x_max_posts_video=int(os.getenv("X_MAX_POSTS_VIDEO", "40")),
+        x_max_posts_busca=int(os.getenv("X_MAX_POSTS_BUSCA", "15")),
         x_max_posts_timeline=int(os.getenv("X_MAX_POSTS_TIMELINE", "60")),
         max_posts_midia=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         max_urls_trend=int(os.getenv("MAX_POSTS_MIDIA", "12")),

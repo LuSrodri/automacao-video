@@ -77,6 +77,11 @@ JANELAS_FALLBACK = (8, 12, 24, 48)
 # Posts abaixo disto não sustentam uma seleção: o GPT precisa de candidatas
 # para comparar contra a régua do canal, e escolher entre duas não é escolher.
 MIN_POSTS_JANELA = 20
+# Janela da BUSCA ABERTA por clipes (2026-08-17). Independente da janela de
+# coleta: lá se procura pauta que ainda não foi usada, aqui se procura imagem de
+# um assunto já escolhido — e imagem de um fato do dia continua sendo publicada
+# horas depois. Nunca encurta a janela vigente, só alarga.
+JANELA_BUSCA_HORAS = 24
 
 # Estado da rotação de lotes entre execuções: quando X_MAX_POSTS não cobre
 # todas as consultas, as execuções avançam um cursor circular em vez de
@@ -570,7 +575,13 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     # de todo modo — num clipe o que importa é o que aparece NA TELA, não o
     # idioma do post, e disso a auditoria de visão já cuida.
     query = f"({consulta}) has:videos -is:retweet -is:reply"
-    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
+    # JANELA PRÓPRIA (2026-08-17). A da coleta existe para execuções seguidas
+    # não repetirem PAUTA, e com JANELA_HORAS=4 ela é curta de propósito. Aqui
+    # não se procura pauta: o assunto já está escolhido, e o que se procura é
+    # imagem DELE. Um fato das 9h da manhã tem clipe publicado ao longo do dia
+    # inteiro, e herdar as 4h jogava fora justamente esse material.
+    horas = max(cfg.janela_horas, JANELA_BUSCA_HORAS)
+    inicio = datetime.now(timezone.utc) - timedelta(hours=horas)
 
     print(f"[midia-x] Busca aberta por clipes sobre: {consulta}")
     posts = _consultar(token, query, inicio, min(max(orcamento, 10), 100))

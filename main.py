@@ -272,12 +272,14 @@ def main() -> None:
         # trend certa.
         trend_video = selecao["trend_obj"]
 
-        # Busca ABERTA por clipes do assunto (só no formato longo): as 50
-        # contas do canal raramente têm vários clipes do MESMO fato, que é o
-        # que 90-120s de tela pedem. Entra depois da seleção porque buscar para
+        # Busca ABERTA por clipes do assunto, NOS DOIS FORMATOS desde
+        # 2026-08-17 (antes só no longo): as contas seguidas raramente têm
+        # vários clipes do MESMO fato — só 5,6% dos posts delas trazem vídeo —,
+        # e o Short passou o dia 17 abortando com pool de 1 clipe pelo mesmo
+        # motivo que o longo aborta. Entra depois da seleção porque buscar para
         # cada candidata custaria uma consulta por candidata — em troca, a
         # busca não socorre uma candidata que já tenha sido barrada no portão
-        # da seleção.
+        # da seleção. Orçamento e desligamento: X_MAX_POSTS_BUSCA.
         extras = buscar_posts_com_video(cfg, selecao.get("consulta_clipes", ""))
         if extras:
             urls = trend_video.get("posts") or []
