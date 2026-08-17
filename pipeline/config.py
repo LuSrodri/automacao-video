@@ -212,6 +212,19 @@ CONTAS_VETADAS_PADRAO = (
     # depois de eles saírem, porque o que ela publica também não é pauta do
     # canal e a cota de leitura é disputada.
     "DrFonts",
+    # Medido em 188 posts de uma coleta real (24h): estas cinco ocuparam 38
+    # posts — 20% da cota — e não trouxeram UM clipe sequer. Não entram na
+    # lista por não terem vídeo, e sim porque também não trazem FATO: @Kalshi
+    # publica odds de mercado de previsão em série automática, e as outras
+    # quatro são contas pessoais de dev/indie (rotina, carreira, produto
+    # próprio). Contas sem vídeo que trazem notícia — @DeItaone, @WatcherGuru,
+    # @elonmusk, @unusual_whales — FICAM de propósito: a pauta nasce do que elas
+    # contam e o clipe daquele mesmo fato vem de outra conta.
+    "Kalshi",
+    "ChristoPy_",
+    "thayto_dev",
+    "lucas_montano",
+    "levelsio",
 )
 
 # --- Fallback de tema (2026-08-05) ------------------------------------------
