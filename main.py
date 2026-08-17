@@ -22,10 +22,11 @@ Fluxo:
 3. GPT escolhe a trend: primeiro corte pelo VALOR DA INFORMAÇÃO (vazamento,
    exclusivo, urgência, número inédito), e entre as elegíveis decide pela
    audiência — recebe os últimos vídeos publicados do canal com as métricas
-   reais (views/likes, YouTube Data API) e a RÉGUA DE ENGAJAMENTO (YouTube
-   Analytics): os vídeos que seguraram ENGAJAMENTO_MINIMO% ou mais de quem
-   abriu, contra quem deslizou fora, entram marcados como ALTO ENGAJAMENTO e
-   são o molde a imitar; os abaixo do piso são contraexemplo, por mais views
+   reais (views/likes, YouTube Data API) e a RÉGUA DE RETENÇÃO (YouTube
+   Analytics): os vídeos com VIEWS_MINIMO_REFERENCIA+ views que seguraram
+   RETENCAO_MINIMA% ou mais de retenção entram marcados como ALTA RETENÇÃO e
+   são o molde a imitar NO ASSUNTO; os abaixo do piso são contraexemplo, por
+   mais views
    que tenham. Regra dura: a escolhida passa por uma verificação anti-repetição
    (GPT confere se ela cobriria o mesmo fato de um vídeo publicado nas últimas
    36h; se sim, sai da disputa e a seleção refaz). Define também uma consulta

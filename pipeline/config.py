@@ -193,23 +193,36 @@ LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 # publicação cai mais rápido do que a chance de ele existir.
 TENTATIVAS_TREND = 3
 
-# --- Piso de engajamento (2026-08-16, pedido do usuário) ---------------------
+# --- Piso de retenção (2026-08-16, corrigido em 2026-08-17) ------------------
 # "Sempre priorizando alto engajamento (versus swipe-away) de 70% ou mais."
 #
-# A métrica é o GANCHO: `engagedViews / views` da YouTube Analytics — a fração
-# de quem abriu o vídeo e FICOU, contra quem deslizou para o próximo. É a
-# tradução direta de "engajamento versus swipe-away", e não deve ser confundida
-# com `averageViewPercentage` (quanto do vídeo quem ficou assistiu), que mede
-# outra coisa e serve de desempate.
+# A métrica é a RETENÇÃO: `averageViewPercentage` da YouTube Analytics — a
+# mesma que o YouTube Studio mostra com esse nome. Em 2026-08-16 isto foi lido
+# como o GANCHO (`engagedViews / views`) e a régua ficou PATOLÓGICA, medido
+# contra a API real em 2026-08-17:
 #
-# O piso vale como PRIORIDADE, não como veto: quem escolhe a pauta é o modelo, e
-# o que este número faz é decidir quais vídeos publicados entram na lista de
-# molde ("é com estes que a candidata precisa se parecer") — ver
-# youtube.top_retencao e o prompt de seleção em escritor.py. Canal sem nenhum
-# vídeo acima do piso não trava: a lista cai para os melhores disponíveis, com
-# aviso no log, porque bloquear a publicação por causa da régua deixaria o canal
-# sem vídeo justamente quando ele mais precisa de material novo.
-ENGAJAMENTO_MINIMO = 70
+#   - canal BR: gancho máximo de 72,1% em todo o catálogo, e o ÚNICO vídeo
+#     acima de 70% tinha 183 views (sobre IA). Era ele, sozinho, o "molde";
+#   - canal US: gancho máximo de 66,7% — NENHUM vídeo jamais passou do piso,
+#     então a régua caía no fallback em toda execução desde que foi criada;
+#   - os hits reais do BR (20k a 46k views) têm gancho de 43% a 53%, todos
+#     ABAIXO do piso, e retenção de 105% a 136% (Short conta replay, por isso
+#     passa de 100%).
+#
+# O efeito prático era o inverso do pedido: a régua descartava os sucessos do
+# canal e mandava o modelo se espelhar num vídeo de 183 views — foi assim que
+# saiu um Short sobre robô humanoide num canal cujos hits são todos de
+# geopolítica. Com a retenção, os 6-7 vídeos de 20k+ do BR entram, que é o
+# conjunto que o usuário chama de referência.
+RETENCAO_MINIMA = 70
+
+# Piso de views para ENTRAR na lista de referência (pedido do usuário em
+# 2026-08-17: "1k"). Diferente de VIEWS_MINIMO_RETENCAO (youtube.py), que é o
+# piso de significância estatística e continua valendo para o fallback: este
+# aqui decide o que serve de MOLDE. Com 1000, a lista fica em 45 vídeos no BR e
+# 51 no US — os dois canais bem servidos, nenhum caindo no fallback. Era o
+# buraco por onde o vídeo de 183 views entrava.
+VIEWS_MINIMO_REFERENCIA = 1000
 
 
 @dataclass
@@ -357,13 +370,10 @@ def carregar_config() -> Config:
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", "1.25")),
         janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
-        # Ambos ZERADOS no curto: leitura da X API é paga por post e os Shorts
-        # NÃO travam por falta de clipe (precisam de 3, não de 8). Quem precisa
-        # é o longo, e ativar_formato_longo sobe os dois. Para ligar no curto,
-        # basta o .env — desde 2026-08-11 os Shorts rodam 1x por dia em cada
-        # canal (2 execuções somadas, contra 12 antes), então o argumento de
-        # custo pesa bem menos; o que continua valendo é que eles não têm o
-        # problema que essa varredura resolve.
+        # Ambos ZERADOS no curto: leitura da X API é paga por post, os Shorts
+        # rodam 12x por dia somados e NÃO travam por falta de clipe (precisam
+        # de 3, não de 8). Quem precisa é o longo, e ativar_formato_longo sobe
+        # os dois. Para ligar no curto, basta o .env.
         x_max_posts_video=int(os.getenv("X_MAX_POSTS_VIDEO", "0")),
         x_max_posts_busca=int(os.getenv("X_MAX_POSTS_BUSCA", "0")),
         x_max_posts_timeline=int(os.getenv("X_MAX_POSTS_TIMELINE", "60")),
@@ -437,8 +447,9 @@ def ativar_formato_longo(cfg: Config) -> Config:
     # A coleta precisa devolver posts suficientes para o lookup achar os clipes.
     cfg.max_urls_trend = cfg.max_posts_midia
     # Varredura de vídeo e busca aberta: só o longo precisa de vários clipes do
-    # MESMO fato, e é ele que trava por falta deles. Ligar isto nos Shorts seria
-    # pagar leitura extra para resolver um problema que eles não têm.
+    # MESMO fato, e é ele que trava por falta deles. Ligar isto nos Shorts
+    # custaria leitura paga 12x por dia para resolver um problema que eles não
+    # têm.
     cfg.x_max_posts_video = int(os.getenv("X_MAX_POSTS_VIDEO", "60"))
     cfg.x_max_posts_busca = int(os.getenv("X_MAX_POSTS_BUSCA", "30"))
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))

@@ -20,10 +20,11 @@ Duas etapas:
    candidatas do macrotema do Short anterior saem da disputa antes da escolha,
    de modo que cada Short saia de um tema diferente do anterior. Devolve também
    uma consulta curta do assunto, usada pela busca aberta de clipes do formato
-   longo. A régua de audiência prioriza ENGAJAMENTO (quem abriu e ficou, contra
-   quem deslizou fora): os vídeos publicados que seguraram ENGAJAMENTO_MINIMO%
-   ou mais de quem abriu entram no prompt marcados como ALTO ENGAJAMENTO, e é
-   com eles que a candidata escolhida precisa se parecer (2026-08-16).
+   longo. A régua de audiência prioriza RETENÇÃO (quanto do vídeo quem abriu
+   assistiu): os vídeos publicados que seguraram RETENCAO_MINIMA% ou mais
+   entram no prompt marcados como ALTA RETENÇÃO, e é com o ASSUNTO deles que a
+   candidata escolhida precisa se parecer (2026-08-16, corrigido em
+   2026-08-17: a régua media o gancho e a semelhança era livre).
 2. `gerar_roteiro` — com a trend escolhida e os posts do X, escreve o
    roteiro em enquadramento de ANÁLISE/EDUCACIONAL (formato explicativo), em
    tom adulto e inteligente (ritmo de fala natural, vocabulário preciso de
@@ -84,10 +85,10 @@ from .config import (
     CURTO_MARGEM_FRAC,
     CURTO_MARGEM_MIN_S,
     CURTO_MIN_S,
-    ENGAJAMENTO_MINIMO,
     LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
     LONGO_MIN_S,
+    RETENCAO_MINIMA,
     Config,
 )
 from .seo import limpar_tags, resumo_para_prompt
@@ -853,14 +854,20 @@ parece com o que está performando. NÃO aplique preferência própria por tema
 "nobre" nem equilíbrio de pauta: escolha entre as candidatas que você recebeu a
 que os números apontam, e nada mais.
 
-ENGAJAMENTO ACIMA DE TUDO NA RÉGUA — {piso}% OU MAIS: a métrica que manda é o
-GANCHO, a porcentagem de quem abriu o vídeo e FICOU em vez de deslizar para o
-próximo. Os vídeos marcados como ALTO ENGAJAMENTO na lista de campeões seguraram
-{piso}% ou mais de quem abriu — são eles o molde. Prefira sempre a candidata que
-mais se parece com esses, e trate os vídeos abaixo de {piso}% como contraexemplo,
-mesmo quando tiverem muitas views: views sem gancho é alcance que o feed
-empurrou e o espectador recusou, e repetir esse tipo de pauta é o jeito mais
-rápido de o canal encolher.
+RETENÇÃO ACIMA DE TUDO NA RÉGUA — {piso}% OU MAIS: a métrica que manda é a
+RETENÇÃO, quanto do vídeo quem abriu assistiu. Os vídeos marcados como ALTA
+RETENÇÃO na lista de campeões seguraram {piso}% ou mais — são eles o molde.
+
+A SEMELHANÇA QUE VALE É A DE ASSUNTO, e só ela. Não é semelhança de formato, de
+estrutura de roteiro, de gancho ou de "energia" do título — é DO QUE O VÍDEO
+FALA. Leia os assuntos dos vídeos marcados como ALTA RETENÇÃO, veja de que
+temas eles tratam, e escolha a candidata cujo ASSUNTO cai no mesmo território.
+Uma candidata de tema alheio a tudo que está nessa lista é a pior escolha
+possível, por mais atual ou impressionante que ela pareça: o canal já provou em
+que assunto a audiência dele fica, e é nesse assunto que o próximo vídeo tem de
+estar. Trate os vídeos abaixo de {piso}% como contraexemplo, mesmo quando
+tiverem muitas views: views sem retenção é alcance que o feed empurrou e o
+espectador recusou.
 
 O RODÍZIO DE TEMAS JÁ FOI APLICADO ANTES DE VOCÊ: as candidatas do tema do
 Short anterior já foram removidas da lista pelo pipeline, porque o canal
@@ -1458,36 +1465,34 @@ def _resumo_recentes(
 
 
 def _resumo_campeoes(campeoes: list[dict] | None) -> str:
-    """Bloco dos campeões, com o GANCHO marcado contra o piso de engajamento.
+    """Bloco dos campeões, com a RETENÇÃO marcada contra o piso.
 
-    O rótulo ALTO ENGAJAMENTO / abaixo do piso é escrito em CÓDIGO, e não
-    deixado para o modelo comparar de cabeça: a régua pedida em 2026-08-16 é um
-    número (``ENGAJAMENTO_MINIMO``), e regra numérica embutida em prosa é
-    exatamente o tipo de instrução que se perde no meio de cem linhas de
-    contexto. Assim o prompt só precisa dizer "use os marcados como molde".
+    O rótulo ALTA RETENÇÃO / abaixo do piso é escrito em CÓDIGO, e não deixado
+    para o modelo comparar de cabeça: a régua é um número
+    (``RETENCAO_MINIMA``), e regra numérica embutida em prosa é exatamente o
+    tipo de instrução que se perde no meio de cem linhas de contexto. Assim o
+    prompt só precisa dizer "use os marcados como molde".
     """
     if not campeoes:
         return ""
     linhas = []
     for c in campeoes:
+        retencao = c.get("retencao_media", 0)
         gancho = c.get("retencao_gancho")
-        partes = []
+        partes = [f"assistem em média {retencao}% do vídeo"]
         if gancho is not None:
             partes.append(f"gancho segura {gancho}% de quem abre")
-        partes.append(f"assistem em média {c.get('retencao_media', '?')}% do vídeo")
         partes.append(f"{c.get('views', '?')} views")
-        if gancho is None:
-            marca = " [engajamento não medido]"
-        elif gancho >= ENGAJAMENTO_MINIMO:
-            marca = " [ALTO ENGAJAMENTO]"
+        if retencao >= RETENCAO_MINIMA:
+            marca = " [ALTA RETENÇÃO]"
         else:
-            marca = f" [abaixo do piso de {ENGAJAMENTO_MINIMO}%]"
+            marca = f" [abaixo do piso de {RETENCAO_MINIMA}%]"
         linhas.append(f"- {c.get('titulo', '')}{marca} ({'; '.join(partes)})")
     return (
-        "\n\nVídeos deste canal ordenados por ENGAJAMENTO (quem abriu e ficou, "
-        f"contra quem deslizou fora). Os marcados como ALTO ENGAJAMENTO seguraram "
-        f"{ENGAJAMENTO_MINIMO}% ou mais de quem abriu — é com ESSES que a "
-        "candidata escolhida precisa se parecer:\n" + "\n".join(linhas)
+        "\n\nVídeos deste canal ordenados por RETENÇÃO (quanto do vídeo quem "
+        f"abriu assistiu). Os marcados como ALTA RETENÇÃO seguraram "
+        f"{RETENCAO_MINIMA}% ou mais — é com o ASSUNTO DESSES que a candidata "
+        "escolhida precisa se parecer:\n" + "\n".join(linhas)
     )
 
 
@@ -1839,10 +1844,10 @@ def selecionar_trend(
             max_clipes=cfg.max_clipes,
             topicos_min=TOPICOS_MIN,
             topicos_max=TOPICOS_MAX,
-            piso=ENGAJAMENTO_MINIMO,
+            piso=RETENCAO_MINIMA,
         )
         if longo
-        else INSTRUCOES_SELECAO.format(piso=ENGAJAMENTO_MINIMO)
+        else INSTRUCOES_SELECAO.format(piso=RETENCAO_MINIMA)
     )
     while True:
         conteudo = (
