@@ -217,7 +217,9 @@ def main() -> None:
     # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
     # e sem os recentes (com as métricas) a seleção pela audiência é cega.
     recentes = ultimos_publicados(cfg, n=100)
-    campeoes = top_retencao(cfg, n=6)
+    # Sem número aqui: a lista dos que passam no piso não tem teto (2026-08-17),
+    # e o n_fallback só limita o caminho de exceção — o default dele resolve.
+    campeoes = top_retencao(cfg)
 
     trends = classificar_trends(cfg, coletar_trends(cfg))
 
