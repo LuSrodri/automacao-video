@@ -201,6 +201,39 @@ LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
 # as 160+ contas restantes cobrem os mesmos fatos. Ampliar ou limpar pelo
 # .env/Render (CONTAS_VETADAS, separadas por vírgula) sem deploy — e o handle
 # vai sem o @. A lista é de FONTE: nada aqui veta assunto.
+# CONTAS EXTRAS somadas às seguidas (2026-08-17). Existem porque o pipeline lê
+# com bearer app-only, que NÃO segue ninguém: seguir é ação de conta e continua
+# sendo do usuário. Esta lista é o caminho para uma conta entrar na pauta sem
+# depender disso — e, se ele seguir a conta no X, ela pode sair daqui sem perda
+# (a coleta deduplica).
+#
+# As de conflito abaixo entraram medidas, não por reputação: posts e posts COM
+# CLIPE nas últimas 24h, contados um a um na X API em 2026-08-17. O canal só
+# monta vídeo com clipe, então a coluna que decide é a segunda.
+#
+#   @clashreport      40 posts, 29 com clipe  (72%)
+#   @visegrad24       29 posts, 14 com clipe  (48%)
+#   @warintel4u       13 posts,  9 com clipe  (69%)
+#   @Osinttechnical    5 posts,  2 com clipe
+#   @RALee85           3 posts,  2 com clipe
+#
+# Medidas e DESCARTADAS por não publicarem no período (não confundir com
+# inatividade permanente): @AuroraIntel, @IntelCrab, @UAWeapons, @War_Mapper,
+# @WarMonitors, @bellingcat, @ELINTNews, @Tendar, @CalibreObscura, @N_Waters89.
+# @GeoConfirmed publica (8 posts) mas quase só texto e imagem estática.
+#
+# CUIDADO EDITORIAL: @clashreport e @visegrad24 são agregadores — republicam
+# vídeo de terceiros em volume, com verificação fraca e enquadramento próprio.
+# É o que as torna ricas em clipe e o que exige a auditoria de pertinência
+# fazendo o trabalho dela. X_ACCOUNTS_EXTRA no .env/Render substitui esta lista.
+CONTAS_EXTRAS_PADRAO = (
+    "clashreport",
+    "visegrad24",
+    "warintel4u",
+    "Osinttechnical",
+    "RALee85",
+)
+
 CONTAS_VETADAS_PADRAO = (
     "Osint613",  # recortes de Fox News; reprovado em toda execução de 17/08
     "business",  # Bloomberg: estúdio e bancada; 79 de 216 posts lidos
@@ -352,6 +385,10 @@ class Config:
     contas_vetadas: list[str] = field(
         default_factory=lambda: list(CONTAS_VETADAS_PADRAO)
     )
+    # Contas somadas às seguidas — ver CONTAS_EXTRAS_PADRAO.
+    contas_extras: list[str] = field(
+        default_factory=lambda: list(CONTAS_EXTRAS_PADRAO)
+    )
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
     # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
     # coleta normal ordena por relevância e não prefere vídeo, então o post com
@@ -476,11 +513,19 @@ def carregar_config() -> Config:
         else list(CONTAS_VETADAS_PADRAO)
     )
 
+    extras_env = os.getenv("X_ACCOUNTS_EXTRA")
+    contas_extras = (
+        [c.strip().lstrip("@") for c in extras_env.split(",") if c.strip()]
+        if extras_env is not None
+        else list(CONTAS_EXTRAS_PADRAO)
+    )
+
     cfg = Config(
         openai_api_key=os.environ["OPENAI_API_KEY"],
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
         contas=contas,
         contas_vetadas=contas_vetadas,
+        contas_extras=contas_extras,
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
         x_username=(os.getenv("X_USERNAME", "") or "").strip().lstrip("@"),

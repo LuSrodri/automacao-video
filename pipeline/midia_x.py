@@ -455,6 +455,20 @@ ESQUEMA_DESCRICAO = {
                     "tela) em vez de só falando."
                 ),
             },
+            "legendas_queimadas": {
+                "type": "boolean",
+                "description": (
+                    "true se o clipe traz LEGENDA/SUBTÍTULO QUEIMADO na imagem "
+                    "— a transcrição da fala aparecendo em faixa, palavra por "
+                    "palavra ou linha por linha, acompanhando quem fala, e "
+                    "mudando de um frame para o outro. Inclui legenda de "
+                    "acessibilidade, legenda de recorte de podcast e legenda "
+                    "estilo karaokê. NÃO conte como legenda: manchete de "
+                    "emissora na tarja, placar, marca d'água, rótulo de lugar "
+                    "ou pessoa, texto de interface e título parado — nada disso "
+                    "transcreve fala."
+                ),
+            },
             "frames_busto_falante": {
                 "type": "array",
                 "items": {"type": "boolean"},
@@ -480,6 +494,7 @@ ESQUEMA_DESCRICAO = {
             "texto_estatico",
             "cena_estatica",
             "pessoa_falando",
+            "legendas_queimadas",
             "frames_busto_falante",
         ],
     },
@@ -508,6 +523,10 @@ eles é irrelevante (um relógio, uma legenda) e o QUADRO é o mesmo.
 entrevista, podcast, coletiva, depoimento, âncora — e não uma cena em que
 pessoas AGEM. Em "cena_estatica", na dúvida responda true: material parado é o
 que este canal não usa.
+
+"legendas_queimadas" é só sobre transcrição de fala na imagem: a faixa que
+acompanha o que a pessoa está dizendo e muda a cada frame. Tarja de emissora,
+manchete, placar e rótulo NÃO são legenda.
 
 "frames_busto_falante" é a MEDIDA que decide, e ela é POR FRAME: um item para
 cada frame recebido, na ordem, julgando cada um por si. Não uniformize o clipe
@@ -687,6 +706,8 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
                     )
                 )
                 movimento = " [cena parada]" if laudo.get("cena_estatica") else ""
+                if laudo.get("legendas_queimadas"):
+                    movimento += " [legendado]"
                 marcas = laudo.get("frames_busto_falante") or []
                 if marcas:
                     # A fração vai para o log porque é ela que veta agora: sem o

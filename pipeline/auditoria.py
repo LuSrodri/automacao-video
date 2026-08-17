@@ -65,6 +65,7 @@ sobra clipe nenhum (e, no formato longo, quando sobram menos que o piso).
 """
 
 import json
+import os
 from pathlib import Path
 
 from openai import OpenAI
@@ -100,6 +101,15 @@ TIPOS_VETADOS_CLIPE: set[str] = set()
 # estúdio) continuam vetados; o vídeo do FBI, com 5 frames de agentes em ação e
 # 3 de porta-voz, deixa de ser.
 LIMITE_FALANDO = 0.5
+
+# VETO A LEGENDA QUEIMADA (2026-08-17, pedido do usuário). O vídeo do canal
+# queima as próprias legendas sobre o clipe; um clipe que já vem legendado põe
+# duas transcrições de falas DIFERENTES na mesma faixa da tela. Separado do veto
+# por texto porque legenda escapava dos dois gatilhos de lá: mede 'moderado' e
+# se move a cada frame. Desligar com VETO_LEGENDAS=0 no .env/Render.
+VETO_LEGENDAS = os.getenv("VETO_LEGENDAS", "1").strip().lower() in (
+    "1", "true", "sim", "yes"
+)
 
 # No FORMATO LONGO o material de telejornal deixa de ser vetado: entra MARCADO
 # como representação visual (dessaturado + etiqueta na tela, ver edicao.py).
@@ -346,6 +356,25 @@ def _veto_parado(laudo: dict) -> str:
     return ""
 
 
+def _veto_legendas(laudo: dict) -> str:
+    """Motivo do veto por legenda queimada; vazio quando o clipe pode entrar.
+
+    Pedido do usuário em 2026-08-17. O clipe entra como FUNDO de um vídeo que
+    já queima as PRÓPRIAS legendas por cima: duas transcrições na mesma tela,
+    de falas diferentes, competindo pelo mesmo lugar do quadro. É parente do
+    veto por texto denso, mas independente dele — a legenda costuma medir
+    'moderado' e se mover, então escapava dos dois gatilhos de lá.
+
+    Laudo sem o campo (modelo antigo) não veta ninguém: ausência de medida não
+    é prova de legenda.
+    """
+    return (
+        "clipe com legenda queimada (o vídeo já tem a própria legenda por cima)"
+        if laudo.get("legendas_queimadas")
+        else ""
+    )
+
+
 def _motivo_do_veto(laudo: dict, marcar_tv: bool, vetar_parado: bool) -> tuple[str, bool]:
     """(motivo do veto, marcar como representação visual).
 
@@ -359,6 +388,10 @@ def _motivo_do_veto(laudo: dict, marcar_tv: bool, vetar_parado: bool) -> tuple[s
         parado = _veto_parado(laudo)
         if parado:
             return parado, False
+    if VETO_LEGENDAS:
+        legenda = _veto_legendas(laudo)
+        if legenda:
+            return legenda, False
     tipo = laudo.get("tipo_material", "")
     marcada = False
     if tipo in TIPOS_VETADOS:

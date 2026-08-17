@@ -853,6 +853,21 @@ def coletar_trends(cfg: Config) -> list[dict]:
         seguidas = contas_seguidas(cfg, token)
         contas, ids = sorted(seguidas), seguidas
 
+    # CONTAS EXTRAS (2026-08-17): somadas às seguidas antes do veto. O pipeline
+    # lê com bearer app-only, que não segue ninguém — esta lista é como uma conta
+    # entra na pauta sem o usuário precisar segui-la. Deduplica sem drama: se ele
+    # seguir a conta depois, ela aparece uma vez só.
+    extras = [c for c in (cfg.contas_extras or []) if c]
+    if extras:
+        conhecidas = {c.lower() for c in contas}
+        novas = [c for c in extras if c.lower() not in conhecidas]
+        if novas:
+            contas = contas + novas
+            print(
+                f"[x] {len(novas)} conta(s) extra(s) somada(s) às seguidas: "
+                + ", ".join(f"@{c}" for c in novas)
+            )
+
     # VETO DE FONTE (2026-08-17): as contas de CONTAS_VETADAS saem ANTES de
     # qualquer leitura — não entram nos lotes da busca nem na rotação de
     # timelines. O ganho é de orçamento: X_MAX_POSTS é teto rígido e pago, e uma
