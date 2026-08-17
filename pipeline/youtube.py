@@ -26,6 +26,7 @@ from pathlib import Path
 import requests
 
 from .config import (
+    LIMITE_REFERENCIA,
     RETENCAO_MINIMA,
     VIEWS_MINIMO_REFERENCIA,
     Config,
@@ -339,27 +340,31 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
                 return float(r.get("engagedViews") or 0) / views * 100
             return None
 
-        # Ordena por RETENÇÃO, desempata pelo gancho (None vai para o fim).
-        ordenados = sorted(
-            candidatos,
-            key=lambda r: (profundidade(r), engajamento(r) or -1.0),
-            reverse=True,
-        )
-        # SEM TETO: todos os que passam no piso de retenção E no piso de views
-        # de referência entram. O molde é "os vídeos que funcionaram", e cortar
-        # essa lista num número redondo foi o que deixou a régua de 2026-08-16
-        # apoiada num único vídeo de 183 views.
+        def pontuacao(r: dict) -> float:
+            """Gancho × profundidade — a ordenação que funcionava até 08-16.
+
+            O gancho entra aqui, e NÃO como piso: ver RETENCAO_MINIMA em
+            config.py. Sem ``engagedViews`` o fator vira 1.0 e a ordem passa a
+            ser só a profundidade, que é o comportamento antigo.
+            """
+            g = engajamento(r)
+            return (1.0 if g is None else g / 100) * (profundidade(r) / 100)
+
+        ordenados = sorted(candidatos, key=pontuacao, reverse=True)
+        # Piso: retenção ACIMA de 100% (o vídeo foi reassistido) e views
+        # suficientes para o número significar algo. Teto de LIMITE_REFERENCIA,
+        # aplicado depois da ordenação, então o corte é sempre pelos piores.
         acima = [
             r
             for r in ordenados
-            if profundidade(r) >= RETENCAO_MINIMA
+            if profundidade(r) > RETENCAO_MINIMA
             and float(r.get("views") or 0) >= VIEWS_MINIMO_REFERENCIA
-        ]
+        ][:LIMITE_REFERENCIA]
         if not acima:
             print(
                 f"[youtube] aviso: nenhum vídeo do canal com "
-                f"{VIEWS_MINIMO_REFERENCIA}+ views segurou {RETENCAO_MINIMA}% "
-                "ou mais de retenção; a régua cai para os melhores disponíveis "
+                f"{VIEWS_MINIMO_REFERENCIA}+ views passou de {RETENCAO_MINIMA}% "
+                "de retenção; a régua cai para os melhores disponíveis "
                 "(a seleção marca cada um abaixo do piso, e o modelo sabe que "
                 "são contraexemplo)."
             )
@@ -402,11 +407,11 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
                 }
             )
         acima_do_piso = sum(
-            1 for c in campeoes if c["retencao_media"] >= RETENCAO_MINIMA
+            1 for c in campeoes if c["retencao_media"] > RETENCAO_MINIMA
         )
         print(
             f"[youtube] {len(campeoes)} vídeos de referência carregados "
-            f"({acima_do_piso} com retenção de {RETENCAO_MINIMA}% ou mais)."
+            f"({acima_do_piso} acima de {RETENCAO_MINIMA}% de retenção)."
         )
         # Os títulos entram no log: era impossível auditar a régua sabendo só a
         # contagem — a investigação de 2026-08-17 só achou o vídeo de 183 views

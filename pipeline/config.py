@@ -196,9 +196,30 @@ TENTATIVAS_TREND = 3
 # --- Piso de retenção (2026-08-16, corrigido em 2026-08-17) ------------------
 # "Sempre priorizando alto engajamento (versus swipe-away) de 70% ou mais."
 #
-# A métrica é a RETENÇÃO: `averageViewPercentage` da YouTube Analytics — a
-# mesma que o YouTube Studio mostra com esse nome. Em 2026-08-16 isto foi lido
-# como o GANCHO (`engagedViews / views`) e a régua ficou PATOLÓGICA, medido
+# São DUAS coisas, e confundi-las é a origem de todos os bugs desta régua:
+#
+#   RETENÇÃO (`averageViewPercentage`): quanto do vídeo quem abriu assistiu.
+#   Passa de 100% quando o espectador REASSISTE — que é o efeito do roteiro em
+#   loop discreto, e por isso o piso pedido aqui é ACIMA DE 100%.
+#
+#   ENGAJAMENTO ("Continuaram assistindo" vs "Pularam o vídeo", no Studio): a
+#   fração de quem não deslizou para o próximo. O usuário quer 70% aqui, mas
+#   ESSE NÚMERO NÃO EXISTE NA ANALYTICS API — verificado em 2026-08-17 contra a
+#   API real: `swipeAways`, `skipRate`, `engagementRate`, `continuedWatching` e
+#   `audienceRetentionPercentage` todos devolvem "Unknown identifier". O único
+#   campo próximo, `engagedViews/views`, mede OUTRA escala: no agregado de 28
+#   dias do canal ele dá 46,7% onde o Studio mostra 66,8%, e a razão entre os
+#   dois varia de 1,43 a 1,61 por vídeo, então não há conversão possível.
+#   Reconstruí-lo exigiria a curva `audienceWatchRatio` (uma chamada por vídeo,
+#   10-30s cada) — inviável a cada execução, 12 vezes por dia.
+#
+# Por isso o gancho volta a ser o que era antes de 2026-08-16: um termo de
+# ORDENAÇÃO (`gancho × profundidade`), não um corte absoluto. Aquela versão
+# funcionava justamente porque ordenava: ordenação devolve os melhores do canal
+# seja qual for a escala da métrica, enquanto um piso absoluto numa escala que
+# nunca chega ao número pedido reprova o catálogo inteiro.
+#
+# O piso de 70% aplicado ao GANCHO em 2026-08-16 ficou PATOLÓGICO, medido
 # contra a API real em 2026-08-17:
 #
 #   - canal BR: gancho máximo de 72,1% em todo o catálogo, e o ÚNICO vídeo
@@ -212,17 +233,27 @@ TENTATIVAS_TREND = 3
 # O efeito prático era o inverso do pedido: a régua descartava os sucessos do
 # canal e mandava o modelo se espelhar num vídeo de 183 views — foi assim que
 # saiu um Short sobre robô humanoide num canal cujos hits são todos de
-# geopolítica. Com a retenção, os 6-7 vídeos de 20k+ do BR entram, que é o
-# conjunto que o usuário chama de referência.
-RETENCAO_MINIMA = 70
+# geopolítica.
+#
+# ACIMA DE 100%, não 70%: o piso vale sobre a retenção, e passar de 100% é o
+# que distingue o vídeo que foi REASSISTIDO. Medido no catálogo: BR tem 30
+# vídeos acima de 100% (máximo 146%) e o US tem 25 (máximo 168%).
+RETENCAO_MINIMA = 100
 
 # Piso de views para ENTRAR na lista de referência (pedido do usuário em
 # 2026-08-17: "1k"). Diferente de VIEWS_MINIMO_RETENCAO (youtube.py), que é o
 # piso de significância estatística e continua valendo para o fallback: este
-# aqui decide o que serve de MOLDE. Com 1000, a lista fica em 45 vídeos no BR e
-# 51 no US — os dois canais bem servidos, nenhum caindo no fallback. Era o
-# buraco por onde o vídeo de 183 views entrava.
+# aqui decide o que serve de MOLDE. Era o buraco por onde o vídeo de 183 views
+# entrava.
 VIEWS_MINIMO_REFERENCIA = 1000
+
+# Teto da lista de referência (pedido do usuário em 2026-08-17: "os melhores 50
+# vídeos do canal"). Substitui o "sem teto" pedido mais cedo no mesmo dia: 50 é
+# também o limite de ids que `videos.list` aceita por chamada, então a lista
+# inteira volta a caber numa requisição de títulos. Os canais têm 30 e 25
+# vídeos acima do piso hoje, então o teto só passa a morder quando eles
+# crescerem — e aí corta pelos piores, porque a lista já vem ordenada.
+LIMITE_REFERENCIA = 50
 
 
 @dataclass

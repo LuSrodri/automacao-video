@@ -1483,7 +1483,7 @@ def _resumo_campeoes(campeoes: list[dict] | None) -> str:
         if gancho is not None:
             partes.append(f"gancho segura {gancho}% de quem abre")
         partes.append(f"{c.get('views', '?')} views")
-        if retencao >= RETENCAO_MINIMA:
+        if retencao > RETENCAO_MINIMA:
             marca = " [ALTA RETENÇÃO]"
         else:
             marca = f" [abaixo do piso de {RETENCAO_MINIMA}%]"
@@ -1491,7 +1491,8 @@ def _resumo_campeoes(campeoes: list[dict] | None) -> str:
     return (
         "\n\nVídeos deste canal ordenados por RETENÇÃO (quanto do vídeo quem "
         f"abriu assistiu). Os marcados como ALTA RETENÇÃO seguraram "
-        f"{RETENCAO_MINIMA}% ou mais — é com o ASSUNTO DESSES que a candidata "
+        f"mais de {RETENCAO_MINIMA}% de retenção (foram REASSISTIDOS) — é com o "
+        "ASSUNTO DESSES que a candidata "
         "escolhida precisa se parecer:\n" + "\n".join(linhas)
     )
 

@@ -399,7 +399,10 @@ Agora o pipeline lê **`/2/users/:id/following`** do handle em `X_USERNAME` a ca
 
 Pedido do usuário em **2026-08-16**: *"postar conforme os melhores vídeos do canal, sempre priorizando alto engajamento (versus swipe-away) de 70% ou mais"*.
 
-A métrica é a **retenção**: `averageViewPercentage` da YouTube Analytics — a mesma que o YouTube Studio mostra com esse nome.
+São **duas** métricas, e confundi-las foi a origem de todos os bugs desta régua:
+
+- **Retenção** (`averageViewPercentage`): quanto do vídeo quem abriu assistiu. **Passa de 100% quando o espectador reassiste** — o efeito do roteiro em loop discreto. O piso é **acima de 100%**.
+- **Engajamento** ("Continuaram assistindo" vs "Pularam o vídeo", no Studio): a fração de quem não deslizou. O alvo do usuário é 70%, mas **esse número não existe na Analytics API** — ver abaixo.
 
 ### A correção de 2026-08-17
 
@@ -416,13 +419,19 @@ Os hits reais do BR (20k a 46k views) têm gancho de **43% a 53%** — todos aba
 
 O efeito prático era o inverso do pedido: o único "molde de alto engajamento" do canal BR era um vídeo de **183 views sobre IA**, e foi assim que saiu um Short sobre robô humanoide num canal cujos hits são todos de geopolítica.
 
+### Por que o engajamento não vira piso
+
+O "Continuaram assistindo" do Studio **não é exposto pela Analytics API**. Verificado em 2026-08-17: `swipeAways`, `skipRate`, `engagementRate`, `continuedWatching` e `audienceRetentionPercentage` devolvem todos *Unknown identifier*. O único campo próximo, `engagedViews/views`, mede outra escala — no agregado de 28 dias do canal ele dá **46,7%** onde o Studio mostra **66,8%**, e a razão entre os dois varia de 1,43 a 1,61 por vídeo, então não há conversão. Reconstruí-lo exigiria a curva `audienceWatchRatio` (`dimensions=elapsedVideoTimeRatio`), que **existe** mas custa **uma chamada por vídeo, de 10 a 30 segundos cada** — inviável a cada execução, 12 vezes por dia.
+
+Por isso o gancho voltou a ser o que era **antes** de 2026-08-16: um termo de **ordenação** (`gancho × profundidade`), não um corte. Aquela versão funcionava justamente porque ordenava — ordenação devolve os melhores do canal seja qual for a escala da métrica, enquanto um piso absoluto numa escala que nunca alcança o número pedido reprova o catálogo inteiro.
+
 ### Como está agora
 
-- O ranking **ordena por retenção** e desempata pelo gancho, que continua sendo lido e mostrado no prompt como informação.
-- O **piso de `RETENCAO_MINIMA` (70%)** filtra a lista, combinado com **`VIEWS_MINIMO_REFERENCIA` (1000 views)** para entrar. O piso de views é o que fecha o buraco por onde o vídeo de 183 views passava. Resultado: 45 vídeos de referência no BR e 51 no US.
-- **A lista não tem teto.** Antes ela cortava nos 6 primeiros; era esse corte que a deixava apoiada num único vídeo. O teto sobrevive só no caminho de fallback, onde a lista é de contraexemplos e despejar o catálogo inteiro no prompt seria pior do que não ter lista.
+- O ranking **ordena por `gancho × profundidade`**, a pontuação da versão que funcionava.
+- O **piso de `RETENCAO_MINIMA`: retenção acima de 100%** (o vídeo foi reassistido), combinado com **`VIEWS_MINIMO_REFERENCIA` (1000 views)** para o número significar algo. O piso de views fecha o buraco por onde o vídeo de 183 views passava. Resultado: **30 vídeos de referência no BR e 25 no US**.
+- **Teto de `LIMITE_REFERENCIA` (50)**, aplicado depois da ordenação, então o corte é sempre pelos piores. 50 é também o limite de ids que `videos.list` aceita por chamada, então a lista inteira cabe numa requisição de títulos. Hoje o teto ainda não morde.
 - Os **títulos entram no log** (os 10 primeiros). Sem isso era impossível auditar a régua sabendo só a contagem — a investigação acima só achou o vídeo de 183 views consultando a API por fora.
-- A busca de títulos vai em **lotes de 50**, porque `videos.list` recusa mais que isso por chamada e a lista do US tem 51.
+- A busca de títulos vai em **lotes de 50**, porque `videos.list` recusa mais que isso por chamada. Com o teto de 50 a lista cabe numa chamada, mas o lote continua ali para o dia em que o teto subir.
 
 No prompt de seleção (`escritor._resumo_campeoes`), cada vídeo entra **rotulado em código**: `[ALTA RETENÇÃO]` acima do piso, `[abaixo do piso de 70%]` abaixo dele. O rótulo é escrito por Python, e não deixado para o modelo comparar de cabeça, porque regra numérica embutida em prosa é justamente o tipo de instrução que se perde no meio de cem linhas de contexto.
 

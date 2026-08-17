@@ -67,6 +67,17 @@ SUFIXO_VIDEO = " has:videos"
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 MIN_RESULTS_TIMELINE = 5  # mínimo aceito por max_results em /2/users/:id/tweets
 
+# Fallback de janela de coleta (2026-08-17). A janela curta existe para
+# execuções seguidas não pegarem os mesmos posts, mas em hora morta ela devolve
+# pouco ou nada — e aí abortar é a resposta errada: o problema não é defeito, é
+# um período sem notícia, e o certo é olhar mais para trás. As etapas dobram
+# até dois dias; alargar NÃO custa mais na X API (o teto de leitura é o
+# X_MAX_POSTS, a janela só decide de que intervalo saem esses posts).
+JANELAS_FALLBACK = (8, 12, 24, 48)
+# Posts abaixo disto não sustentam uma seleção: o GPT precisa de candidatas
+# para comparar contra a régua do canal, e escolher entre duas não é escolher.
+MIN_POSTS_JANELA = 20
+
 # Estado da rotação de lotes entre execuções: quando X_MAX_POSTS não cobre
 # todas as consultas, as execuções avançam um cursor circular em vez de
 # sortear — sorteio deixava contas dias sem serem lidas no azar.
@@ -785,10 +796,38 @@ def coletar_trends(cfg: Config) -> list[dict]:
         f"{cfg.janela_horas}h de {len(contas)} contas..."
     )
     posts = _coletar_posts(cfg, token, contas, ids)
+
+    # FALLBACK DE JANELA (2026-08-17, pedido do usuário). Com os Shorts de volta
+    # à cadência de 4 em 4 horas, a janela de coleta desceu para 4h — e 4h sobre
+    # as contas seguidas é um poço pequeno: madrugada, fim de semana ou um dia
+    # devagar devolvem pouco ou nada, e a execução abortava com SystemExit (que
+    # vira e-mail de falha do agendador por um dia sem notícia, não por um
+    # defeito). Em vez de abortar, a janela ABRE por etapas até achar material.
+    #
+    # O piso de aceitação é MIN_POSTS_JANELA, não 1: um punhado de posts
+    # devolvidos pela janela curta não sustenta a seleção — o GPT precisa de
+    # candidatas para comparar contra a régua do canal, e uma coleta de 3 posts
+    # entrega uma escolha que não é escolha nenhuma.
+    if len(posts) < MIN_POSTS_JANELA:
+        janela_original = cfg.janela_horas
+        for janela in JANELAS_FALLBACK:
+            if janela <= cfg.janela_horas:
+                continue
+            print(
+                f"[x] Só {len(posts)} post(s) em {cfg.janela_horas}h (piso de "
+                f"{MIN_POSTS_JANELA}); reabrindo a janela para {janela}h..."
+            )
+            cfg.janela_horas = janela
+            posts = _coletar_posts(cfg, token, contas, ids)
+            if len(posts) >= MIN_POSTS_JANELA:
+                break
+        cfg.janela_horas = janela_original
+
     if not posts:
         raise SystemExit(
-            f"Nenhum post encontrado nas últimas {cfg.janela_horas}h. "
-            "Aumente JANELA_HORAS no .env ou siga mais contas no X."
+            f"Nenhum post encontrado nem alargando a janela até "
+            f"{JANELAS_FALLBACK[-1]}h. Confira o token da X API ou siga mais "
+            "contas no X."
         )
     # Quantos posts trazem clipe é O número que decide se o formato longo tem
     # material: o vídeo é montado só com clipes, e eles precisam estar
