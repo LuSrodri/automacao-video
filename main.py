@@ -143,6 +143,7 @@ from pipeline.edicao import (
     RESPIRO_FINAL,
     duracao_audio,
     intervalos_imagens,
+    marcar_memoria,
     montar_video,
 )
 from pipeline.escritor import (
@@ -391,6 +392,7 @@ def main() -> None:
             "as contas acompanhadas."
         )
 
+    marcar_memoria("antes da narração")
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
     )
@@ -530,6 +532,7 @@ def main() -> None:
     # pedido do usuário. Entra por último na fila de sobreposições porque é a
     # camada mais cara: o que já está marcado pelas cartelas é desviado aqui.
     ocupadas = [(c["inicio_s"], c["inicio_s"] + c["dur_s"]) for c in cartelas]
+    marcar_memoria("antes das figuras")
     figuras = gerar_figuras(
         cfg,
         roteiro["texto_video"],
@@ -541,6 +544,7 @@ def main() -> None:
         ocupadas=ocupadas,
     )
 
+    marcar_memoria("antes da montagem")
     video_final = montar_video(
         narracao,
         sobreposicoes,

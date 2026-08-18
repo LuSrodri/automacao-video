@@ -44,8 +44,10 @@ rodapé esquerdo, para não se confundir com material próprio do canal. A marca
 por clipe: os demais da mesma montagem seguem coloridos e sem etiqueta.
 """
 
-import subprocess
 import shutil
+import subprocess
+import threading
+import time
 from pathlib import Path
 
 from .config import RAIZ
@@ -113,6 +115,33 @@ REPR_TEXTOS = {
 REPR_FONTE_FRAC = 0.028  # fração do lado menor do quadro (mesma lógica do crédito)
 REPR_MARGEM_FRAC = 0.035  # distância da borda esquerda
 REPR_Y_FRAC = 0.912  # distância do topo como fração da altura
+
+
+def memoria_mb() -> float | None:
+    """Memória residente do processo, em MB; None fora do Linux.
+
+    Existe para achar onde o formato longo estoura os 8 GB do container. A
+    métrica do Render mostra o container inteiro subindo de 95 MB para 8,3 GB em
+    cinco minutos, sem dizer QUEM subiu — e medições de bancada descartaram os
+    dois suspeitos óbvios (o `setpts` dos clipes e os PNGs loopados: 0,5 GB e
+    0,46 GB de pico, longe do estouro). Sem marcar etapa por etapa, o resto é
+    chute.
+    """
+    try:
+        with open("/proc/self/status", encoding="utf-8") as arquivo:
+            for linha in arquivo:
+                if linha.startswith("VmRSS:"):
+                    return int(linha.split()[1]) / 1024
+    except OSError:
+        pass
+    return None
+
+
+def marcar_memoria(etapa: str) -> None:
+    """Imprime a memória do processo numa etapa; silencioso fora do Linux."""
+    mb = memoria_mb()
+    if mb is not None:
+        print(f"[memoria] {etapa}: {mb:.0f} MB")
 
 
 def _exigir_ffmpeg() -> None:
@@ -528,13 +557,27 @@ def montar_video(
     for j, (c, (ini, fim)) in enumerate(zip(cartelas, janelas_cart)):
         idx_cart = prox_entrada
         prox_entrada += 1
+        # A imagem existe SÓ NA JANELA em que aparece (2026-08-18). Antes cada
+        # PNG era loopado pela duração inteira do vídeo: num longo de 150s a
+        # 30fps são 4500 frames em rgba (8 MB cada, em 1080p) por cartela, e o
+        # overlay consome todos, inclusive os milhares em que ela está
+        # desabilitada. Medido em bancada, com 4 PNGs sobre 150s: 0,46 GB e 77s
+        # do jeito antigo contra 0,32 GB e 38s assim — menos memória e metade do
+        # tempo. O `tpad` recoloca a imagem no instante certo preenchendo o
+        # começo com frames transparentes.
+        dur_janela = max(fim - ini + T_ARRASTO * 2, 0.1)
         comando += [
-            "-loop", "1", "-framerate", str(FPS), "-t", f"{duracao:.2f}",
+            "-loop", "1", "-framerate", str(FPS), "-t", f"{dur_janela:.2f}",
             "-i", str(c["imagem"]),
         ]
+        atraso = max(ini - T_ARRASTO, 0.0)
         # Deslocamento só desta janela: duas cartelas nunca andam juntas.
         d_j = _expr_progresso([(ini, fim)], T_ARRASTO, T_ARRASTO)
-        filtros.append(f"[{idx_cart}:v]format=rgba[cart{j}]")
+        filtros.append(
+            f"[{idx_cart}:v]format=rgba,setpts=PTS-STARTPTS,"
+            f"tpad=start_duration={atraso:.2f}:start_mode=add"
+            ":color=0x00000000[cart{j}]".replace("{j}", str(j))
+        )
         filtros.append(
             f"[{corrente}][cart{j}]"
             f"overlay=x='{tela_x}+{tela_l}*(1-({d_j}))':y={tela_y}"
@@ -660,10 +703,40 @@ def montar_video(
         str(destino),
     ]
 
-    print("[edicao] Montando vídeo final com ffmpeg...")
-    resultado = subprocess.run(comando, capture_output=True, text=True)
-    if resultado.returncode != 0:
-        raise SystemExit(f"ffmpeg falhou:\n{resultado.stderr[-2000:]}")
+    print(
+        f"[edicao] Montando vídeo final com ffmpeg "
+        f"({len(pares)} clipe(s), {len(cartelas)} cartela(s), "
+        f"{duracao:.0f}s em {largura}x{altura})..."
+    )
+    marcar_memoria("antes do ffmpeg")
+    # ACOMPANHA O PICO do ffmpeg (2026-08-18): o container morre com 8 GhB no
+    # formato longo, e a métrica do Render mostra só o total subindo — sem
+    # separar Python de ffmpeg não há como saber quem come a memória. A amostra
+    # roda numa thread porque o `communicate` abaixo bloqueia até o fim.
+    pico = {"mb": 0.0}
+
+    def _acompanhar(processo: subprocess.Popen) -> None:
+        while processo.poll() is None:
+            try:
+                with open(f"/proc/{processo.pid}/status", encoding="utf-8") as arq:
+                    for linha in arq:
+                        if linha.startswith("VmRSS:"):
+                            pico["mb"] = max(pico["mb"], int(linha.split()[1]) / 1024)
+                            break
+            except OSError:
+                return
+            time.sleep(2)
+
+    processo = subprocess.Popen(comando, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)
+    vigia = threading.Thread(target=_acompanhar, args=(processo,), daemon=True)
+    vigia.start()
+    _, erro = processo.communicate()
+    if pico["mb"]:
+        print(f"[memoria] pico do ffmpeg: {pico['mb']:.0f} MB")
+    marcar_memoria("depois do ffmpeg")
+    if processo.returncode != 0:
+        raise SystemExit(f"ffmpeg falhou:\n{(erro or '')[-2000:]}")
 
     print(f"[edicao] Vídeo final salvo em {destino}")
     return destino
