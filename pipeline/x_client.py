@@ -558,7 +558,62 @@ CACHE_TOKEN_USUARIO: dict[str, str] = {}
 ARQUIVO_REFRESH = RAIZ / ".x_refresh_token"
 
 
-def _token_de_usuario(cfg: Config) -> str | None:
+def renovar_token_do_x(cfg: Config) -> bool:
+    """Renova o token do X e distribui o resultado para os crons; True se deu.
+
+    É o modo `--renovar-x-token`, de um cron DEDICADO que não gera vídeo. Existe
+    porque o refresh token do X é de uso único: com os quatro crons de vídeo
+    renovando por conta própria, quem renovasse por último invalidava o token
+    dos outros — a corrida chegou a acontecer entre a máquina local e a produção
+    durante os testes de 2026-08-17.
+
+    Com este cron, existe UM escritor. Ele grava duas coisas nos serviços:
+
+    - ``X_OAUTH_ACCESS_TOKEN``: o token de acesso, válido por 2h. É o que os
+      crons de vídeo consomem, sem nunca renovar nada.
+    - ``X_OAUTH_REFRESH_TOKEN``: a semente da próxima renovação, que só este
+      cron usa.
+
+    Por isso ele precisa rodar com folga dentro das 2h de validade — de hora em
+    hora, na prática. Falhar aqui não derruba vídeo nenhum: os crons de vídeo
+    caem para a coleta pelas contas seguidas.
+    """
+    if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret):
+        print("[x-token] Sem X_OAUTH_CLIENT_ID/SECRET; nada a renovar.")
+        return False
+    access = _token_de_usuario(cfg, renovando=True)
+    if not access:
+        print(
+            "[x-token] Renovação falhou. Se o refresh foi queimado, reautorize "
+            "no navegador e regrave X_OAUTH_REFRESH_TOKEN."
+        )
+        return False
+    if not (cfg.render_api_key and cfg.render_service_ids):
+        print("[x-token] Sem RENDER_API_KEY/RENDER_SERVICE_IDS; token não distribuído.")
+        return False
+    gravou = 0
+    for sid in cfg.render_service_ids:
+        try:
+            resp = requests.put(
+                RENDER_ENV_ENDPOINT.format(sid=sid, chave="X_OAUTH_ACCESS_TOKEN"),
+                headers={
+                    "Authorization": f"Bearer {cfg.render_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"value": access},
+                timeout=30,
+            )
+            gravou += resp.status_code in (200, 201)
+        except requests.RequestException as erro:
+            print(f"[x-token] falha ao distribuir para {sid}: {erro}")
+    print(
+        f"[x-token] Access token distribuído para {gravou} de "
+        f"{len(cfg.render_service_ids)} serviço(s); vale ~2h."
+    )
+    return gravou > 0
+
+
+def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
     """Access token OAuth 2.0 do USUÁRIO, renovado pelo refresh token.
 
     Serve só para ler LISTA PRIVADA: todo o resto do pipeline continua no bearer
@@ -572,13 +627,23 @@ def _token_de_usuario(cfg: Config) -> str | None:
     if "access" in CACHE_TOKEN_USUARIO:
         return CACHE_TOKEN_USUARIO["access"] or None
 
-    # O refresh mais novo pode ter sido gravado por uma execução anterior nesta
-    # mesma máquina (uso local); no Render o arquivo não sobrevive.
+    # CRON DE VÍDEO: consome o access token que o cron renovador distribuiu e
+    # NÃO renova nada. É isto que elimina a corrida — só o renovador escreve.
+    # Token vencido aqui não é problema a resolver renovando por conta própria
+    # (voltaria a corrida): a coleta cai para as contas seguidas e o renovador
+    # conserta no ciclo seguinte.
+    if not renovando and cfg.x_oauth_access_token:
+        CACHE_TOKEN_USUARIO["access"] = cfg.x_oauth_access_token
+        return cfg.x_oauth_access_token
+
+    # A ENV VAR manda: é ela que o cron renovador atualiza, e portanto a fonte
+    # da verdade. O arquivo em disco é só rede para o uso local, quando não há
+    # env var nenhuma — dar prioridade a ele fazia a execução local tentar
+    # renovar com um token velho e tomar 400, mesmo com o valor certo no
+    # ambiente (visto em teste).
     refresh = cfg.x_oauth_refresh_token
-    if ARQUIVO_REFRESH.exists():
-        gravado = ARQUIVO_REFRESH.read_text(encoding="utf-8").strip()
-        if gravado:
-            refresh = gravado
+    if not refresh and ARQUIVO_REFRESH.exists():
+        refresh = ARQUIVO_REFRESH.read_text(encoding="utf-8").strip()
 
     if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret and refresh):
         CACHE_TOKEN_USUARIO["access"] = ""
@@ -1029,19 +1094,27 @@ def coletar_trends(cfg: Config) -> list[dict]:
         # morta) trouxe 5 candidatas, NENHUMA com clipe, abortando o vídeo. A
         # janela de 4h existe para execuções seguidas não repetirem pauta, não
         # para desistir quando o poço está seco.
-        if 0 < len(posts) < MIN_POSTS_JANELA:
+        # O gatilho olha DUAS coisas, e a segunda foi aprendida na marra: o
+        # vídeo é montado só com clipe, então uma janela cheia de posts sem
+        # vídeo nenhum é tão inútil quanto uma janela vazia. Contando só o
+        # total, a execução das 03:10 UTC passou direto pelo fallback com 20+
+        # posts e morreu logo depois em "5 candidatas sem post com vídeo".
+        def _insuficiente(lote: list[dict]) -> bool:
+            return len(lote) < MIN_POSTS_JANELA or not any(p["video"] for p in lote)
+
+        if posts and _insuficiente(posts):
             original = cfg.janela_horas
             for janela in JANELAS_FALLBACK:
                 if janela <= cfg.janela_horas:
                     continue
                 print(
-                    f"[x] Só {len(posts)} post(s) na lista em "
-                    f"{cfg.janela_horas}h (piso de {MIN_POSTS_JANELA}); "
+                    f"[x] {len(posts)} post(s) na lista em {cfg.janela_horas}h, "
+                    f"{sum(1 for p in posts if p['video'])} com clipe; "
                     f"reabrindo a janela para {janela}h..."
                 )
                 cfg.janela_horas = janela
                 posts = _coletar_da_lista(cfg, token)
-                if len(posts) >= MIN_POSTS_JANELA:
+                if not _insuficiente(posts):
                     break
             cfg.janela_horas = original
         if posts:

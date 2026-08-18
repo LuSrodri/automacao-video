@@ -411,6 +411,10 @@ class Config:
     x_oauth_client_id: str = ""
     x_oauth_client_secret: str = ""
     x_oauth_refresh_token: str = ""
+    # Access token distribuído pelo cron renovador (--renovar-x-token). Quando
+    # presente, os crons de vídeo o consomem e NÃO renovam nada: é o que impede
+    # quatro processos de queimarem o refresh um do outro.
+    x_oauth_access_token: str = ""
     render_api_key: str = ""
     # Serviços cujo X_OAUTH_REFRESH_TOKEN é atualizado junto (os 4 crons leem a
     # MESMA lista e compartilham a cadeia de tokens).
@@ -559,6 +563,7 @@ def carregar_config() -> Config:
         x_oauth_client_id=(os.getenv("X_OAUTH_CLIENT_ID", "") or "").strip(),
         x_oauth_client_secret=(os.getenv("X_OAUTH_CLIENT_SECRET", "") or "").strip(),
         x_oauth_refresh_token=(os.getenv("X_OAUTH_REFRESH_TOKEN", "") or "").strip(),
+        x_oauth_access_token=(os.getenv("X_OAUTH_ACCESS_TOKEN", "") or "").strip(),
         render_api_key=(os.getenv("RENDER_API_KEY", "") or "").strip(),
         render_service_ids=[
             s.strip() for s in os.getenv("RENDER_SERVICE_IDS", "").split(",") if s.strip()

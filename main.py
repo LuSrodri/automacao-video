@@ -158,7 +158,11 @@ from pipeline.seo import (
 )
 from pipeline.silencio import aparar_silencios
 from pipeline.thumbnail import gerar_thumbnail
-from pipeline.x_client import buscar_posts_com_video, coletar_trends
+from pipeline.x_client import (
+    buscar_posts_com_video,
+    coletar_trends,
+    renovar_token_do_x,
+)
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
 from pipeline.youtube import top_retencao, ultimos_publicados
@@ -195,12 +199,25 @@ def main() -> None:
         action="store_true",
         help="Autoriza o canal inglês e salva YOUTUBE_REFRESH_TOKEN_USA no .env",
     )
+    parser.add_argument(
+        "--renovar-x-token",
+        action="store_true",
+        help=(
+            "NÃO gera vídeo: só renova o token do X e o distribui para os crons "
+            "(cron dedicado; ver renovar_token_do_x em x_client.py)"
+        ),
+    )
     args = parser.parse_args()
 
     cfg = carregar_config()
     if args.auth_youtube or args.auth_youtube_usa:
         autenticar_youtube(cfg, usa=args.auth_youtube_usa)
         return
+    # Modo RENOVADOR (2026-08-18, ideia do usuário). Sai antes de qualquer
+    # leitura paga: este cron existe só para ser o ÚNICO que renova o token do
+    # X, acabando com a corrida entre os quatro crons de vídeo.
+    if args.renovar_x_token:
+        raise SystemExit(0 if renovar_token_do_x(cfg) else 1)
     if args.usa:
         cfg.publico = "usa"
         print("[config] Modo USA: conteúdo em inglês para o público americano")
