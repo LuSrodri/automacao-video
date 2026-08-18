@@ -554,6 +554,10 @@ def _gravar_refresh_no_render(cfg: Config, token: str) -> bool:
     return gravou > 0
 
 
+CACHE_TOKEN_USUARIO: dict[str, str] = {}
+ARQUIVO_REFRESH = RAIZ / ".x_refresh_token"
+
+
 def _token_de_usuario(cfg: Config) -> str | None:
     """Access token OAuth 2.0 do USUÁRIO, renovado pelo refresh token.
 
@@ -562,21 +566,33 @@ def _token_de_usuario(cfg: Config) -> str | None:
     credenciais ou quando a renovação falha, e quem chama cai para o app-only —
     que lê lista pública e falha de forma visível na privada.
     """
-    if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret
-            and cfg.x_oauth_refresh_token):
+    # UMA renovação por execução. Sem este cache, cada chamada queimava o
+    # refresh anterior — e a segunda já falhava com 400 dentro da MESMA
+    # execução, porque o token é de uso único (visto em teste real).
+    if "access" in CACHE_TOKEN_USUARIO:
+        return CACHE_TOKEN_USUARIO["access"] or None
+
+    # O refresh mais novo pode ter sido gravado por uma execução anterior nesta
+    # mesma máquina (uso local); no Render o arquivo não sobrevive.
+    refresh = cfg.x_oauth_refresh_token
+    if ARQUIVO_REFRESH.exists():
+        gravado = ARQUIVO_REFRESH.read_text(encoding="utf-8").strip()
+        if gravado:
+            refresh = gravado
+
+    if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret and refresh):
+        CACHE_TOKEN_USUARIO["access"] = ""
         return None
     try:
         resp = requests.post(
             OAUTH2_TOKEN_ENDPOINT,
             auth=(cfg.x_oauth_client_id, cfg.x_oauth_client_secret),
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": cfg.x_oauth_refresh_token,
-            },
+            data={"grant_type": "refresh_token", "refresh_token": refresh},
             timeout=30,
         )
     except requests.RequestException as erro:
         print(f"[aviso] X OAuth: renovação falhou ({erro})")
+        CACHE_TOKEN_USUARIO["access"] = ""
         return None
     if resp.status_code != 200:
         print(
@@ -584,19 +600,29 @@ def _token_de_usuario(cfg: Config) -> str | None:
             "refresh token do X é de uso único — se a execução anterior o "
             "renovou sem gravar o novo, é preciso reautorizar no navegador."
         )
+        CACHE_TOKEN_USUARIO["access"] = ""
         return None
     dados = resp.json()
     novo = dados.get("refresh_token")
-    if novo and novo != cfg.x_oauth_refresh_token:
+    if novo and novo != refresh:
+        # Grava SEMPRE em disco antes de qualquer outra coisa: o token velho já
+        # morreu neste ponto, e perder o novo custa uma reautorização manual no
+        # navegador. Localmente o arquivo resolve; no Render ele não sobrevive
+        # ao fim do container, e é aí que entra a persistência remota.
+        try:
+            ARQUIVO_REFRESH.write_text(novo, encoding="utf-8")
+        except OSError as erro:
+            print(f"[aviso] não deu para gravar o refresh em disco: {erro}")
         if _gravar_refresh_no_render(cfg, novo):
             print("[x] Refresh token do X renovado e gravado no Render.")
         else:
             print(
-                "[aviso] O refresh token do X ROTACIONOU e NÃO foi persistido "
-                "(RENDER_API_KEY/RENDER_SERVICE_IDS ausentes): a próxima "
-                "execução vai falhar na renovação."
+                "[aviso] O refresh token do X ROTACIONOU e não foi persistido "
+                "fora deste container: a próxima execução no Render vai falhar "
+                "na renovação e a coleta cai para as contas seguidas."
             )
-    return dados.get("access_token")
+    CACHE_TOKEN_USUARIO["access"] = dados.get("access_token") or ""
+    return CACHE_TOKEN_USUARIO["access"] or None
 
 
 def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
