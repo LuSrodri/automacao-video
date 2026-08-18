@@ -10,3 +10,4 @@ av paulista*.mp4
 .contas_ids.json
 .contas_seguidas.json
 .x_refresh_token
+token.json

@@ -1024,6 +1024,26 @@ def coletar_trends(cfg: Config) -> list[dict]:
             f"das últimas {cfg.janela_horas}h, ordem cronológica)..."
         )
         posts = _coletar_da_lista(cfg, token)
+        # MESMO FALLBACK DE JANELA da coleta por contas — ele se perdeu quando
+        # este caminho entrou, e a primeira execução real (03:03 UTC, hora
+        # morta) trouxe 5 candidatas, NENHUMA com clipe, abortando o vídeo. A
+        # janela de 4h existe para execuções seguidas não repetirem pauta, não
+        # para desistir quando o poço está seco.
+        if 0 < len(posts) < MIN_POSTS_JANELA:
+            original = cfg.janela_horas
+            for janela in JANELAS_FALLBACK:
+                if janela <= cfg.janela_horas:
+                    continue
+                print(
+                    f"[x] Só {len(posts)} post(s) na lista em "
+                    f"{cfg.janela_horas}h (piso de {MIN_POSTS_JANELA}); "
+                    f"reabrindo a janela para {janela}h..."
+                )
+                cfg.janela_horas = janela
+                posts = _coletar_da_lista(cfg, token)
+                if len(posts) >= MIN_POSTS_JANELA:
+                    break
+            cfg.janela_horas = original
         if posts:
             return _resumir_trends(cfg, posts)
         print(
