@@ -53,6 +53,15 @@ FOLLOWING_ENDPOINT = "https://api.x.com/2/users/{id}/following"
 # ranqueou. `/2/users/:id/timelines/reverse_chronological` NÃO serve aqui:
 # exige contexto de usuário (OAuth 1.0a / PKCE), que o pipeline não tem.
 TIMELINE_ENDPOINT = "https://api.x.com/2/users/{id}/tweets"
+# Posts dos membros de uma LISTA, em ordem cronológica reversa. Aceita o mesmo
+# bearer app-only (conferido contra a API real em 2026-08-17: id inexistente
+# devolve "Not Found", não 401/403). É o caminho que dispensa toda a mecânica
+# de `from:` — sem limite de 512 caracteres, sem lotes, sem rateio de cota entre
+# contas e sem o viés de relevância que enterrava conta pequena. NÃO aceita
+# `start_time`: a janela é aplicada no cliente, e a ordem cronológica permite
+# parar de paginar assim que os posts ficam mais velhos que ela.
+LIST_TWEETS_ENDPOINT = "https://api.x.com/2/lists/{id}/tweets"
+LIST_MEMBERS_ENDPOINT = "https://api.x.com/2/lists/{id}/members"
 
 MAX_QUERY = 512  # limite de caracteres da query do search/recent
 # Sufixos que o pipeline concatena nas queries de lote. O de busca vale para
@@ -512,6 +521,62 @@ def _por_engajamento(post: dict) -> int:
     return post["likes"] + 3 * post["reposts"] + post["respostas"]
 
 
+def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
+    """Posts dos membros da LISTA (X_LIST_ID), cronológicos, numa chamada só.
+
+    Substitui inteira a mecânica de `search/recent` com `from:`: lá as 162
+    contas não cabiam numa query de 512 caracteres, viravam 7 lotes, e o teto de
+    leitura era repartido entre eles — 28 posts para 25 contas, escolhidos por
+    RELEVÂNCIA. O efeito medido em 2026-08-17 foi conta ativa sumir da coleta
+    (@sentdefender publicou 12 vezes em 24h e apareceu zero vez). A lista não
+    tem nada disso: é a timeline dos membros, em ordem de publicação.
+
+    Pagina de 100 em 100 até `x_max_posts` e PARA no primeiro post mais velho
+    que a janela — como a ordem é cronológica reversa, o resto também será.
+    """
+    posts: list[dict] = []
+    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
+    vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
+    pagina = None
+    while len(posts) < cfg.x_max_posts:
+        params = {
+            "max_results": min(100, max(cfg.x_max_posts - len(posts), 10)),
+            "tweet.fields": "created_at,public_metrics,text",
+            "expansions": "author_id,attachments.media_keys",
+            "user.fields": "username",
+            "media.fields": "type",
+        }
+        if pagina:
+            params["pagination_token"] = pagina
+        try:
+            dados = _get(token, LIST_TWEETS_ENDPOINT.format(id=cfg.x_list_id), params)
+        except requests.RequestException as erro:
+            print(f"[aviso] X API: leitura da lista falhou ({erro})")
+            break
+        lote = _normalizar_posts(dados)
+        if not lote:
+            break
+        antigos = False
+        for post in lote:
+            # `data` chega como "YYYY-MM-DD HH:MM" (ver _normalizar_posts)
+            try:
+                quando = datetime.strptime(post["data"], "%Y-%m-%d %H:%M").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                quando = None
+            if quando and quando < inicio:
+                antigos = True
+                continue
+            if post["usuario"].lower() in vetadas:
+                continue
+            posts.append(post)
+        pagina = (dados.get("meta") or {}).get("next_token")
+        if antigos or not pagina:
+            break
+    return posts
+
+
 def _coletar_posts(
     cfg: Config, token: str, contas: list[str], ids: dict[str, str] | None = None
 ) -> list[dict]:
@@ -843,6 +908,21 @@ def coletar_trends(cfg: Config) -> list[dict]:
         raise SystemExit(
             "Sem token da X API não há coleta de posts. Confira X_CONSUMER_KEY "
             "e X_CONSUMER_SECRET no .env."
+        )
+
+    # LISTA: caminho preferido quando X_LIST_ID está definido. Dispensa a lista
+    # de seguidas, os lotes e as timelines — ver `_coletar_da_lista`.
+    if cfg.x_list_id:
+        print(
+            f"[x] Lendo a lista {cfg.x_list_id} (até {cfg.x_max_posts} posts "
+            f"das últimas {cfg.janela_horas}h, ordem cronológica)..."
+        )
+        posts = _coletar_da_lista(cfg, token)
+        if posts:
+            return _resumir_trends(cfg, posts)
+        print(
+            "[aviso] A lista não devolveu posts na janela; caindo para a coleta "
+            "pelas contas seguidas."
         )
 
     if cfg.contas:

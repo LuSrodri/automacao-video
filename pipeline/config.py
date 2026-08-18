@@ -389,6 +389,15 @@ class Config:
     contas_extras: list[str] = field(
         default_factory=lambda: list(CONTAS_EXTRAS_PADRAO)
     )
+    # LISTA do X como fonte da pauta (2026-08-17). Quando preenchida, a coleta
+    # lê `/2/lists/{id}/tweets` e IGNORA a mecânica de `from:`: uma chamada
+    # paginada, cronológica, com todos os membros — sem o limite de 512
+    # caracteres da query, sem os 7 lotes, sem repartir o teto de leitura entre
+    # eles e sem o viés de relevância que sumia com conta pequena (medido: uma
+    # conta com 12 posts em 24h apareceu ZERO vezes na coleta por lotes).
+    # Vazio = comportamento antigo. Só lê lista PÚBLICA: privada exige contexto
+    # de usuário, que o bearer app-only não tem.
+    x_list_id: str = ""
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
     # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
     # coleta normal ordena por relevância e não prefere vídeo, então o post com
@@ -529,6 +538,7 @@ def carregar_config() -> Config:
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
         x_username=(os.getenv("X_USERNAME", "") or "").strip().lstrip("@"),
+        x_list_id=(os.getenv("X_LIST_ID", "") or "").strip(),
         x_max_posts=int(os.getenv("X_MAX_POSTS", "200")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
