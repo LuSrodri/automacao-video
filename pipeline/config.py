@@ -398,6 +398,23 @@ class Config:
     # Vazio = comportamento antigo. Só lê lista PÚBLICA: privada exige contexto
     # de usuário, que o bearer app-only não tem.
     x_list_id: str = ""
+    # OAuth 2.0 de USUÁRIO, só para ler LISTA PRIVADA (2026-08-17). O bearer
+    # app-only não enxerga lista privada, e o fluxo de usuário do X tem uma
+    # armadilha: o refresh token é de USO ÚNICO — cada renovação emite outro e
+    # invalida o anterior na hora (medido: reusar o antigo devolve HTTP 400).
+    # Guardar um valor fixo aqui funcionaria UMA vez.
+    #
+    # Por isso a renovação precisa PERSISTIR o token novo, e o lugar é a env var
+    # do próprio Render (o container é descartado a cada execução). Sem
+    # `render_api_key` a persistência não acontece e a cadeia quebra na segunda
+    # execução — o código avisa e cai para o app-only em vez de falhar calado.
+    x_oauth_client_id: str = ""
+    x_oauth_client_secret: str = ""
+    x_oauth_refresh_token: str = ""
+    render_api_key: str = ""
+    # Serviços cujo X_OAUTH_REFRESH_TOKEN é atualizado junto (os 4 crons leem a
+    # MESMA lista e compartilham a cadeia de tokens).
+    render_service_ids: list[str] = field(default_factory=list)
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
     # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
     # coleta normal ordena por relevância e não prefere vídeo, então o post com
@@ -539,6 +556,13 @@ def carregar_config() -> Config:
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
         x_username=(os.getenv("X_USERNAME", "") or "").strip().lstrip("@"),
         x_list_id=(os.getenv("X_LIST_ID", "") or "").strip(),
+        x_oauth_client_id=(os.getenv("X_OAUTH_CLIENT_ID", "") or "").strip(),
+        x_oauth_client_secret=(os.getenv("X_OAUTH_CLIENT_SECRET", "") or "").strip(),
+        x_oauth_refresh_token=(os.getenv("X_OAUTH_REFRESH_TOKEN", "") or "").strip(),
+        render_api_key=(os.getenv("RENDER_API_KEY", "") or "").strip(),
+        render_service_ids=[
+            s.strip() for s in os.getenv("RENDER_SERVICE_IDS", "").split(",") if s.strip()
+        ],
         x_max_posts=int(os.getenv("X_MAX_POSTS", "200")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),

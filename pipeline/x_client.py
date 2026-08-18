@@ -521,6 +521,84 @@ def _por_engajamento(post: dict) -> int:
     return post["likes"] + 3 * post["reposts"] + post["respostas"]
 
 
+OAUTH2_TOKEN_ENDPOINT = "https://api.x.com/2/oauth2/token"
+RENDER_ENV_ENDPOINT = "https://api.render.com/v1/services/{sid}/env-vars/{chave}"
+
+
+def _gravar_refresh_no_render(cfg: Config, token: str) -> bool:
+    """Persiste o refresh token novo nas env vars dos crons; True se gravou.
+
+    Existe porque o refresh token do X é de USO ÚNICO: cada renovação emite
+    outro e mata o anterior na hora (medido em 2026-08-17 — reusar o antigo
+    devolve HTTP 400). Sem regravar, a execução seguinte tentaria renovar com um
+    valor morto. O container do cron é descartado ao fim da execução, então a
+    env var do Render é o único lugar que os quatro serviços compartilham.
+    """
+    if not (cfg.render_api_key and cfg.render_service_ids):
+        return False
+    gravou = 0
+    for sid in cfg.render_service_ids:
+        try:
+            resp = requests.put(
+                RENDER_ENV_ENDPOINT.format(sid=sid, chave="X_OAUTH_REFRESH_TOKEN"),
+                headers={
+                    "Authorization": f"Bearer {cfg.render_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"value": token},
+                timeout=30,
+            )
+            gravou += resp.status_code in (200, 201)
+        except requests.RequestException as erro:
+            print(f"[aviso] não deu para gravar o token em {sid}: {erro}")
+    return gravou > 0
+
+
+def _token_de_usuario(cfg: Config) -> str | None:
+    """Access token OAuth 2.0 do USUÁRIO, renovado pelo refresh token.
+
+    Serve só para ler LISTA PRIVADA: todo o resto do pipeline continua no bearer
+    app-only, que não expira nem rotaciona. Devolve None quando não há
+    credenciais ou quando a renovação falha, e quem chama cai para o app-only —
+    que lê lista pública e falha de forma visível na privada.
+    """
+    if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret
+            and cfg.x_oauth_refresh_token):
+        return None
+    try:
+        resp = requests.post(
+            OAUTH2_TOKEN_ENDPOINT,
+            auth=(cfg.x_oauth_client_id, cfg.x_oauth_client_secret),
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": cfg.x_oauth_refresh_token,
+            },
+            timeout=30,
+        )
+    except requests.RequestException as erro:
+        print(f"[aviso] X OAuth: renovação falhou ({erro})")
+        return None
+    if resp.status_code != 200:
+        print(
+            f"[aviso] X OAuth: renovação recusada ({resp.status_code}). O "
+            "refresh token do X é de uso único — se a execução anterior o "
+            "renovou sem gravar o novo, é preciso reautorizar no navegador."
+        )
+        return None
+    dados = resp.json()
+    novo = dados.get("refresh_token")
+    if novo and novo != cfg.x_oauth_refresh_token:
+        if _gravar_refresh_no_render(cfg, novo):
+            print("[x] Refresh token do X renovado e gravado no Render.")
+        else:
+            print(
+                "[aviso] O refresh token do X ROTACIONOU e NÃO foi persistido "
+                "(RENDER_API_KEY/RENDER_SERVICE_IDS ausentes): a próxima "
+                "execução vai falhar na renovação."
+            )
+    return dados.get("access_token")
+
+
 def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
     """Posts dos membros da LISTA (X_LIST_ID), cronológicos, numa chamada só.
 
@@ -535,6 +613,8 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
     que a janela — como a ordem é cronológica reversa, o resto também será.
     """
     posts: list[dict] = []
+    # Lista PRIVADA exige contexto de usuário; na pública o app-only basta.
+    token = _token_de_usuario(cfg) or token
     inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
     vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
     pagina = None
