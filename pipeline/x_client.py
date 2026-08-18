@@ -525,6 +525,39 @@ OAUTH2_TOKEN_ENDPOINT = "https://api.x.com/2/oauth2/token"
 RENDER_ENV_ENDPOINT = "https://api.render.com/v1/services/{sid}/env-vars/{chave}"
 
 
+def _ler_do_render(cfg: Config, chave: str) -> str:
+    """Valor ATUAL de uma env var no Render; "" quando não dá para ler.
+
+    Existe porque env var do Render só entra no container no DEPLOY seguinte —
+    e o token do X muda a cada renovação, várias vezes por dia. Ler de
+    `os.environ` (via cfg) devolve o valor congelado no último deploy, que no
+    caso do refresh token de USO ÚNICO significa tentar renovar para sempre com
+    um token já queimado.
+
+    Foi exatamente o que aconteceu em 2026-08-18: o renovador funcionou uma vez
+    às 03:23, gravou o token novo na env var e depois falhou NOVE HORAS seguidas
+    relendo o token morto do deploy. A API do Render é a fonte da verdade.
+    """
+    if not (cfg.render_api_key and cfg.render_token_service_id):
+        return ""
+    try:
+        resp = requests.get(
+            "https://api.render.com/v1/services/"
+            f"{cfg.render_token_service_id}/env-vars",
+            headers={"Authorization": f"Bearer {cfg.render_api_key}"},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return ""
+        for item in resp.json():
+            env = item.get("envVar") or {}
+            if env.get("key") == chave:
+                return (env.get("value") or "").strip()
+    except (requests.RequestException, ValueError) as erro:
+        print(f"[aviso] não deu para ler {chave} no Render: {erro}")
+    return ""
+
+
 def _gravar_refresh_no_render(cfg: Config, token: str) -> bool:
     """Persiste o refresh token novo nas env vars dos crons; True se gravou.
 
@@ -534,24 +567,24 @@ def _gravar_refresh_no_render(cfg: Config, token: str) -> bool:
     valor morto. O container do cron é descartado ao fim da execução, então a
     env var do Render é o único lugar que os quatro serviços compartilham.
     """
-    if not (cfg.render_api_key and cfg.render_service_ids):
+    if not (cfg.render_api_key and cfg.render_token_service_id):
         return False
-    gravou = 0
-    for sid in cfg.render_service_ids:
-        try:
-            resp = requests.put(
-                RENDER_ENV_ENDPOINT.format(sid=sid, chave="X_OAUTH_REFRESH_TOKEN"),
-                headers={
-                    "Authorization": f"Bearer {cfg.render_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"value": token},
-                timeout=30,
-            )
-            gravou += resp.status_code in (200, 201)
-        except requests.RequestException as erro:
-            print(f"[aviso] não deu para gravar o token em {sid}: {erro}")
-    return gravou > 0
+    try:
+        resp = requests.put(
+            RENDER_ENV_ENDPOINT.format(
+                sid=cfg.render_token_service_id, chave="X_OAUTH_REFRESH_TOKEN"
+            ),
+            headers={
+                "Authorization": f"Bearer {cfg.render_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"value": token},
+            timeout=30,
+        )
+        return resp.status_code in (200, 201)
+    except requests.RequestException as erro:
+        print(f"[aviso] não deu para gravar o refresh token: {erro}")
+        return False
 
 
 CACHE_TOKEN_USUARIO: dict[str, str] = {}
@@ -581,6 +614,26 @@ def renovar_token_do_x(cfg: Config) -> bool:
     if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret):
         print("[x-token] Sem X_OAUTH_CLIENT_ID/SECRET; nada a renovar.")
         return False
+
+    # NÃO RENOVAR À TOA (2026-08-18). Cada renovação QUEIMA um refresh de uso
+    # único, e uma que falhe no meio do caminho custa reautorização manual no
+    # navegador. Se o access token vigente ainda responde, não há o que fazer —
+    # o cron roda de hora em hora justamente para ter folga dentro das 2h de
+    # validade, não para trocar o token 24 vezes por dia.
+    vigente = _ler_do_render(cfg, "X_OAUTH_ACCESS_TOKEN")
+    if vigente:
+        try:
+            teste = requests.get(
+                "https://api.x.com/2/users/me",
+                headers={"Authorization": f"Bearer {vigente}"},
+                timeout=30,
+            )
+            if teste.status_code == 200:
+                print("[x-token] Access token vigente ainda vale; nada a renovar.")
+                return True
+        except requests.RequestException:
+            pass  # sem resposta do X, segue para a renovação
+
     access = _token_de_usuario(cfg, renovando=True)
     if not access:
         print(
@@ -588,29 +641,29 @@ def renovar_token_do_x(cfg: Config) -> bool:
             "no navegador e regrave X_OAUTH_REFRESH_TOKEN."
         )
         return False
-    if not (cfg.render_api_key and cfg.render_service_ids):
-        print("[x-token] Sem RENDER_API_KEY/RENDER_SERVICE_IDS; token não distribuído.")
+    if not (cfg.render_api_key and cfg.render_token_service_id):
+        print("[x-token] Sem RENDER_API_KEY/RENDER_TOKEN_SERVICE_ID; token não salvo.")
         return False
-    gravou = 0
-    for sid in cfg.render_service_ids:
-        try:
-            resp = requests.put(
-                RENDER_ENV_ENDPOINT.format(sid=sid, chave="X_OAUTH_ACCESS_TOKEN"),
-                headers={
-                    "Authorization": f"Bearer {cfg.render_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={"value": access},
-                timeout=30,
-            )
-            gravou += resp.status_code in (200, 201)
-        except requests.RequestException as erro:
-            print(f"[x-token] falha ao distribuir para {sid}: {erro}")
-    print(
-        f"[x-token] Access token distribuído para {gravou} de "
-        f"{len(cfg.render_service_ids)} serviço(s); vale ~2h."
-    )
-    return gravou > 0
+    try:
+        resp = requests.put(
+            RENDER_ENV_ENDPOINT.format(
+                sid=cfg.render_token_service_id, chave="X_OAUTH_ACCESS_TOKEN"
+            ),
+            headers={
+                "Authorization": f"Bearer {cfg.render_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"value": access},
+            timeout=30,
+        )
+    except requests.RequestException as erro:
+        print(f"[x-token] falha ao salvar o access token: {erro}")
+        return False
+    if resp.status_code not in (200, 201):
+        print(f"[x-token] falha ao salvar o access token: HTTP {resp.status_code}")
+        return False
+    print("[x-token] Access token renovado e salvo; vale ~2h.")
+    return True
 
 
 def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
@@ -632,18 +685,28 @@ def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
     # Token vencido aqui não é problema a resolver renovando por conta própria
     # (voltaria a corrida): a coleta cai para as contas seguidas e o renovador
     # conserta no ciclo seguinte.
-    if not renovando and cfg.x_oauth_access_token:
-        CACHE_TOKEN_USUARIO["access"] = cfg.x_oauth_access_token
-        return cfg.x_oauth_access_token
+    #
+    # Lê do RENDER primeiro: o valor em cfg vem do último deploy e envelhece
+    # junto com ele — o access token dura 2h, e o deploy pode ter semanas.
+    if not renovando:
+        access = _ler_do_render(cfg, "X_OAUTH_ACCESS_TOKEN") or cfg.x_oauth_access_token
+        if access:
+            CACHE_TOKEN_USUARIO["access"] = access
+            return access
 
-    # A ENV VAR manda: é ela que o cron renovador atualiza, e portanto a fonte
-    # da verdade. O arquivo em disco é só rede para o uso local, quando não há
-    # env var nenhuma — dar prioridade a ele fazia a execução local tentar
-    # renovar com um token velho e tomar 400, mesmo com o valor certo no
-    # ambiente (visto em teste).
-    refresh = cfg.x_oauth_refresh_token
-    if not refresh and ARQUIVO_REFRESH.exists():
-        refresh = ARQUIVO_REFRESH.read_text(encoding="utf-8").strip()
+    # Ordem de confiança do refresh: Render (valor vivo) > env var do container
+    # (congelada no deploy) > arquivo local (uso fora do Render). O token é de
+    # uso único e muda a cada renovação, então ler do lugar errado significa
+    # queimar a cadeia e exigir reautorização manual.
+    refresh = (
+        _ler_do_render(cfg, "X_OAUTH_REFRESH_TOKEN")
+        or cfg.x_oauth_refresh_token
+        or (
+            ARQUIVO_REFRESH.read_text(encoding="utf-8").strip()
+            if ARQUIVO_REFRESH.exists()
+            else ""
+        )
+    )
 
     if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret and refresh):
         CACHE_TOKEN_USUARIO["access"] = ""

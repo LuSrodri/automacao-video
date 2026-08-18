@@ -416,9 +416,16 @@ class Config:
     # quatro processos de queimarem o refresh um do outro.
     x_oauth_access_token: str = ""
     render_api_key: str = ""
-    # Serviços cujo X_OAUTH_REFRESH_TOKEN é atualizado junto (os 4 crons leem a
-    # MESMA lista e compartilham a cadeia de tokens).
-    render_service_ids: list[str] = field(default_factory=list)
+    # ÚNICO lugar onde o token do X é guardado (2026-08-18, desenho do usuário):
+    # o serviço do cron renovador. Todo mundo — inclusive ele — lê de lá pela
+    # API do Render, em tempo de execução.
+    #
+    # Antes o token era distribuído para os 5 serviços, o que multiplicava por
+    # cinco as chances de gravação parcial sem resolver o problema real: env var
+    # do Render só entra no container no DEPLOY seguinte, então cada serviço
+    # lia um valor congelado. Com um ponto de contato só, existe uma verdade, e
+    # ela é lida fresca a cada execução.
+    render_token_service_id: str = ""
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
     # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
     # coleta normal ordena por relevância e não prefere vídeo, então o post com
@@ -565,9 +572,9 @@ def carregar_config() -> Config:
         x_oauth_refresh_token=(os.getenv("X_OAUTH_REFRESH_TOKEN", "") or "").strip(),
         x_oauth_access_token=(os.getenv("X_OAUTH_ACCESS_TOKEN", "") or "").strip(),
         render_api_key=(os.getenv("RENDER_API_KEY", "") or "").strip(),
-        render_service_ids=[
-            s.strip() for s in os.getenv("RENDER_SERVICE_IDS", "").split(",") if s.strip()
-        ],
+        render_token_service_id=(
+            os.getenv("RENDER_TOKEN_SERVICE_ID", "") or ""
+        ).strip(),
         x_max_posts=int(os.getenv("X_MAX_POSTS", "200")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
