@@ -1118,7 +1118,18 @@ def coletar_trends(cfg: Config) -> list[dict]:
                     break
             cfg.janela_horas = original
         if posts:
-            return _resumir_trends(cfg, posts)
+            # NÃO retornar aqui. `_resumir_trends` devolve só o agrupamento cru
+            # do GPT — quem calcula `posts_com_video`, filtra as URLs e monta a
+            # trend é o bloco no fim desta função. Retornar direto (como estava
+            # até 2026-08-18) entregava trends sem contagem de clipe, e o veto
+            # da seleção derrubava TODAS: "7 candidatas sem nenhum post com
+            # vídeo nativo", com 10 clipes na coleta.
+            com_video = sum(1 for p in posts if p.get("video"))
+            print(
+                f"[x] {len(posts)} posts na lista ({com_video} com clipe de "
+                "vídeo nativo); resumindo as trends com o GPT..."
+            )
+            return _montar_trends(cfg, posts)
         print(
             "[aviso] A lista não devolveu posts na janela; caindo para a coleta "
             "pelas contas seguidas."
@@ -1214,6 +1225,18 @@ def coletar_trends(cfg: Config) -> list[dict]:
         "nativo); resumindo as trends com o GPT..."
     )
 
+    return _montar_trends(cfg, posts)
+
+
+def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
+    """Agrupa os posts em trends e devolve o formato que o resto consome.
+
+    Mora numa função própria desde 2026-08-18 porque os DOIS caminhos de coleta
+    precisam dela — e a leitura por lista, que retornava direto de
+    `_resumir_trends`, pulava tudo isto: as trends saíam sem `posts_com_video`,
+    e a seleção derrubava todas com "sem nenhum post com vídeo nativo" mesmo
+    havendo 10 clipes na coleta.
+    """
     brutos = _resumir_trends(cfg, posts)
     urls_reais = {p["url"] for p in posts}
     urls_com_video = {p["url"] for p in posts if p.get("video")}
