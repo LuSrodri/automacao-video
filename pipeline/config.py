@@ -168,14 +168,21 @@ LONGO_VELOCIDADE = 1.0
 # Piso de clipes APROVADOS na auditoria para o formato longo: 90-120s presos em
 # um ou dois clipes é insustentável, então abaixo disto o vídeo não sai.
 LONGO_MIN_CLIPES_APROVADOS = 3
-# Posts com vídeo que uma candidata precisa ter para DISPUTAR o formato longo.
-# DERIVADO do piso acima de propósito: quando os dois eram independentes (o
-# portão em 2, o piso em 3), uma candidata de 2 clipes passava na seleção e
-# abortava na auditoria sem chance nenhuma — o fracasso já estava selado na
-# escolha, depois de gastar roteiro, notícias e visão. A folga de 1 existe
-# porque a auditoria reprova parte do material (clipe fora do assunto), então
-# material igual ao piso raramente sobrevive inteiro.
-LONGO_MIN_POSTS_VIDEO = LONGO_MIN_CLIPES_APROVADOS + 1
+# Posts com vídeo que UMA candidata precisa ter para disputar o formato longo.
+#
+# Era LONGO_MIN_CLIPES_APROVADOS + 1 = 4, exigindo que um mesmo acontecimento
+# tivesse 4 posts com clipe. Nunca passava: em 2026-08-18, com 57 clipes na
+# coleta, as 10 candidatas foram barradas — o vídeo do X se espalha por muitos
+# assuntos e quase nunca se concentra num só.
+#
+# Agora o longo monta o vídeo com TRÊS TRENDS (ideia do usuário: "em vez de
+# escolher uma trend com 3 vídeos, escolha 3 trends"), então cada uma só precisa
+# trazer o próprio clipe. O piso de aprovados continua sendo
+# LONGO_MIN_CLIPES_APROVADOS, agora somando as três.
+LONGO_MIN_POSTS_VIDEO = 1
+# Quantos acontecimentos DIFERENTES o vídeo longo cobre. Casa com
+# LONGO_MIN_CLIPES_APROVADOS=3: um clipe aprovado por assunto.
+LONGO_NUM_TRENDS = 3
 
 # O curto NÃO tem portão de quantidade. Um exigindo 2 posts com clipe foi
 # testado e removido no mesmo dia (2026-08-17): ele estreitava a disputa — numa

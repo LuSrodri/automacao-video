@@ -87,6 +87,7 @@ from .config import (
     CURTO_MIN_S,
     LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
+    LONGO_NUM_TRENDS,
     LONGO_MIN_S,
     RETENCAO_MINIMA,
     Config,
@@ -1272,14 +1273,21 @@ ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
    central for de nicho, é aqui que ele é ancorado em algo que o leigo conhece.
 3. DESENVOLVIMENTO — OS TÓPICOS (~65s, o corpo do vídeo): cubra de
    {topicos_min} a {topicos_max} TÓPICOS, os mesmos que você listou no campo
-   `topicos` e na mesma ordem. Tópico é um recorte DIFERENTE do mesmo
-   acontecimento, com dado próprio — não é o anterior repetido com outras
-   palavras, e não é assunto de outra notícia. Os recortes saem do PRÓPRIO
-   fato: quem fez e por quê, quem paga a conta, quem ganha e quem perde, o que
-   a regra ou a lei diz, o precedente histórico, o concorrente, o efeito no
-   dinheiro, no trabalho ou no dia a dia de quem assiste, e o que vem depois.
-   Nenhum deles é cota: cubra os que o fato realmente sustenta, com dado, em
-   vez de inventar um ângulo que não existe. Duas a quatro frases por tópico,
+   `topicos` e na mesma ordem.
+   QUANDO O MATERIAL TRAZ MAIS DE UM ACONTECIMENTO (a seleção manda três, e
+   eles vêm numerados no resumo): cada acontecimento é UM TÓPICO, na ordem em
+   que aparecem. Não force conexão factual entre eles — eles não são o mesmo
+   fato —, mas encontre a LINHA que faz os três valerem juntos no mesmo vídeo:
+   o que eles dizem, somados, sobre a semana de quem assiste. É essa linha que
+   vira a sua TESE, e é ela que a abertura promete e a conclusão fecha.
+   QUANDO O MATERIAL TRAZ UM ACONTECIMENTO SÓ: tópico é um recorte DIFERENTE
+   dele, com dado próprio — não é o anterior repetido com outras palavras. Os
+   recortes saem do PRÓPRIO fato: quem fez e por quê, quem paga a conta, quem
+   ganha e quem perde, o que a regra ou a lei diz, o precedente histórico, o
+   concorrente, o efeito no dinheiro, no trabalho ou no dia a dia de quem
+   assiste, e o que vem depois.
+   Nenhum deles é cota: cubra os que o material realmente sustenta, com dado,
+   em vez de inventar um ângulo que não existe. Duas a quatro frases por tópico,
    ENCADEADAS por causa e efeito ("por isso", "o efeito disso", "e aí entra o
    dinheiro") — nunca uma lista de bullets falados. Cada tópico carrega pelo
    menos um dado concreto do material recebido, e todos são costurados pela sua
@@ -1382,6 +1390,28 @@ Responda somente com o JSON pedido.\
 """
 
 
+def _linha_triagem(trend: dict) -> str:
+    """Como o material da candidata se saiu na triagem, para o prompt.
+
+    Existe porque a seleção decidia sem saber o que os clipes MOSTRAM: escolhia
+    pela audiência e só depois do roteiro a auditoria descobria que o único
+    clipe era busto falante, jogando fora a tentativa inteira. Agora o veredito
+    chega antes (ver triagem.py) e a escolha pode preferir quem tem imagem que
+    sobrevive ao veto. Candidata sem veredito não ganha linha nenhuma — o
+    silêncio é honesto: não foi conferida.
+    """
+    aprovado = trend.get("clipe_aprovado")
+    if aprovado is None:
+        return ""
+    if aprovado:
+        return "   MATERIAL CONFERIDO: o clipe desta candidata PASSA no veto.\n"
+    return (
+        "   MATERIAL CONFERIDO: o clipe desta candidata É REPROVADO pelo veto "
+        f"({trend.get('clipe_motivo') or 'sem motivo'}). Escolhê-la "
+        "provavelmente termina a execução sem vídeo.\n"
+    )
+
+
 def _resumo_trends(trends: list[dict]) -> str:
     linhas = []
     for i, t in enumerate(trends, 1):
@@ -1391,7 +1421,8 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"   Macrotema: {t.get('macrotema', '?')}\n"
             f"   Posts coletados sobre o assunto: {t.get('num_posts', '?')}\n"
             f"   Posts com clipe de vídeo nativo: {t.get('posts_com_video', '?')}\n"
-            f"   VALOR INFORMATIVO: {t.get('valor_informativo', '?')}\n"
+            + _linha_triagem(t)
+            + f"   VALOR INFORMATIVO: {t.get('valor_informativo', '?')}\n"
             f"   URGÊNCIA: {t.get('urgencia', '?')}\n"
             f"   Imagem mental: {t.get('imagem_mental', '?')}\n"
             f"   Engajamento: {t.get('engajamento', '?')}\n"
@@ -1673,6 +1704,87 @@ def _video_repetido(
     if not veredito["mesmo_fato"]:
         return None
     return veredito.get("video_repetido") or "um vídeo publicado nas últimas horas"
+
+
+def selecionar_trends_longo(
+    cfg: Config,
+    trends: list[dict],
+    videos_recentes: list[dict] | None = None,
+    campeoes: list[dict] | None = None,
+    excluir: list[dict] | None = None,
+    quantas: int = LONGO_NUM_TRENDS,
+) -> dict:
+    """Escolhe `quantas` trends e devolve UMA seleção que as combina.
+
+    O formato longo cobria um acontecimento só, dividido em 3 a 5 recortes, e
+    por isso exigia 4 posts com clipe na MESMA candidata — corte que nunca
+    passava: em 2026-08-18, com 57 clipes coletados, as 10 candidatas ficaram de
+    fora. Vídeo do X se espalha por assuntos; não se concentra num.
+
+    A troca (ideia do usuário) é cobrir TRÊS acontecimentos, um por tópico. Cada
+    trend precisa trazer só o próprio clipe, e o piso de 3 aprovados passa a ser
+    somado entre elas. A seleção de cada uma reusa `selecionar_trend` inteira —
+    régua de audiência, anti-repetição e rodízio seguem valendo, e cada escolha
+    entra na lista de exclusão da seguinte.
+
+    O retorno tem a forma de uma seleção comum (o resto do pipeline não muda),
+    com `trend_obj` juntando os posts das três e `selecoes` guardando as
+    originais para o roteiro saber quais são os assuntos.
+    """
+    escolhidas: list[dict] = []
+    fora = list(excluir or [])
+    for _ in range(max(quantas, 1)):
+        restantes = [t for t in trends if t not in fora]
+        if not restantes:
+            break
+        try:
+            sel = selecionar_trend(
+                cfg, trends, videos_recentes=videos_recentes,
+                campeoes=campeoes, excluir=fora,
+            )
+        except SystemExit:
+            break  # acabaram as candidatas com material; segue com o que houver
+        escolhidas.append(sel)
+        fora.append(sel["trend_obj"])
+
+    if not escolhidas:
+        raise SystemExit(
+            "Nenhuma trend com clipe para o formato longo — o vídeo é montado "
+            "só com clipes do X."
+        )
+
+    posts: list[str] = []
+    com_video = 0
+    for sel in escolhidas:
+        obj = sel["trend_obj"]
+        posts += [u for u in (obj.get("posts") or []) if u not in posts]
+        com_video += obj.get("posts_com_video") or 0
+
+    print(
+        f"[longo] {len(escolhidas)} assunto(s) escolhido(s) para o vídeo "
+        f"({com_video} posts com clipe somados):"
+    )
+    for i, sel in enumerate(escolhidas, 1):
+        print(f"[longo]   {i}. {sel['trend']}")
+
+    principal = escolhidas[0]
+    return {
+        **principal,
+        "trend": " | ".join(s["trend"] for s in escolhidas),
+        "motivo": " / ".join(s.get("motivo", "") for s in escolhidas),
+        "trend_obj": {
+            **principal["trend_obj"],
+            "trend": " | ".join(s["trend"] for s in escolhidas),
+            "resumo": "\n\n".join(
+                f"{i}. {s['trend']}: {s['trend_obj'].get('resumo', '')}"
+                for i, s in enumerate(escolhidas, 1)
+            ),
+            "posts": posts,
+            "posts_com_video": com_video,
+        },
+        "selecoes": escolhidas,
+        "assuntos": [s["trend"] for s in escolhidas],
+    }
 
 
 def selecionar_trend(

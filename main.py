@@ -145,7 +145,11 @@ from pipeline.edicao import (
     intervalos_imagens,
     montar_video,
 )
-from pipeline.escritor import gerar_roteiro, selecionar_trend
+from pipeline.escritor import (
+    gerar_roteiro,
+    selecionar_trend,
+    selecionar_trends_longo,
+)
 from pipeline.figuras import gerar_figuras
 from pipeline.legendas import gerar_legendas
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
@@ -158,6 +162,7 @@ from pipeline.seo import (
 )
 from pipeline.silencio import aparar_silencios
 from pipeline.thumbnail import gerar_thumbnail
+from pipeline.triagem import triar_material
 from pipeline.x_client import (
     buscar_posts_com_video,
     coletar_trends,
@@ -240,6 +245,19 @@ def main() -> None:
 
     trends = classificar_trends(cfg, coletar_trends(cfg))
 
+    # TRIAGEM DO MATERIAL (2026-08-18, pedido do usuário): conferir o clipe
+    # ANTES de escolher a pauta. O sinal que a seleção tinha era indireto —
+    # quantos posts da candidata têm clipe —, e ele não diz nada sobre o que o
+    # clipe MOSTRA; o resultado eram execuções inteiras gastas para descobrir
+    # na auditoria que o único clipe era busto falante. Falha aqui não impede
+    # nada: candidata sem veredito disputa como antes.
+    try:
+        triar_material(cfg, trends, cfg.output_dir / "_triagem")
+    except SystemExit:
+        raise
+    except Exception as erro:
+        print(f"[aviso] Triagem do material falhou ({erro}); seguindo sem ela.")
+
     # FALLBACK DE TEMA (2026-08-05): a trend é escolhida por um sinal INDIRETO
     # de material — quantos posts dela têm clipe nativo —, e esse sinal erra:
     # o clipe pode não baixar e a auditoria pode reprovar tudo. Quando isso
@@ -255,9 +273,19 @@ def main() -> None:
     # ElevenLabs de novo.
     tentadas: list[dict] = []
     for tentativa in range(1, TENTATIVAS_TREND + 1):
-        selecao = selecionar_trend(
-            cfg, trends, videos_recentes=recentes, campeoes=campeoes,
-            excluir=tentadas,
+        # O LONGO cobre TRÊS acontecimentos (2026-08-18, pedido do usuário),
+        # um por tópico: exigir 4 posts com clipe de um mesmo fato nunca
+        # passava, e com três assuntos cada um só precisa do próprio clipe.
+        selecao = (
+            selecionar_trends_longo(
+                cfg, trends, videos_recentes=recentes, campeoes=campeoes,
+                excluir=tentadas,
+            )
+            if cfg.formato == "longo"
+            else selecionar_trend(
+                cfg, trends, videos_recentes=recentes, campeoes=campeoes,
+                excluir=tentadas,
+            )
         )
         # SEO/GEO: quem MAIS publicou sobre este assunto hoje. É a única leitura
         # do pipeline sobre o lado de fora do canal — os últimos publicados e os
@@ -342,7 +370,12 @@ def main() -> None:
         if not recusa:
             break
 
-        tentadas.append(trend_video)
+        # Descarta TODAS as escolhidas da rodada: no longo são três, e repetir
+        # uma delas na tentativa seguinte gastaria material já reprovado.
+        if selecao.get("selecoes"):
+            tentadas.extend(s["trend_obj"] for s in selecao["selecoes"])
+        else:
+            tentadas.append(trend_video)
         print(
             f"[fallback] Tentativa {tentativa}/{TENTATIVAS_TREND} descartada — "
             f"'{selecao['trend']}': {recusa}."
