@@ -458,15 +458,20 @@ ESQUEMA_DESCRICAO = {
             "legendas_queimadas": {
                 "type": "boolean",
                 "description": (
-                    "true se o clipe traz LEGENDA/SUBTÍTULO QUEIMADO na imagem "
-                    "— a transcrição da fala aparecendo em faixa, palavra por "
-                    "palavra ou linha por linha, acompanhando quem fala, e "
-                    "mudando de um frame para o outro. Inclui legenda de "
+                    "true SOMENTE se o clipe traz LEGENDA/SUBTÍTULO QUEIMADO "
+                    "— a TRANSCRIÇÃO DA FALA aparecendo na imagem, palavra por "
+                    "palavra ou linha por linha, acompanhando quem fala e "
+                    "MUDANDO de um frame para o outro. Inclui legenda de "
                     "acessibilidade, legenda de recorte de podcast e legenda "
-                    "estilo karaokê. NÃO conte como legenda: manchete de "
-                    "emissora na tarja, placar, marca d'água, rótulo de lugar "
-                    "ou pessoa, texto de interface e título parado — nada disso "
-                    "transcreve fala."
+                    "estilo karaokê. "
+                    "NÃO É LEGENDA, e nesses casos responda false: MARCA "
+                    "D'ÁGUA de qualquer tipo (logo de emissora, de veículo, de "
+                    "app ou de autor, no canto ou no meio da tela), tarja e "
+                    "manchete de telejornal, placar, relógio, rótulo de lugar "
+                    "ou de pessoa, crédito, hashtag, texto de interface e "
+                    "qualquer título PARADO. O teste é um só: aquilo transcreve "
+                    "o que alguém está dizendo? Se não transcreve fala, não é "
+                    "legenda — e marca d'água é material PERMITIDO no canal."
                 ),
             },
             "frames_busto_falante": {
@@ -524,9 +529,11 @@ entrevista, podcast, coletiva, depoimento, âncora — e não uma cena em que
 pessoas AGEM. Em "cena_estatica", na dúvida responda true: material parado é o
 que este canal não usa.
 
-"legendas_queimadas" é só sobre transcrição de fala na imagem: a faixa que
-acompanha o que a pessoa está dizendo e muda a cada frame. Tarja de emissora,
-manchete, placar e rótulo NÃO são legenda.
+"legendas_queimadas" é só sobre TRANSCRIÇÃO DE FALA na imagem: a faixa que
+acompanha o que a pessoa está dizendo e muda a cada frame. MARCA D'ÁGUA NÃO É
+LEGENDA — logo de emissora, de veículo, de app ou de autor, no canto ou no meio
+da tela, é material permitido e responde false. O mesmo vale para tarja,
+manchete, placar, relógio, rótulo e título parado: nada disso transcreve fala.
 
 "frames_busto_falante" é a MEDIDA que decide, e ela é POR FRAME: um item para
 cada frame recebido, na ordem, julgando cada um por si. Não uniformize o clipe
