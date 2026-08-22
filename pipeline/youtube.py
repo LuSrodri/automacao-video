@@ -25,13 +25,16 @@ from pathlib import Path
 
 import requests
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
 from .config import (
     CURVAS_PARALELAS,
     ENGAJAMENTO_MINIMO,
     LIMITE_REFERENCIA,
+    PASSO_FALLBACK_VIEWS,
     RETENCAO_MINIMA,
+    VIEWS_MINIMO_ABSOLUTO,
     VIEWS_MINIMO_REFERENCIA,
     Config,
     atualizar_env,
@@ -70,11 +73,19 @@ VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 # Queries", de 100 buscas/dia.
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 COMMENT_THREADS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
+# Legendas dos vídeos do PRÓPRIO canal (referencia.py): `captions.download` é
+# liberado para o dono do vídeo, inclusive na faixa gerada pelo ASR. É o
+# caminho reserva da transcrição quando o download do vídeo é barrado.
+CAPTIONS_URL = "https://www.googleapis.com/youtube/v3/captions"
 ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 
 # Piso de views para o ranking de retenção: vídeo com pouquíssimas views tem
 # retenção estatisticamente sem valor (3 amigos assistindo até o fim = 100%).
+# Vale só para o formato LONGO desde 2026-08-22: no Short quem faz esse papel é
+# VIEWS_MINIMO_ABSOLUTO, o ponto onde o afrouxamento gradual de views para.
 VIEWS_MINIMO_RETENCAO = 50
+
+
 
 # Segundo em que o "continuou vs deslizou fora" é medido na curva de retenção.
 #
@@ -108,10 +119,12 @@ def _gancho_pela_curva(
     não expõe esse número como métrica (ver ENGAJAMENTO_MINIMO em config.py),
     mas expõe a CURVA, e a queda dela nos primeiros segundos é a mesma coisa.
 
-    Custa uma chamada por vídeo, então o chamador roda isto DEPOIS de cortar a
-    lista em LIMITE_REFERENCIA. Devolve None quando a curva não vem — vídeo
-    novo demais, sem dados, ou erro de rede. None NÃO reprova o vídeo: medir
-    errado é pior do que não medir, e a falta de curva não é sinal de nada.
+    Custa uma chamada por vídeo, então o chamador roda isto por ÚLTIMO, sobre
+    quem já passou pelos filtros baratos. Devolve None quando a curva não vem —
+    vídeo novo demais, sem dados, ou erro de rede. No formato LONGO o None não
+    reprova (medir errado é pior do que não medir); na régua estrita do Short
+    reprova, porque lá o critério é "engajamento acima de X" e quem não foi
+    medido não o satisfaz. Ver ``_lista_estrita``.
     """
     try:
         resp = requests.get(
@@ -310,6 +323,117 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
         ) from erro
 
 
+def _melhor_thumbnail(thumbnails: dict) -> str:
+    """URL da maior capa disponível; "" quando o vídeo não traz nenhuma.
+
+    A ordem é a da própria Data API, do maior para o menor. `maxres` não existe
+    para todo vídeo (é gerada só acima de certa resolução de upload), e por isso
+    a escolha é por tentativa e não por chave fixa.
+    """
+    for nome in ("maxres", "standard", "high", "medium", "default"):
+        url = (thumbnails.get(nome) or {}).get("url")
+        if url:
+            return url
+    return ""
+
+
+def _lista_estrita(
+    linhas: list[dict],
+    medir_ganchos: Callable[[list[str]], None],
+    ganchos: dict[str, float | None],
+) -> list[dict]:
+    """Os melhores vídeos do canal por ENGAJAMENTO, para servir de molde ao Short.
+
+    Régua pedida pelo usuário em 2026-08-22, válida só no formato curto e nos
+    dois canais: engajamento acima de ``ENGAJAMENTO_MINIMO`` e views acima do
+    piso, ao mesmo tempo, com teto de ``LIMITE_REFERENCIA``.
+
+    A RETENÇÃO NÃO ENTRA. Ela era o critério principal até este dia, e saiu
+    depois de o usuário conferir os números no Studio e concluir que ela é
+    irrelevante para este canal. Sobrou a métrica que descreve a decisão do
+    espectador no instante que decide o Short: continuar assistindo ou deslizar
+    fora. ``RETENCAO_MINIMA`` continua existindo — o formato LONGO ainda a usa.
+
+    O ÚNICO afrouxamento é o de VIEWS, de ``PASSO_FALLBACK_VIEWS`` em
+    ``PASSO_FALLBACK_VIEWS``, até a lista sair do vazio ou o piso chegar em
+    ``VIEWS_MINIMO_ABSOLUTO``. O engajamento nunca cede: views é só a base
+    estatística por trás do percentual — base menor ainda mede alguma coisa —,
+    enquanto o engajamento é o critério, e critério que cede não é critério.
+
+    ORDEM DOS FILTROS, e não é detalhe de estilo: as views saem do relatório em
+    lote que já está na mão, e só quem passa nelas custa a chamada da curva de
+    retenção (uma por vídeo). Filtrar na ordem inversa mediria o catálogo
+    inteiro para descartar quase tudo depois.
+
+    Vídeo SEM curva (``None``) fica de fora: o critério é "engajamento acima de
+    X", e quem não foi medido não o satisfaz. Difere do formato longo, onde a
+    ausência de medida perdoa — lá a régua prioriza, aqui ela veta. A contagem
+    dos não medidos vai para o log, senão o corte fica inauditável.
+
+    A ordem de saída é a do próprio engajamento, do maior para o menor, e o
+    teto corta pelos piores. Não há mais o produto `gancho × profundidade` que
+    ordenava a lista: com a retenção fora da régua, o que sobrou dele era só o
+    gancho.
+
+    Lista vazia no fim não é erro: é o canal não ter nenhum vídeo que sirva de
+    molde, e a seleção segue sem a seção (ver ``_resumo_campeoes``).
+    """
+    piso = VIEWS_MINIMO_REFERENCIA
+    while piso >= VIEWS_MINIMO_ABSOLUTO:
+        base = [r for r in linhas if float(r.get("views") or 0) >= piso]
+        if base:
+            medir_ganchos([str(r.get("video", "")) for r in base])
+            aprovados = [
+                r
+                for r in base
+                if (ganchos.get(str(r.get("video"))) or 0) > ENGAJAMENTO_MINIMO
+            ]
+            if aprovados:
+                if piso < VIEWS_MINIMO_REFERENCIA:
+                    print(
+                        f"[youtube] piso de views cedeu de "
+                        f"{VIEWS_MINIMO_REFERENCIA} para {piso} até a lista "
+                        "sair do vazio (o engajamento não cedeu)."
+                    )
+                sem_curva = sum(
+                    1 for r in base if ganchos.get(str(r.get("video"))) is None
+                )
+                if sem_curva:
+                    print(
+                        f"[youtube] {sem_curva} vídeo(s) fora por não ter curva "
+                        "de retenção (sem medida não há como afirmar o "
+                        "engajamento)."
+                    )
+                aprovados.sort(
+                    key=lambda r: ganchos.get(str(r.get("video"))) or 0,
+                    reverse=True,
+                )
+                print(
+                    f"[youtube] régua do Short: {len(aprovados)} de "
+                    f"{len(base)} vídeo(s) com {piso}+ views passaram de "
+                    f"{ENGAJAMENTO_MINIMO}% de engajamento"
+                    + (
+                        f"; ficam os {LIMITE_REFERENCIA} melhores."
+                        if len(aprovados) > LIMITE_REFERENCIA
+                        else "."
+                    )
+                )
+                return aprovados[:LIMITE_REFERENCIA]
+            print(
+                f"[youtube] piso de {piso} views: {len(base)} vídeo(s), nenhum "
+                f"acima de {ENGAJAMENTO_MINIMO}% de engajamento; afrouxando o "
+                "piso."
+            )
+        piso -= PASSO_FALLBACK_VIEWS
+
+    print(
+        "[youtube] aviso: nenhum vídeo do canal passou nos dois critérios "
+        f"(engajamento > {ENGAJAMENTO_MINIMO}%, views >= "
+        f"{VIEWS_MINIMO_ABSOLUTO}); a seleção segue SEM molde."
+    )
+    return []
+
+
 def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
     """Vídeos do canal que servem de MOLDE, por RETENÇÃO, de todos os tempos.
 
@@ -322,15 +446,21 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
     em config.py para os números completos. O gancho continua sendo lido e
     exibido, como desempate e como informação no prompt.
 
-    A lista dos que passam no piso NÃO TEM TETO (pedido do usuário em
-    2026-08-17): entram todos os vídeos com ``VIEWS_MINIMO_REFERENCIA`` views
-    ou mais e retenção acima de ``RETENCAO_MINIMA``. O ``n_fallback`` limita só
-    o caminho de exceção — canal sem NINGUÉM acima do piso cai para os
-    melhores disponíveis, e aí um teto é obrigatório, porque essa lista é de
-    CONTRAEXEMPLOS e despejar o catálogo inteiro no prompt seria pior do que
-    não ter lista. Quem lê o rótulo e decide é o prompt de seleção
-    (escritor.py). Vídeos abaixo de VIEWS_MINIMO_RETENCAO views ficam fora de
-    qualquer jeito, inclusive do fallback (percentual sem base estatística).
+    DUAS RÉGUAS, escolhidas pelo formato (2026-08-22):
+
+    - SHORT (``cfg.formato == "curto"``, os dois canais): régua ESTRITA, em
+      ``_lista_estrita`` — retenção, engajamento e views simultâneos, sem teto
+      de quantidade, e o único fallback é afrouxar as views de 100 em 100.
+      Lista vazia é resposta legítima: melhor sem molde do que com molde ruim.
+    - LONGO: o comportamento anterior, intacto — piso de views, teto de
+      ``LIMITE_REFERENCIA``, engajamento como filtro que CEDE quando
+      esvazia a lista, e ``n_fallback`` limitando o caminho de exceção (canal
+      sem ninguém acima do piso cai para os melhores disponíveis, marcados como
+      contraexemplo no prompt).
+
+    Cada campeão volta com ``video_id``, ``titulo``, ``descricao`` e
+    ``duracao_s`` além das métricas: é o que ``referencia.py`` usa para montar
+    o dossiê do Short (frames + transcrição).
 
     Requer o escopo ``yt-analytics.readonly`` no refresh token; tokens antigos
     precisam de reautorização (``--auth-youtube``/``--auth-youtube-usa``).
@@ -392,12 +522,8 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
         if not linhas:
             return []
 
-        candidatos = [
-            r for r in linhas if float(r.get("views") or 0) >= VIEWS_MINIMO_RETENCAO
-        ] or linhas  # canal novo: sem vídeos acima do piso, usa o que houver
-
         def profundidade(r: dict) -> float:
-            """% do vídeo que quem ficou assistiu (desempate)."""
+            """% do vídeo que quem ficou assistiu."""
             return float(r.get("averageViewPercentage") or 0)
 
         def engajamento(r: dict) -> float | None:
@@ -415,100 +541,140 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
         def pontuacao(r: dict) -> float:
             """Gancho × profundidade — a ordenação que funcionava até 08-16.
 
-            O gancho entra aqui, e NÃO como piso: ver RETENCAO_MINIMA em
-            config.py. Sem ``engagedViews`` o fator vira 1.0 e a ordem passa a
-            ser só a profundidade, que é o comportamento antigo.
+            Ordena a lista; QUEM ENTRA nela é decidido pelos pisos. Sem
+            ``engagedViews`` o fator vira 1.0 e a ordem passa a ser só a
+            profundidade, que é o comportamento antigo.
             """
             g = engajamento(r)
             return (1.0 if g is None else g / 100) * (profundidade(r) / 100)
 
-        ordenados = sorted(candidatos, key=pontuacao, reverse=True)
-        # Piso: retenção ACIMA de 100% (o vídeo foi reassistido) e views
-        # suficientes para o número significar algo. Teto de LIMITE_REFERENCIA,
-        # aplicado depois da ordenação, então o corte é sempre pelos piores.
-        acima = [
-            r
-            for r in ordenados
-            if profundidade(r) > RETENCAO_MINIMA
-            and float(r.get("views") or 0) >= VIEWS_MINIMO_REFERENCIA
-        ][:LIMITE_REFERENCIA]
-        if not acima:
-            print(
-                f"[youtube] aviso: nenhum vídeo do canal com "
-                f"{VIEWS_MINIMO_REFERENCIA}+ views passou de {RETENCAO_MINIMA}% "
-                "de retenção; a régua cai para os melhores disponíveis "
-                "(a seleção marca cada um abaixo do piso, e o modelo sabe que "
-                "são contraexemplo)."
-            )
-        top = acima or ordenados[:n_fallback]
+        # Título, DESCRIÇÃO e duração, em lote de 50 (o teto de `videos.list`).
+        # A duração é necessária ANTES da curva de retenção, que é indexada por
+        # fração do vídeo e não por segundo; título e descrição alimentam o
+        # dossiê do Short (referencia.py). Preenchido sob demanda e
+        # reaproveitado a cada afrouxamento do piso de views.
+        detalhes: dict[str, dict] = {}
 
-        # Títulos e DURAÇÕES dos escolhidos (Data API). A duração é necessária
-        # porque a curva de retenção é indexada por fração do vídeo, não por
-        # segundo. O lote de 50 existe porque videos.list recusa mais que isso
-        # por chamada — com LIMITE_REFERENCIA=50 basta uma, mas o laço fica
-        # para o dia em que o teto subir.
-        titulos: dict[str, str] = {}
-        duracoes: dict[str, int] = {}
-        todos_ids = [str(r.get("video", "")) for r in top]
-        for i in range(0, len(todos_ids), 50):
-            detalhes = requests.get(
-                VIDEOS_URL,
-                params={
-                    "part": "snippet,contentDetails",
-                    "id": ",".join(todos_ids[i : i + 50]),
-                },
-                headers=headers,
-                timeout=60,
-            )
-            if detalhes.status_code == 200:
-                for item in detalhes.json().get("items", []):
-                    titulos[item["id"]] = item.get("snippet", {}).get("title", "")
-                    duracoes[item["id"]] = _duracao_iso(
-                        item.get("contentDetails", {}).get("duration", "")
-                    )
+        def carregar_detalhes(ids: list[str]) -> None:
+            faltando = [i for i in dict.fromkeys(ids) if i and i not in detalhes]
+            for i in range(0, len(faltando), 50):
+                resposta = requests.get(
+                    VIDEOS_URL,
+                    params={
+                        "part": "snippet,contentDetails",
+                        "id": ",".join(faltando[i : i + 50]),
+                    },
+                    headers=headers,
+                    timeout=60,
+                )
+                if resposta.status_code != 200:
+                    continue
+                for item in resposta.json().get("items", []):
+                    snippet = item.get("snippet", {})
+                    detalhes[item["id"]] = {
+                        "titulo": snippet.get("title", ""),
+                        "descricao": snippet.get("description", ""),
+                        "duracao_s": _duracao_iso(
+                            item.get("contentDetails", {}).get("duration", "")
+                        ),
+                        "thumbnail": _melhor_thumbnail(
+                            snippet.get("thumbnails", {})
+                        ),
+                    }
 
         # ENGAJAMENTO pela curva de retenção — uma chamada por vídeo, em
-        # paralelo (elas só esperam rede). Roda AQUI, depois do corte de
-        # LIMITE_REFERENCIA, que é o que torna o custo viável.
-        with ThreadPoolExecutor(max_workers=CURVAS_PARALELAS) as executor:
-            ganchos = dict(
-                executor.map(
-                    lambda v: _gancho_pela_curva(
-                        v, duracoes.get(v, 0), headers, params["endDate"]
-                    ),
-                    todos_ids,
-                )
-            )
-        # Reprova só quem foi MEDIDO e ficou abaixo: sem curva (None) o vídeo
-        # segue, porque a ausência de medição não é sinal de nada. Se o piso
-        # esvaziar a lista, ele cede — a régua prioriza, não veta.
-        com_gancho = [
-            r
-            for r in top
-            if (ganchos.get(str(r.get("video"))) or ENGAJAMENTO_MINIMO + 1)
-            > ENGAJAMENTO_MINIMO
-        ]
-        if com_gancho and len(com_gancho) < len(top):
-            print(
-                f"[youtube] {len(top) - len(com_gancho)} vídeo(s) fora por "
-                f"engajamento abaixo de {ENGAJAMENTO_MINIMO}% aos "
-                f"{SEGUNDO_DO_GANCHO}s."
-            )
-            top = com_gancho
-        elif not com_gancho:
-            print(
-                f"[youtube] aviso: nenhum vídeo passou do piso de "
-                f"{ENGAJAMENTO_MINIMO}% de engajamento; o piso cede para não "
-                "deixar a seleção sem molde."
-            )
+        # paralelo (elas só esperam rede). Medido sob demanda e memorizado:
+        # quando o piso de views cede, só os vídeos NOVOS da faixa custam
+        # chamada; os já medidos são reaproveitados.
+        ganchos: dict[str, float | None] = {}
 
+        def medir_ganchos(ids: list[str]) -> None:
+            faltando = [i for i in dict.fromkeys(ids) if i and i not in ganchos]
+            if not faltando:
+                return
+            carregar_detalhes(faltando)
+            with ThreadPoolExecutor(max_workers=CURVAS_PARALELAS) as executor:
+                ganchos.update(
+                    executor.map(
+                        lambda v: _gancho_pela_curva(
+                            v,
+                            detalhes.get(v, {}).get("duracao_s", 0),
+                            headers,
+                            params["endDate"],
+                        ),
+                        faltando,
+                    )
+                )
+
+        if getattr(cfg, "formato", "curto") == "curto":
+            # Já sai ordenada por engajamento e cortada em LIMITE_REFERENCIA.
+            top = _lista_estrita(linhas, medir_ganchos, ganchos)
+            if not top:
+                return []
+        else:
+            candidatos = [
+                r
+                for r in linhas
+                if float(r.get("views") or 0) >= VIEWS_MINIMO_RETENCAO
+            ] or linhas  # canal novo: sem vídeos acima do piso, usa o que houver
+            ordenados = sorted(candidatos, key=pontuacao, reverse=True)
+            acima = [
+                r
+                for r in ordenados
+                if profundidade(r) > RETENCAO_MINIMA
+                and float(r.get("views") or 0) >= VIEWS_MINIMO_REFERENCIA
+            ][:LIMITE_REFERENCIA]
+            if not acima:
+                print(
+                    f"[youtube] aviso: nenhum vídeo do canal com "
+                    f"{VIEWS_MINIMO_REFERENCIA}+ views passou de "
+                    f"{RETENCAO_MINIMA}% de retenção; a régua cai para os "
+                    "melhores disponíveis (a seleção marca cada um abaixo do "
+                    "piso, e o modelo sabe que são contraexemplo)."
+                )
+            top = acima or ordenados[:n_fallback]
+            medir_ganchos([str(r.get("video", "")) for r in top])
+            # Reprova só quem foi MEDIDO e ficou abaixo: sem curva (None) o
+            # vídeo segue, porque a ausência de medição não é sinal de nada. Se
+            # o piso esvaziar a lista, ele cede — a régua prioriza, não veta.
+            com_gancho = [
+                r
+                for r in top
+                if (ganchos.get(str(r.get("video"))) or ENGAJAMENTO_MINIMO + 1)
+                > ENGAJAMENTO_MINIMO
+            ]
+            if com_gancho and len(com_gancho) < len(top):
+                print(
+                    f"[youtube] {len(top) - len(com_gancho)} vídeo(s) fora por "
+                    f"engajamento abaixo de {ENGAJAMENTO_MINIMO}% aos "
+                    f"{SEGUNDO_DO_GANCHO}s."
+                )
+                top = com_gancho
+            elif not com_gancho:
+                print(
+                    f"[youtube] aviso: nenhum vídeo passou do piso de "
+                    f"{ENGAJAMENTO_MINIMO}% de engajamento; o piso cede para "
+                    "não deixar a seleção sem molde."
+                )
+
+        carregar_detalhes([str(r.get("video", "")) for r in top])
         campeoes = []
         for r in top:
+            vid = str(r.get("video", ""))
+            info = detalhes.get(vid, {})
             views = float(r.get("views") or 0)
-            g = ganchos.get(str(r.get("video")))
+            g = ganchos.get(vid)
             campeoes.append(
                 {
-                    "titulo": titulos.get(str(r.get("video")), str(r.get("video"))),
+                    # O id fica na lista: é por ele que referencia.py baixa o
+                    # vídeo publicado para tirar frames e transcrever.
+                    "video_id": vid,
+                    "titulo": info.get("titulo") or vid,
+                    "descricao": info.get("descricao", ""),
+                    "duracao_s": info.get("duracao_s", 0),
+                    # A capa é a única imagem do dossiê desde 2026-08-22, quando
+                    # o download do vídeo saiu (ver referencia.py).
+                    "thumbnail": info.get("thumbnail", ""),
                     "views": int(views),
                     # O rótulo de ALTA RETENÇÃO no prompt sai deste número
                     # (escritor._resumo_campeoes), então ele é o MESMO que o
@@ -528,9 +694,15 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
         # contagem — a investigação de 2026-08-17 só achou o vídeo de 183 views
         # consultando a API por fora.
         for c in campeoes[:10]:
+            gancho = (
+                f"{c['retencao_gancho']}%"
+                if c["retencao_gancho"] is not None
+                else "?"
+            )
             print(
                 f"[youtube]   {c['views']:>7} views | retenção "
-                f"{c['retencao_media']}% | {c['titulo'][:70]}"
+                f"{c['retencao_media']}% | engajamento {gancho} | "
+                f"{c['titulo'][:60]}"
             )
         if len(campeoes) > 10:
             print(f"[youtube]   (+{len(campeoes) - 10} outros na lista)")

@@ -330,19 +330,53 @@ TENTATIVAS_TREND = 3
 # vídeos acima de 100% (máximo 146%) e o US tem 25 (máximo 168%).
 RETENCAO_MINIMA = 100
 
-# Piso de views para ENTRAR na lista de referência (pedido do usuário em
-# 2026-08-17: "1k"). Diferente de VIEWS_MINIMO_RETENCAO (youtube.py), que é o
-# piso de significância estatística e continua valendo para o fallback: este
-# aqui decide o que serve de MOLDE. Era o buraco por onde o vídeo de 183 views
-# entrava.
-VIEWS_MINIMO_REFERENCIA = 1000
+# Piso de views para ENTRAR na lista de referência. Diferente de
+# VIEWS_MINIMO_RETENCAO (youtube.py), que é o piso de significância estatística
+# e continua valendo para o fallback do formato LONGO: este aqui decide o que
+# serve de MOLDE. Era o buraco por onde o vídeo de 183 views entrava.
+#
+# 10k desde 2026-08-22, contra o 1k pedido em 08-17. A medição contra a API
+# real no dia da mudança mostrou por que 1k era frouxo demais: com ele o piso
+# de engajamento não reprovava praticamente ninguém (BR cortou 1 de 59, US
+# cortou 0 de 61), então quem escolhia a lista era só o teto de 50 — e a
+# ordenação por engajamento levava para o topo do BR vídeos de tech com ~1.000
+# views, na frente dos hits de 45k, 42k e 36k. 10k tira do molde justamente a
+# faixa de baixa view onde o percentual sobe fácil.
+VIEWS_MINIMO_REFERENCIA = 10000
 
-# Teto da lista de referência (pedido do usuário em 2026-08-17: "os melhores 50
-# vídeos do canal"). Substitui o "sem teto" pedido mais cedo no mesmo dia: 50 é
-# também o limite de ids que `videos.list` aceita por chamada, então a lista
-# inteira volta a caber numa requisição de títulos. Os canais têm 30 e 25
-# vídeos acima do piso hoje, então o teto só passa a morder quando eles
-# crescerem — e aí corta pelos piores, porque a lista já vem ordenada.
+# RÉGUA ESTRITA DO SHORT (2026-08-22, pedido do usuário). Nos Shorts — e só
+# neles, nos DOIS canais — a lista de referência exige DUAS coisas ao mesmo
+# tempo: engajamento acima de ENGAJAMENTO_MINIMO e views acima do piso.
+#
+# A RETENÇÃO SAIU DA RÉGUA no mesmo dia, depois de o usuário conferir os
+# números no Studio: ela é irrelevante para este canal. O que sobrou é a única
+# métrica que descreve a decisão do espectador no instante que importa —
+# continuar assistindo ou deslizar fora. Ela não cede nunca.
+#
+# O ÚNICO afrouxamento permitido é o de VIEWS, e ele é gradual: 10000, 9900,
+# 9800… até a lista sair do vazio. Views é só a base estatística por trás do
+# percentual, e uma base menor ainda mede alguma coisa; engajamento é o
+# critério, e critério que cede não é critério.
+#
+# O passo continua sendo 100 com o piso em 10k (2026-08-22), então o
+# afrouxamento pode levar até 99 iterações antes de chegar ao fundo. Custa
+# pouco: o filtro de views é aritmética sobre uma lista que já está na memória,
+# e as curvas de retenção ficam memorizadas — cada volta só mede quem entrou na
+# faixa nova.
+PASSO_FALLBACK_VIEWS = 100
+
+# Onde o afrouxamento para. Abaixo de 100 views o percentual vira ruído (3
+# amigos assistindo até o fim = 100% de retenção), que é a mesma razão do
+# VIEWS_MINIMO_RETENCAO antigo. Chegando aqui sem ninguém, a lista volta VAZIA
+# e a seleção segue sem molde — melhor nenhum do que um molde de ruído, que foi
+# a lição do vídeo de 183 views em 2026-08-17.
+VIEWS_MINIMO_ABSOLUTO = 100
+
+# Teto da lista de referência (pedido do usuário em 2026-08-22: "limite a
+# lista em 50 melhores vídeos"). Vale nos dois formatos. É também o limite de
+# ids que `videos.list` aceita por chamada, então a lista inteira cabe numa
+# requisição de títulos. Aplicado DEPOIS da ordenação, logo o corte é sempre
+# pelos piores.
 LIMITE_REFERENCIA = 50
 
 # Piso de ENGAJAMENTO, pedido do usuário desde 2026-08-16 ("acima de 70%") e
@@ -351,9 +385,10 @@ LIMITE_REFERENCIA = 50
 # COMO É MEDIDO: pela curva de retenção (`audienceWatchRatio` com
 # `dimensions=elapsedVideoTimeRatio`), lendo quanto da audiência do instante
 # inicial ainda está lá aos 3 SEGUNDOS — que é a definição de "continuou vs
-# deslizou fora". É UMA CHAMADA POR VÍDEO, e é por isso que ela só roda depois
-# do corte de LIMITE_REFERENCIA: 30 curvas levam ~48s com 16 threads, contra
-# ~4min se rodasse sobre o catálogo inteiro.
+# deslizou fora". É UMA CHAMADA POR VÍDEO, e é por isso que ela roda por ÚLTIMO,
+# sobre quem já passou pelos filtros baratos de retenção e views (que saem do
+# relatório em lote): 30 curvas levam ~48s com 16 threads, contra ~4min se
+# rodassem sobre o catálogo inteiro.
 #
 # ESCALA: o ponto de leitura foi CALIBRADO contra 6 vídeos cujo "Continuaram
 # assistindo" real foi lido no Studio (ver SEGUNDO_DO_GANCHO em youtube.py). Aos
@@ -365,7 +400,11 @@ LIMITE_REFERENCIA = 50
 # vídeo vai de -5 a +3 pontos. Então trate o piso como uma faixa, não como uma
 # fronteira exata — subir de 70 para 75 muda quem entra, mexer de 70 para 71
 # não significa nada.
-ENGAJAMENTO_MINIMO = 70
+# 60 desde 2026-08-22 (pedido do usuário), contra os 70 anteriores. O número
+# convive com os 3,3 pontos de erro descritos acima, então continua valendo
+# como FAIXA — mas agora ele é um piso DURO no Short (ver PASSO_FALLBACK_VIEWS)
+# em vez de um filtro que cedia quando esvaziava a lista.
+ENGAJAMENTO_MINIMO = 60
 
 # Quantas curvas de retenção buscar em paralelo. As chamadas são independentes
 # e passam a maior parte do tempo esperando a rede — medido: 2,4s a 27s cada,

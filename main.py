@@ -23,11 +23,17 @@ Fluxo:
    exclusivo, urgência, número inédito), e entre as elegíveis decide pela
    audiência — recebe os últimos vídeos publicados do canal com as métricas
    reais (views/likes, YouTube Data API) e a RÉGUA DE RETENÇÃO (YouTube
-   Analytics): os vídeos com VIEWS_MINIMO_REFERENCIA+ views que seguraram
-   RETENCAO_MINIMA% ou mais de retenção entram marcados como ALTA RETENÇÃO e
-   são o molde a imitar NO ASSUNTO; os abaixo do piso são contraexemplo, por
-   mais views
-   que tenham. Regra dura: a escolhida passa por uma verificação anti-repetição
+   Analytics). No SHORT a régua é ESTRITA (2026-08-22, os dois canais): entram
+   os vídeos que passam AO MESMO TEMPO em engajamento > ENGAJAMENTO_MINIMO% e
+   views acima do piso, limitados aos LIMITE_REFERENCIA melhores — e o único
+   afrouxamento possível é baixar o piso de views de PASSO_FALLBACK_VIEWS em
+   PASSO_FALLBACK_VIEWS até a lista sair do vazio. A RETENÇÃO saiu da régua do
+   Short em 2026-08-22 (irrelevante para este canal, conferido no Studio).
+   Cada campeão do Short ainda recebe um DOSSIÊ (pipeline/referencia.py):
+   descrição publicada, a legenda do próprio vídeo e a leitura da capa, tudo
+   montado em memória e descartado no fim da execução. No formato LONGO vale a
+   régua anterior — retenção, teto e piso de engajamento que cede quando
+   esvazia a lista. Regra dura: a escolhida passa por uma verificação anti-repetição
    (GPT confere se ela cobriria o mesmo fato de um vídeo publicado nas últimas
    36h; se sim, sai da disputa e a seleção refaz). Define também uma consulta
    curta do assunto (busca de clipes) e uma consulta de busca do YouTube.
@@ -171,6 +177,7 @@ from pipeline.x_client import (
 )
 from pipeline.youtube import autenticar as autenticar_youtube
 from pipeline.youtube import publicar as publicar_youtube
+from pipeline.referencia import montar_dossies
 from pipeline.youtube import top_retencao, ultimos_publicados
 
 
@@ -240,9 +247,23 @@ def main() -> None:
     # estiverem quebradas, aborta antes de qualquer chamada paga (X, OpenAI) —
     # e sem os recentes (com as métricas) a seleção pela audiência é cega.
     recentes = ultimos_publicados(cfg, n=100)
-    # Sem número aqui: a lista dos que passam no piso não tem teto (2026-08-17),
-    # e o n_fallback só limita o caminho de exceção — o default dele resolve.
+    # Sem número aqui: no Short a lista não tem teto e o n_fallback nem chega a
+    # ser usado (régua estrita, 2026-08-22); no longo o default dele resolve o
+    # caminho de exceção.
     campeoes = top_retencao(cfg)
+    # DOSSIÊ DOS CAMPEÕES (2026-08-22, pedido do usuário), só no Short e nos
+    # dois canais: lê a legenda publicada e a capa de cada campeão, anexando
+    # tudo à mesma lista que já segue para a seleção da trend e para o roteiro. Falha aberta — a régua numérica
+    # sozinha é o comportamento que existia antes do dossiê, e ele não vale
+    # derrubar uma execução.
+    if cfg.formato == "curto" and campeoes:
+        try:
+            montar_dossies(cfg, campeoes)
+        except Exception as erro:  # noqa: BLE001 — enriquecimento, não requisito
+            print(
+                f"[aviso] Dossiê dos campeões falhou ({erro}); a seleção segue "
+                "só com as métricas."
+            )
 
     trends = classificar_trends(cfg, coletar_trends(cfg))
 

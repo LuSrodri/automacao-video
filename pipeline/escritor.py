@@ -89,6 +89,7 @@ from .config import (
     LONGO_MIN_POSTS_VIDEO,
     LONGO_NUM_TRENDS,
     LONGO_MIN_S,
+    ENGAJAMENTO_MINIMO,
     RETENCAO_MINIMA,
     Config,
 )
@@ -1495,7 +1496,55 @@ def _resumo_recentes(
     )
 
 
-def _resumo_campeoes(campeoes: list[dict] | None) -> str:
+# Tetos de texto do dossiê, por campeão. A lista de campeões não tem teto de
+# quantidade (2026-08-22), então o que segura o tamanho do prompt é o tamanho de
+# CADA entrada. Um Short de 25s transcreve em ~70 palavras, bem abaixo do teto;
+# quem estoura é a DESCRIÇÃO publicada, que leva hashtags e links no fim.
+MAX_DESCRICAO_CAMPEAO = 300
+MAX_TRANSCRICAO_CAMPEAO = 1200
+
+
+def _cortar(texto: str, teto: int) -> str:
+    """Texto em uma linha, truncado com reticências."""
+    limpo = " ".join((texto or "").split())
+    return limpo if len(limpo) <= teto else limpo[:teto].rstrip() + "…"
+
+
+def _bloco_dossie(campeao: dict) -> list[str]:
+    """Linhas indentadas com o dossiê de UM campeão; vazio quando não há.
+
+    Só o Short monta dossiê (ver referencia.py), e mesmo lá ele falha aberto
+    vídeo a vídeo — então a ausência de qualquer campo aqui é normal e o bloco
+    simplesmente encolhe. Nada neste formato depende de todos os campeões terem
+    sido lidos.
+
+    A NARRAÇÃO vem da legenda publicada do próprio vídeo e a CAPA, da leitura
+    da thumbnail. Nenhum dos dois exige baixar o vídeo, que era o desenho
+    anterior e não sobreviveu à checagem de bot do YouTube.
+    """
+    linhas = []
+    descricao = _cortar(campeao.get("descricao", ""), MAX_DESCRICAO_CAMPEAO)
+    if descricao:
+        linhas.append(f"    DESCRIÇÃO: {descricao}")
+    transcricao = _cortar(campeao.get("transcricao", ""), MAX_TRANSCRICAO_CAMPEAO)
+    if transcricao:
+        linhas.append(f'    NARRAÇÃO: "{transcricao}"')
+    visual = campeao.get("visual") or {}
+    if visual:
+        partes = [
+            visual.get("cena", ""),
+            visual.get("composicao", ""),
+            f'texto na capa: "{visual["texto"]}"' if visual.get("texto") else "",
+        ]
+        corpo = "; ".join(_cortar(x, 200) for x in partes if x)
+        if corpo:
+            linhas.append(f"    CAPA: {corpo}")
+    return linhas
+
+
+def _resumo_campeoes(
+    campeoes: list[dict] | None, formato: str = "curto"
+) -> str:
     """Bloco dos campeões, com a RETENÇÃO marcada contra o piso.
 
     O rótulo ALTA RETENÇÃO / abaixo do piso é escrito em CÓDIGO, e não deixado
@@ -1506,26 +1555,54 @@ def _resumo_campeoes(campeoes: list[dict] | None) -> str:
     """
     if not campeoes:
         return ""
+    # O Short mede ENGAJAMENTO e o longo, RETENÇÃO. Quem manda no rótulo é o
+    # critério que selecionou a lista, senão o prompt destaca um número que a
+    # régua não usou — que foi exatamente o erro de 2026-08-16.
+    por_engajamento = formato == "curto"
     linhas = []
     for c in campeoes:
         retencao = c.get("retencao_media", 0)
         gancho = c.get("retencao_gancho")
-        partes = [f"assistem em média {retencao}% do vídeo"]
-        if gancho is not None:
-            partes.append(f"gancho segura {gancho}% de quem abre")
-        partes.append(f"{c.get('views', '?')} views")
-        if retencao > RETENCAO_MINIMA:
-            marca = " [ALTA RETENÇÃO]"
+        if por_engajamento:
+            partes = [f"segura {gancho}% de quem abre" if gancho is not None else ""]
+            marca = " [ALTO ENGAJAMENTO]"
         else:
-            marca = f" [abaixo do piso de {RETENCAO_MINIMA}%]"
-        linhas.append(f"- {c.get('titulo', '')}{marca} ({'; '.join(partes)})")
-    return (
-        "\n\nVídeos deste canal ordenados por RETENÇÃO (quanto do vídeo quem "
-        f"abriu assistiu). Os marcados como ALTA RETENÇÃO seguraram "
-        f"mais de {RETENCAO_MINIMA}% de retenção (foram REASSISTIDOS) — é com o "
-        "ASSUNTO DESSES que a candidata "
-        "escolhida precisa se parecer:\n" + "\n".join(linhas)
-    )
+            partes = [f"assistem em média {retencao}% do vídeo"]
+            if gancho is not None:
+                partes.append(f"gancho segura {gancho}% de quem abre")
+            marca = (
+                " [ALTA RETENÇÃO]"
+                if retencao > RETENCAO_MINIMA
+                else f" [abaixo do piso de {RETENCAO_MINIMA}%]"
+            )
+        partes.append(f"{c.get('views', '?')} views")
+        corpo = "; ".join(x for x in partes if x)
+        linhas.append(f"- {c.get('titulo', '')}{marca} ({corpo})")
+        linhas += _bloco_dossie(c)
+    tem_dossie = any(c.get("transcricao") or c.get("visual") for c in campeoes)
+    if por_engajamento:
+        cabecalho = (
+            "\n\nOs vídeos deste canal que MAIS SEGURAM quem abre, do maior "
+            f"para o menor (todos acima de {ENGAJAMENTO_MINIMO}% de "
+            "engajamento: a fração de quem continuou assistindo em vez de "
+            "deslizar para o próximo). É com o ASSUNTO DESSES que a candidata "
+            "escolhida precisa se parecer"
+        )
+    else:
+        cabecalho = (
+            "\n\nVídeos deste canal ordenados por RETENÇÃO (quanto do vídeo "
+            "quem abriu assistiu). Os marcados como ALTA RETENÇÃO seguraram "
+            f"mais de {RETENCAO_MINIMA}% de retenção (foram REASSISTIDOS) — é "
+            "com o ASSUNTO DESSES que a candidata escolhida precisa se parecer"
+        )
+    if tem_dossie:
+        cabecalho += (
+            ". De cada um vem também a DESCRIÇÃO publicada, a NARRAÇÃO (a "
+            "legenda do próprio vídeo) e a CAPA que ele usou: use isso para "
+            "reconhecer o TIPO de acontecimento que este público fica "
+            "assistindo — não para copiar frase, título ou imagem"
+        )
+    return cabecalho + ":\n" + "\n".join(linhas)
 
 
 def _macrotemas_recentes(
@@ -1974,7 +2051,7 @@ def selecionar_trend(
             AVISO_DADOS_EXTERNOS
             + "\n\nTrends mais faladas do X hoje:\n"
             + _resumo_trends(candidatas)
-            + _resumo_campeoes(campeoes)
+            + _resumo_campeoes(campeoes, cfg.formato)
             + _resumo_recentes(videos_recentes, macros_recentes)
         )
         resposta = cliente.chat.completions.create(
@@ -2070,14 +2147,41 @@ def _resumo_estilo(
         partes.append("Títulos com MENOS views (o que o público ignora):")
         partes += [f"- {v.get('titulo', '')} ({v['views']} views)" for v in flop]
     if campeoes:
+        # Mesmo princípio de _resumo_campeoes: o número exibido é o que a régua
+        # usou para escolher a lista. No Short é o engajamento; a retenção saiu
+        # em 2026-08-22 e não deve mais aparecer aqui, ou o roteirista calibra
+        # por uma métrica que ninguém está medindo.
+        curto = formato == "curto"
         partes.append(
-            "Campeões de retenção (o público assiste até o fim vídeos assim):"
+            "Vídeos que mais seguraram quem abriu (o público fica assistindo "
+            "vídeos assim):"
+            if curto
+            else "Campeões de retenção (o público assiste até o fim vídeos assim):"
         )
-        partes += [
-            f"- {c.get('titulo', '')} "
-            f"(assistem em média {c.get('retencao_media', '?')}% do vídeo)"
-            for c in campeoes
-        ]
+        for c in campeoes:
+            if curto:
+                gancho = c.get("retencao_gancho")
+                medida = (
+                    f"segura {gancho}% de quem abre"
+                    if gancho is not None
+                    else "alto engajamento"
+                )
+            else:
+                medida = f"assistem em média {c.get('retencao_media', '?')}% do vídeo"
+            partes.append(f"- {c.get('titulo', '')} ({medida})")
+            # O dossiê (só no Short) traz a NARRAÇÃO e a CAPA. Aqui ele vale
+            # mais do que na seleção: este prompt é o que escreve o roteiro, e
+            # é onde tipo de abertura, ritmo de fala e densidade de informação
+            # por segundo podem de fato ser imitados.
+            partes += _bloco_dossie(c)
+        if any(c.get("transcricao") or c.get("visual") for c in campeoes):
+            partes.append(
+                "Nesses campeões, a NARRAÇÃO é a legenda real do vídeo "
+                "publicado e a CAPA é a imagem que ele usou de thumbnail. "
+                "Imite o RITMO, o tipo de abertura e a densidade de informação "
+                "por segundo; NUNCA reaproveite as frases, o título nem o "
+                "assunto deles."
+            )
     return "\n".join(partes)
 
 
