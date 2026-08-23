@@ -1,27 +1,28 @@
-"""Coleta dos posts das contas que o usuário SEGUE no X e sumarização das
-trends via GPT.
+"""Coleta dos posts da LISTA do X e sumarização das trends via GPT.
 
-A FONTE DA PAUTA É A LISTA DE SEGUIDAS (2026-08-16, pedido do usuário). Até
-então havia uma lista fixa de 192 handles no código (`CONTAS_PADRAO`), curada e
-verificada à mão, que precisava de commit e deploy para mudar. Agora o pipeline
-lê `/2/users/:id/following` do handle em X_USERNAME a cada execução: seguir ou
-deixar de seguir alguém no X passou a ser a forma de mexer na pauta do canal.
-X_ACCOUNTS no .env continua existindo como escape hatch e, quando preenchido,
-substitui a lista inteira.
+A PAUTA VEM DE UMA LISTA DO X (X_LIST_ID), e de mais nada (2026-08-22, pedido
+do usuário). O pipeline lê `/2/lists/{id}/tweets`: uma chamada paginada,
+cronológica, com todos os membros da lista. Pôr ou tirar alguém da lista no X é
+a forma de mexer na pauta do canal — sem commit e sem deploy.
+
+CAMINHO ÚNICO. Até 2026-08-22 existia embaixo dele a arquitetura anterior
+inteira, como fallback: as CONTAS SEGUIDAS (`/2/users/:id/following`) lidas por
+`search/recent` com `from:` em lotes de 512 caracteres, mais a TIMELINE de um
+subconjunto rotativo das contas. Ela saiu porque escondia defeito — o token
+vencido derrubava a lista em 4 das 12 execuções diárias e o vídeo saía assim
+mesmo, com a pauta ordenada por RELEVÂNCIA, que é exatamente o viés que a lista
+existe para eliminar (medido em 2026-08-17: uma conta com 12 posts em 24h
+apareceu ZERO vezes na coleta por lotes). Falha de leitura agora ABORTA.
 
 Usa a X API oficial v2 em modo pay-per-use (a mesma credencial do download de
-mídias em midia_x.py) e lê essas contas por DOIS caminhos complementares:
+mídias em midia_x.py). A lista PRIVADA exige contexto de usuário: o access
+token OAuth 2.0 é distribuído pelo cron renovador (ver `renovar_token_do_x`).
+Sobra da arquitetura antiga uma única busca por `search/recent`,
+`buscar_posts_com_video`, que é do formato LONGO e não procura pauta: procura
+CLIPE de um assunto já escolhido, fora das contas do canal.
 
-- /2/tweets/search/recent, por relevância (a coleta principal, mais uma
-  varredura opcional `has:videos` atrás de material de vídeo);
-- /2/users/:id/tweets, a TIMELINE de cada conta, cronológica. Ela existe porque
-  relevância no X é engajamento acumulado, e o post publicado há vinte minutos
-  — o vazamento, o comunicado, o número que acabou de sair — ainda não tem
-  engajamento nenhum. Custa uma requisição por conta, então roda sobre um
-  subconjunto rotativo por execução.
-
-Como a leitura é cobrada por post (~US$ 0,005 cada), X_MAX_POSTS,
-X_MAX_POSTS_VIDEO e X_MAX_POSTS_TIMELINE limitam cada caminho por execução.
+Como a leitura é cobrada por post (~US$ 0,005 cada), X_MAX_POSTS limita a
+coleta e X_MAX_POSTS_BUSCA limita a busca aberta por clipes.
 
 Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes,
 ordenadas pelo VALOR DA INFORMAÇÃO (vazamento, exclusivo, urgência, número
@@ -32,7 +33,6 @@ sentimento, apelo_visual, posts, data).
 
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import requests
 from openai import OpenAI
@@ -41,18 +41,6 @@ from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
 
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
-USERS_ENDPOINT = "https://api.x.com/2/users/by"
-USER_POR_HANDLE_ENDPOINT = "https://api.x.com/2/users/by/username/{handle}"
-# Contas que uma conta segue. Aceita o mesmo bearer OAuth 2.0 App-Only da busca
-# — conferido contra a API real em 2026-08-16, com o handle do usuário (200 e
-# 167 contas na primeira página). Não é preciso contexto de usuário aqui.
-FOLLOWING_ENDPOINT = "https://api.x.com/2/users/{id}/following"
-# Timeline de posts de uma conta. Aceita OAuth 2.0 App-Only (o mesmo bearer da
-# busca), devolve em ordem CRONOLÓGICA REVERSA e aceita start_time — por isso
-# ela enxerga o post recém-publicado que a busca por relevância ainda não
-# ranqueou. `/2/users/:id/timelines/reverse_chronological` NÃO serve aqui:
-# exige contexto de usuário (OAuth 1.0a / PKCE), que o pipeline não tem.
-TIMELINE_ENDPOINT = "https://api.x.com/2/users/{id}/tweets"
 # Posts dos membros de uma LISTA, em ordem cronológica reversa. Aceita o mesmo
 # bearer app-only (conferido contra a API real em 2026-08-17: id inexistente
 # devolve "Not Found", não 401/403). É o caminho que dispensa toda a mecânica
@@ -61,33 +49,8 @@ TIMELINE_ENDPOINT = "https://api.x.com/2/users/{id}/tweets"
 # `start_time`: a janela é aplicada no cliente, e a ordem cronológica permite
 # parar de paginar assim que os posts ficam mais velhos que ela.
 LIST_TWEETS_ENDPOINT = "https://api.x.com/2/lists/{id}/tweets"
-LIST_MEMBERS_ENDPOINT = "https://api.x.com/2/lists/{id}/members"
 
-MAX_QUERY = 512  # limite de caracteres da query do search/recent
-# Sufixos que o pipeline concatena nas queries de lote. O de busca vale para
-# TODA consulta; o de vídeo só para a segunda passada (`has:videos`), mas os
-# lotes são montados uma vez e reaproveitados pelas duas — então o espaço dos
-# DOIS tem que ser reservado na montagem. Sem essa reserva os lotes fechavam
-# em 512 caracteres cravados e a passada `has:videos` os empurrava para 523,
-# estourando o limite: 3 dos 8 lotes voltavam 400 em toda execução e um terço
-# das contas nunca era varrido atrás de clipe (2026-08-05).
-# REPOSTS FORA — testados e revertidos no mesmo dia (2026-08-17). Sem o filtro,
-# o material de clipe parecia dobrar (7 → 15 posts com vídeo em 100, e 24 depois
-# do veto de contas), mas a origem desmontou o ganho: 21 daqueles 100 posts eram
-# reposts de UMA conta só, a @DrFonts, que republica arte e tipografia em massa
-# (@goodguylolypop, @Mastermindraws, @DrawDesignStar, @typelabo — nenhuma delas
-# seguida pelo usuário). O repost não traz o vídeo que as contas de notícia
-# publicam; traz o volume de quem reposta por hábito, e ele entope a cota de
-# leitura com material fora da pauta do canal. O usuário decidiu voltar atrás.
-#
-# O mecanismo de resolução em `_normalizar_posts` e as expansões de
-# `referenced_tweets` FICAM: custam zero com o filtro ligado e são o que torna
-# religar isto uma mudança de uma linha — inclusive para o caso de religar só
-# para um recorte de contas.
-SUFIXO_BUSCA = " -is:retweet -is:reply"
-SUFIXO_VIDEO = " has:videos"
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
-MIN_RESULTS_TIMELINE = 5  # mínimo aceito por max_results em /2/users/:id/tweets
 
 # Fallback de janela de coleta (2026-08-17). A janela curta existe para
 # execuções seguidas não pegarem os mesmos posts, mas em hora morta ela devolve
@@ -104,34 +67,6 @@ MIN_POSTS_JANELA = 20
 # um assunto já escolhido — e imagem de um fato do dia continua sendo publicada
 # horas depois. Nunca encurta a janela vigente, só alarga.
 JANELA_BUSCA_HORAS = 24
-
-# Estado da rotação de lotes entre execuções: quando X_MAX_POSTS não cobre
-# todas as consultas, as execuções avançam um cursor circular em vez de
-# sortear — sorteio deixava contas dias sem serem lidas no azar.
-ESTADO_ROTACAO = RAIZ / ".rotacao_lotes"
-# Mesmo mecanismo para a leitura de timelines, que é UMA requisição por conta:
-# o orçamento cobre só um punhado de contas por execução, e o cursor garante
-# que ao longo do dia todas passem pela vez delas.
-ESTADO_ROTACAO_TIMELINE = RAIZ / ".rotacao_timeline"
-# Cache dos IDs numéricos das contas (a timeline é por ID, não por @). A lista
-# de contas quase não muda; sem cache seriam 2 requisições extras por execução
-# só para reconverter os mesmos nomes.
-CACHE_IDS = RAIZ / ".contas_ids.json"
-CACHE_IDS_DIAS = 30
-# Última lista de seguidas lida com sucesso. Serve de REDE, não de economia: a
-# leitura é feita fresca a cada execução (é ela que faz "seguir alguém" mudar a
-# pauta no mesmo dia), e o cache só entra quando a X API falha — perder a pauta
-# inteira por um 503 transitório seria caro demais para o que a chamada custa.
-#
-# No Render o arquivo NÃO sobrevive de uma execução para a outra (cada run do
-# cron é um container novo, e o .json é gitignored), então lá a rede não existe
-# e a falha da API aborta mesmo. Vale para o uso local e para execuções
-# encadeadas na mesma máquina.
-CACHE_SEGUIDAS = RAIZ / ".contas_seguidas.json"
-# Página da lista de seguidas. 1000 é o teto da API; com ele as ~170 contas do
-# usuário cabem numa requisição só.
-SEGUIDAS_POR_PAGINA = 1000
-SEGUIDAS_MAX_PAGINAS = 5  # teto de segurança (até 5.000 contas)
 
 
 def obter_bearer(cfg: Config) -> str | None:
@@ -158,148 +93,13 @@ def _get(token: str, url: str, params: dict) -> dict:
     return resp.json()
 
 
-# ---- Contas seguidas (/2/users/:id/following) --------------------------------
+def _normalizar_posts(dados: dict) -> list[dict]:
+    """Converte a resposta da X API (lista ou busca) em posts do pipeline.
 
-
-def _seguidas_do_cache() -> dict[str, str]:
-    """Última lista de seguidas gravada; {} se não houver ou estiver ilegível."""
-    try:
-        bruto = json.loads(CACHE_SEGUIDAS.read_text(encoding="utf-8"))
-        return dict(bruto.get("contas") or {})
-    except (OSError, ValueError, TypeError):
-        return {}
-
-
-def contas_seguidas(cfg: Config, token: str) -> dict[str, str]:
-    """Contas que ``cfg.x_username`` segue no X: mapa @conta -> id numérico.
-
-    É a fonte da pauta desde 2026-08-16: em vez da lista fixa de handles que
-    vivia em config.py, o canal acompanha quem o usuário acompanha, e seguir
-    alguém novo no X muda a coleta da próxima execução — sem commit, sem
-    deploy.
-
-    A leitura é FRESCA a cada execução (é isso que dá o efeito imediato) e
-    custa uma requisição, porque as ~170 contas cabem numa página de 1000. O
-    resultado é gravado em CACHE_SEGUIDAS e, quando a X API falha, é a lista
-    gravada que segue valendo: um erro transitório não pode zerar a pauta
-    depois de o pipeline já ter pago o token. Sem lista nenhuma (primeira
-    execução + API fora), ABORTA — coletar de zero contas não produz vídeo, só
-    gasta.
-
-    O id vem de brinde na mesma resposta, então a leitura de timeline
-    (endereçada por ID) não precisa mais do lookup em /2/users/by para estas
-    contas.
-    """
-    handle = (cfg.x_username or "").strip().lstrip("@")
-    try:
-        dados = _get(token, USER_POR_HANDLE_ENDPOINT.format(handle=handle), {})
-        usuario_id = dados["data"]["id"]
-
-        contas: dict[str, str] = {}
-        pagina = None
-        for _ in range(SEGUIDAS_MAX_PAGINAS):
-            params = {
-                "max_results": SEGUIDAS_POR_PAGINA,
-                "user.fields": "username",
-            }
-            if pagina:
-                params["pagination_token"] = pagina
-            corpo = _get(token, FOLLOWING_ENDPOINT.format(id=usuario_id), params)
-            for u in corpo.get("data") or []:
-                contas[u["username"]] = u["id"]
-            pagina = (corpo.get("meta") or {}).get("next_token")
-            if not pagina:
-                break
-
-        if not contas:
-            raise ValueError(f"@{handle} não segue nenhuma conta")
-    except (requests.RequestException, KeyError, ValueError, TypeError) as erro:
-        cache = _seguidas_do_cache()
-        if not cache:
-            raise SystemExit(
-                f"Não deu para ler as contas que @{handle} segue no X ({erro}) "
-                "e não há lista gravada de execuções anteriores — sem contas "
-                "não há coleta. Confira X_USERNAME e as credenciais da X API, "
-                "ou preencha X_ACCOUNTS no .env com uma lista fixa."
-            ) from erro
-        print(
-            f"[aviso] Leitura das contas seguidas por @{handle} falhou "
-            f"({erro}); usando as {len(cache)} contas da última leitura."
-        )
-        return cache
-
-    try:
-        CACHE_SEGUIDAS.write_text(
-            json.dumps(
-                {
-                    "data": datetime.now(timezone.utc).isoformat(),
-                    "usuario": handle,
-                    "contas": contas,
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-    except OSError as erro:
-        print(f"[aviso] Não consegui salvar a lista de contas seguidas: {erro}")
-
-    print(f"[x] @{handle} segue {len(contas)} contas — é delas que sai a pauta.")
-    return contas
-
-
-def _lotes_de_query(contas: list[str]) -> list[str]:
-    """Agrupa as contas em queries `from:a OR from:b ...` de até 512 caracteres.
-
-    O orçamento de caracteres reserva o espaço de SUFIXO_VIDEO além do de
-    SUFIXO_BUSCA, porque o mesmo lote é reusado na passada `has:videos`. Com as
-    192 contas atuais a reserva sai de graça: continuam 8 lotes, agora com o
-    maior deles em 511 caracteres no pior caso, em vez de 523.
-    """
-    reserva = len(SUFIXO_BUSCA) + len(SUFIXO_VIDEO)
-    lotes, atual = [], []
-    for conta in contas:
-        candidato = "(" + " OR ".join(f"from:{c}" for c in atual + [conta]) + ")"
-        if atual and len(candidato) + reserva > MAX_QUERY:
-            lotes.append(
-                "(" + " OR ".join(f"from:{c}" for c in atual) + ")" + SUFIXO_BUSCA
-            )
-            atual = [conta]
-        else:
-            atual.append(conta)
-    if atual:
-        lotes.append(
-            "(" + " OR ".join(f"from:{c}" for c in atual) + ")" + SUFIXO_BUSCA
-        )
-    return lotes
-
-
-def _rotacionar(itens: list, quantidade: int, estado: Path) -> list:
-    """Seleciona `quantidade` itens avançando um cursor circular persistido.
-
-    Garante que todas as contas sejam lidas ao longo das execuções (o sorteio
-    anterior podia deixar as mesmas contas dias sem coleta). Serve tanto para os
-    lotes da busca quanto para as contas da leitura de timeline.
-    """
-    if not itens:
-        return []
-    try:
-        inicio = int(estado.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        inicio = 0
-    inicio %= len(itens)
-    escolhidos = [itens[(inicio + k) % len(itens)] for k in range(quantidade)]
-    try:
-        estado.write_text(str((inicio + quantidade) % len(itens)), encoding="utf-8")
-    except OSError as erro:
-        print(f"[aviso] Não consegui salvar o estado da rotação ({estado.name}): {erro}")
-    return escolhidos
-
-
-def _normalizar_posts(dados: dict, usuario_padrao: str = "") -> list[dict]:
-    """Converte a resposta da X API (busca ou timeline) em posts do pipeline.
-
-    `usuario_padrao` é usado pela TIMELINE, onde todos os posts são da mesma
-    conta e a resposta não precisa (nem traz) a expansão de autor.
+    Os dois caminhos vivos trazem a expansão de autor, então o @ sai sempre do
+    envelope. O parâmetro `usuario_padrao` que existia aqui era da leitura de
+    timeline, onde todos os posts eram da mesma conta; saiu com ela em
+    2026-08-22.
     """
     includes = dados.get("includes") or {}
     autores = {u["id"]: u["username"] for u in includes.get("users") or []}
@@ -318,7 +118,7 @@ def _normalizar_posts(dados: dict, usuario_padrao: str = "") -> list[dict]:
     posts = []
     for post in dados.get("data") or []:
         metricas = post.get("public_metrics") or {}
-        usuario = autores.get(post.get("author_id"), "") or usuario_padrao
+        usuario = autores.get(post.get("author_id"), "")
         # REPOST vira o post ORIGINAL (2026-08-17): a mídia, o texto íntegro (o
         # do repost vem truncado em "RT @fulano: …") e o crédito de reprodução
         # pertencem a quem publicou. Baixar pelo id do repost não traria clipe
@@ -393,136 +193,34 @@ def _consultar(
     return _normalizar_posts(dados)
 
 
-# ---- Timeline das contas (/2/users/:id/tweets) ------------------------------
-
-
-def _ids_das_contas(token: str, contas: list[str]) -> dict[str, str]:
-    """Mapa @conta -> id numérico, com cache local de CACHE_IDS_DIAS dias.
-
-    A timeline é endereçada por ID; a lista de contas quase não muda, então
-    reconverter os mesmos nomes a cada execução seria requisição jogada fora.
-    Contas novas (ainda fora do cache) são resolvidas em lotes de 100.
-    """
-    cache: dict[str, str] = {}
-    try:
-        bruto = json.loads(CACHE_IDS.read_text(encoding="utf-8"))
-        gravado = datetime.fromisoformat(bruto["data"])
-        if datetime.now(timezone.utc) - gravado < timedelta(days=CACHE_IDS_DIAS):
-            cache = dict(bruto.get("ids") or {})
-    except (OSError, ValueError, KeyError, TypeError):
-        cache = {}
-
-    faltando = [c for c in contas if c.lower() not in cache]
-    for k in range(0, len(faltando), 100):
-        lote = faltando[k : k + 100]
-        try:
-            dados = _get(
-                token,
-                USERS_ENDPOINT,
-                {"usernames": ",".join(lote), "user.fields": "username"},
-            )
-        except requests.RequestException as erro:
-            print(f"[aviso] X API: lookup de contas falhou ({erro}); lote pulado")
-            continue
-        for u in dados.get("data") or []:
-            cache[u["username"].lower()] = u["id"]
-        for e in dados.get("errors") or []:
-            print(f"[aviso] Conta não resolvida no X: {e.get('value', '?')}")
-
-    if faltando:
-        try:
-            CACHE_IDS.write_text(
-                json.dumps(
-                    {"data": datetime.now(timezone.utc).isoformat(), "ids": cache},
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-        except OSError as erro:
-            print(f"[aviso] Não consegui salvar o cache de IDs das contas: {erro}")
-
-    return {c: cache[c.lower()] for c in contas if c.lower() in cache}
-
-
-def _coletar_timelines(
-    cfg: Config, token: str, contas: list[str], ids: dict[str, str] | None = None
-) -> list[dict]:
-    """Posts recentes lidos direto da TIMELINE de um subconjunto das contas.
-
-    Por que existe, além da busca: `search/recent` ordena por RELEVÂNCIA, e
-    relevância no X é engajamento acumulado. O post publicado há vinte minutos
-    — o vazamento, o comunicado, o número que acabou de sair — ainda não tem
-    engajamento nenhum e por isso é justamente o que a busca deixa de fora. A
-    timeline é cronológica e não faz esse juízo: ela devolve o que a conta
-    publicou, na ordem em que publicou.
-
-    O custo é uma requisição POR CONTA, então o orçamento
-    (X_MAX_POSTS_TIMELINE) é dividido em `posts por conta` e cobre só um
-    punhado de contas por execução — um cursor circular persistido faz o rodízio
-    entre execuções, como nos lotes da busca. X_MAX_POSTS_TIMELINE=0 desliga.
-
-    `ids` são os IDs numéricos que a leitura das contas seguidas já devolveu de
-    graça (o /2/users/:id/following traz id e username juntos). Ausentes — o
-    caminho de X_ACCOUNTS, que só tem handles —, os IDs são resolvidos com o
-    lookup em /2/users/by, como antes.
-    """
-    orcamento = getattr(cfg, "x_max_posts_timeline", 0) or 0
-    if orcamento <= 0:
-        return []
-
-    ids = ids or _ids_das_contas(token, contas)
-    if not ids:
-        print("[aviso] Nenhum ID de conta resolvido; leitura de timelines pulada.")
-        return []
-
-    quantas = max(1, orcamento // MIN_RESULTS_TIMELINE)
-    escolhidas = _rotacionar(
-        sorted(ids), min(quantas, len(ids)), ESTADO_ROTACAO_TIMELINE
-    )
-    por_conta = min(max(orcamento // max(len(escolhidas), 1), MIN_RESULTS_TIMELINE), 100)
-    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
-
-    print(
-        f"[x] Lendo a timeline de {len(escolhidas)} conta(s) "
-        f"({por_conta} posts cada, cronológico): "
-        + ", ".join(f"@{c}" for c in escolhidas)
-    )
-    posts: list[dict] = []
-    for conta in escolhidas:
-        try:
-            dados = _get(
-                token,
-                TIMELINE_ENDPOINT.format(id=ids[conta]),
-                {
-                    "max_results": por_conta,
-                    "start_time": inicio.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    # Repost fora aqui também, pelo mesmo motivo da busca (ver
-                    # SUFIXO_BUSCA): o que ele traz é o volume de quem reposta
-                    # por hábito, não o vídeo das contas de notícia.
-                    "exclude": "retweets,replies",
-                    "tweet.fields": "created_at,public_metrics,text,referenced_tweets",
-                    "expansions": (
-                        "author_id,attachments.media_keys,referenced_tweets.id,"
-                        "referenced_tweets.id.attachments.media_keys,"
-                        "referenced_tweets.id.author_id"
-                    ),
-                    "user.fields": "username",
-                    "media.fields": "type",
-                },
-            )
-        except requests.RequestException as erro:
-            print(f"[aviso] Timeline de @{conta} falhou ({erro}); conta pulada")
-            continue
-        posts += _normalizar_posts(dados, usuario_padrao=conta)
-    return posts
-
-
 def _por_engajamento(post: dict) -> int:
     return post["likes"] + 3 * post["reposts"] + post["respostas"]
 
 
 OAUTH2_TOKEN_ENDPOINT = "https://api.x.com/2/oauth2/token"
 RENDER_ENV_ENDPOINT = "https://api.render.com/v1/services/{sid}/env-vars/{chave}"
+# Vencimento do access token vigente, gravado pelo renovador junto com ele. É o
+# que permite trocar o token por IDADE em vez de esperar ele morrer — ver
+# `renovar_token_do_x`.
+CHAVE_EXPIRA = "X_OAUTH_ACCESS_TOKEN_EXPIRA"
+
+
+def _minutos_restantes(vencimento: str) -> int | None:
+    """Minutos até `vencimento` (ISO-8601 UTC); None quando não dá para ler.
+
+    None e um número negativo dizem coisas diferentes: None é "não sei quando
+    vence" (env var ausente ou ilegível), e quem chama renova por precaução;
+    negativo é "venceu faz tanto tempo", que é o caso a evitar.
+    """
+    if not vencimento:
+        return None
+    try:
+        quando = datetime.fromisoformat(vencimento.strip())
+    except ValueError:
+        return None
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=timezone.utc)
+    return int((quando - datetime.now(timezone.utc)).total_seconds() // 60)
 
 
 def _ler_do_render(cfg: Config, chave: str) -> str:
@@ -558,33 +256,40 @@ def _ler_do_render(cfg: Config, chave: str) -> str:
     return ""
 
 
-def _gravar_refresh_no_render(cfg: Config, token: str) -> bool:
-    """Persiste o refresh token novo nas env vars dos crons; True se gravou.
+def _gravar_no_render(cfg: Config, chave: str, valor: str) -> bool:
+    """Grava uma env var no serviço do renovador; True se gravou.
 
-    Existe porque o refresh token do X é de USO ÚNICO: cada renovação emite
-    outro e mata o anterior na hora (medido em 2026-08-17 — reusar o antigo
-    devolve HTTP 400). Sem regravar, a execução seguinte tentaria renovar com um
-    valor morto. O container do cron é descartado ao fim da execução, então a
-    env var do Render é o único lugar que os quatro serviços compartilham.
+    O container do cron é descartado ao fim da execução, então a env var do
+    Render é o único lugar que os cinco serviços compartilham — e, lida pela
+    API (ver `_ler_do_render`), a única que não envelhece junto com o deploy.
     """
     if not (cfg.render_api_key and cfg.render_token_service_id):
         return False
     try:
         resp = requests.put(
-            RENDER_ENV_ENDPOINT.format(
-                sid=cfg.render_token_service_id, chave="X_OAUTH_REFRESH_TOKEN"
-            ),
+            RENDER_ENV_ENDPOINT.format(sid=cfg.render_token_service_id, chave=chave),
             headers={
                 "Authorization": f"Bearer {cfg.render_api_key}",
                 "Content-Type": "application/json",
             },
-            json={"value": token},
+            json={"value": valor},
             timeout=30,
         )
         return resp.status_code in (200, 201)
     except requests.RequestException as erro:
-        print(f"[aviso] não deu para gravar o refresh token: {erro}")
+        print(f"[aviso] não deu para gravar {chave} no Render: {erro}")
         return False
+
+
+def _gravar_refresh_no_render(cfg: Config, token: str) -> bool:
+    """Persiste o refresh token novo; True se gravou.
+
+    Existe porque o refresh token do X é de USO ÚNICO: cada renovação emite
+    outro e mata o anterior na hora (medido em 2026-08-17 — reusar o antigo
+    devolve HTTP 400). Sem regravar, a execução seguinte tentaria renovar com um
+    valor morto.
+    """
+    return _gravar_no_render(cfg, "X_OAUTH_REFRESH_TOKEN", token)
 
 
 CACHE_TOKEN_USUARIO: dict[str, str] = {}
@@ -606,22 +311,41 @@ def renovar_token_do_x(cfg: Config) -> bool:
       crons de vídeo consomem, sem nunca renovar nada.
     - ``X_OAUTH_REFRESH_TOKEN``: a semente da próxima renovação, que só este
       cron usa.
+    - ``X_OAUTH_ACCESS_TOKEN_EXPIRA``: quando esse access token vence, para a
+      troca acontecer ANTES disso (ver o bloco da margem, abaixo).
 
     Por isso ele precisa rodar com folga dentro das 2h de validade — de hora em
-    hora, na prática. Falhar aqui não derruba vídeo nenhum: os crons de vídeo
-    caem para a coleta pelas contas seguidas.
+    hora, na prática. Falhar aqui DERRUBA os vídeos do ciclo seguinte: desde
+    2026-08-22 a leitura da lista é o caminho único da pauta, e sem token de
+    usuário ela aborta em vez de cair para as contas seguidas.
     """
     if not (cfg.x_oauth_client_id and cfg.x_oauth_client_secret):
         print("[x-token] Sem X_OAUTH_CLIENT_ID/SECRET; nada a renovar.")
         return False
 
-    # NÃO RENOVAR À TOA (2026-08-18). Cada renovação QUEIMA um refresh de uso
-    # único, e uma que falhe no meio do caminho custa reautorização manual no
-    # navegador. Se o access token vigente ainda responde, não há o que fazer —
-    # o cron roda de hora em hora justamente para ter folga dentro das 2h de
-    # validade, não para trocar o token 24 vezes por dia.
+    # RENOVAR POR IDADE, NÃO POR MORTE (2026-08-22). Até aqui o renovador só
+    # trocava o token DEPOIS que ele morria: testava /2/users/me e, com 200, não
+    # fazia nada. Como o token vale 2h e este cron roda de hora em hora, a troca
+    # saía de 3 em 3 horas e sobrava uma JANELA MORTA de até uma hora em cada
+    # ciclo — o token vencido parado na env var que os crons de vídeo leem.
+    # Medido em 22/08: renovações às 00:20, 03:20, 06:20, 09:20... e 401 na
+    # leitura da lista em exatamente as quatro execuções de vídeo que caíam
+    # dentro dessas janelas (US 03:02, BR 06:03, US 15:04, BR 18:04) — 4 das 12
+    # do dia, todas mascaradas pelo antigo fallback das contas seguidas.
+    #
+    # Agora o vencimento é gravado junto com o token e a troca acontece enquanto
+    # ele ainda vale. Para não sobrar janela morta, a margem tem que ser MAIOR
+    # que o intervalo entre execuções deste cron: com 75 minutos e cron de hora
+    # em hora, o token é trocado com ~1h de vida pela frente e nunca chega ao
+    # fim. Encurtar a margem (menos rotações do refresh) exige encurtar o cron
+    # na mesma medida — ver X_TOKEN_MARGEM_MIN em config.py.
+    restam = _minutos_restantes(_ler_do_render(cfg, CHAVE_EXPIRA))
     vigente = _ler_do_render(cfg, "X_OAUTH_ACCESS_TOKEN")
-    if vigente:
+    if vigente and restam is not None and restam > cfg.x_token_margem_min:
+        # O vencimento é o que se sabe no papel; /2/users/me é o que o X diz de
+        # fato. Token revogado antes da hora (senha trocada, app removido) tem
+        # data no futuro e responde 401 — sem esta conferência o renovador
+        # dormiria em cima dele até uma validade que não vale mais.
         try:
             teste = requests.get(
                 "https://api.x.com/2/users/me",
@@ -629,10 +353,27 @@ def renovar_token_do_x(cfg: Config) -> bool:
                 timeout=30,
             )
             if teste.status_code == 200:
-                print("[x-token] Access token vigente ainda vale; nada a renovar.")
+                print(
+                    f"[x-token] Access token ainda vale {restam} min (margem de "
+                    f"{cfg.x_token_margem_min}); nada a renovar."
+                )
                 return True
+            print(
+                f"[x-token] O vencimento gravado diz {restam} min, mas o X "
+                f"respondeu {teste.status_code}; renovando assim mesmo."
+            )
         except requests.RequestException:
-            pass  # sem resposta do X, segue para a renovação
+            pass  # sem resposta do X, renova por precaução
+    elif restam is None:
+        # Primeira execução com esta mudança, ou env var apagada: sem vencimento
+        # gravado não há como decidir por idade, e é esta renovação que passa a
+        # existir a data.
+        print("[x-token] Sem vencimento gravado; renovando para registrá-lo.")
+    else:
+        print(
+            f"[x-token] Access token com {restam} min de vida (margem de "
+            f"{cfg.x_token_margem_min}); renovando antes que ele vença."
+        )
 
     access = _token_de_usuario(cfg, renovando=True)
     if not access:
@@ -644,25 +385,24 @@ def renovar_token_do_x(cfg: Config) -> bool:
     if not (cfg.render_api_key and cfg.render_token_service_id):
         print("[x-token] Sem RENDER_API_KEY/RENDER_TOKEN_SERVICE_ID; token não salvo.")
         return False
-    try:
-        resp = requests.put(
-            RENDER_ENV_ENDPOINT.format(
-                sid=cfg.render_token_service_id, chave="X_OAUTH_ACCESS_TOKEN"
-            ),
-            headers={
-                "Authorization": f"Bearer {cfg.render_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"value": access},
-            timeout=30,
+    if not _gravar_no_render(cfg, "X_OAUTH_ACCESS_TOKEN", access):
+        print("[x-token] falha ao salvar o access token.")
+        return False
+    # O vencimento vai DEPOIS do token, nunca antes: gravado primeiro, uma falha
+    # na gravação do token deixaria uma data nova apontando para o token velho —
+    # e é exatamente essa mentira que reabre a janela morta.
+    expira = CACHE_TOKEN_USUARIO.get("expira_em") or ""
+    if expira and not _gravar_no_render(cfg, CHAVE_EXPIRA, expira):
+        print(
+            "[aviso] O access token foi salvo, mas o vencimento não: o ciclo "
+            "seguinte renova por precaução (custa uma rotação a mais do "
+            "refresh, não uma janela de token morto)."
         )
-    except requests.RequestException as erro:
-        print(f"[x-token] falha ao salvar o access token: {erro}")
-        return False
-    if resp.status_code not in (200, 201):
-        print(f"[x-token] falha ao salvar o access token: HTTP {resp.status_code}")
-        return False
-    print("[x-token] Access token renovado e salvo; vale ~2h.")
+    vida = _minutos_restantes(expira)
+    print(
+        "[x-token] Access token renovado e salvo; vale "
+        + (f"~{vida} min." if vida is not None else "~2h.")
+    )
     return True
 
 
@@ -683,8 +423,9 @@ def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
     # CRON DE VÍDEO: consome o access token que o cron renovador distribuiu e
     # NÃO renova nada. É isto que elimina a corrida — só o renovador escreve.
     # Token vencido aqui não é problema a resolver renovando por conta própria
-    # (voltaria a corrida): a coleta cai para as contas seguidas e o renovador
-    # conserta no ciclo seguinte.
+    # (voltaria a corrida): a execução aborta na leitura da lista e o renovador
+    # conserta no ciclo seguinte — que, com a renovação por idade, passou a
+    # acontecer ANTES de o token vencer.
     #
     # Lê do RENDER primeiro: o valor em cfg vem do último deploy e envelhece
     # junto com ele — o access token dura 2h, e o deploy pode ter semanas.
@@ -746,9 +487,17 @@ def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
         else:
             print(
                 "[aviso] O refresh token do X ROTACIONOU e não foi persistido "
-                "fora deste container: a próxima execução no Render vai falhar "
-                "na renovação e a coleta cai para as contas seguidas."
+                "fora deste container: a próxima renovação no Render vai "
+                "falhar, e com ela a leitura da lista — que é o caminho único "
+                "da pauta. Reautorize no navegador se isso acontecer."
             )
+    # Vencimento do token novo, para o renovador trocar por IDADE em vez de
+    # esperar o 401. `expires_in` vem em segundos (7200 na prática); o desconto
+    # de um minuto absorve o caminho entre a resposta do X e a gravação.
+    segundos = int(dados.get("expires_in") or 0)
+    if segundos > 60:
+        vence = datetime.now(timezone.utc) + timedelta(seconds=segundos - 60)
+        CACHE_TOKEN_USUARIO["expira_em"] = vence.isoformat(timespec="seconds")
     CACHE_TOKEN_USUARIO["access"] = dados.get("access_token") or ""
     return CACHE_TOKEN_USUARIO["access"] or None
 
@@ -785,8 +534,19 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
         try:
             dados = _get(token, LIST_TWEETS_ENDPOINT.format(id=cfg.x_list_id), params)
         except requests.RequestException as erro:
-            print(f"[aviso] X API: leitura da lista falhou ({erro})")
-            break
+            # SEM REDE DEBAIXO desde 2026-08-22: a lista é o caminho único, e
+            # falhar aqui é falhar a execução. Página que quebra no MEIO da
+            # paginação ainda aproveita o que já veio; o que não pode é seguir
+            # de mãos vazias e o vídeo sair de uma pauta pior sem ninguém ver.
+            if posts:
+                print(f"[aviso] X API: paginação da lista parou ({erro})")
+                break
+            raise SystemExit(
+                f"Leitura da lista {cfg.x_list_id} falhou: {erro}\n"
+                "401 aqui é access token do X vencido — confira o cron "
+                "x-token-refresher e X_OAUTH_ACCESS_TOKEN no serviço dele. "
+                "404 é lista inexistente ou fora do alcance deste token."
+            ) from erro
         lote = _normalizar_posts(dados)
         if not lote:
             break
@@ -811,94 +571,13 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
     return posts
 
 
-def _coletar_posts(
-    cfg: Config, token: str, contas: list[str], ids: dict[str, str] | None = None
-) -> list[dict]:
-    """Posts das contas na janela, limitados a cfg.x_max_posts (leitura é paga).
-
-    Três passadas sobre as MESMAS contas — nenhuma fonte nova entra aqui:
-
-    1. Busca por RELEVÂNCIA (`search/recent`): a coleta principal.
-    2. Varredura `has:videos`: a passada 1 não prefere vídeo, então post com
-       clipe disputava vaga em pé de igualdade com texto e o material que a
-       montagem precisa era o que mais perdia. Desliga com X_MAX_POSTS_VIDEO=0.
-    3. TIMELINE de um subconjunto rotativo das contas (`/2/users/:id/tweets`):
-       cronológica, pega o que acabou de ser publicado e ainda não acumulou
-       engajamento — o vazamento e o comunicado quente que a relevância
-       enterra. Desliga com X_MAX_POSTS_TIMELINE=0.
-    """
-    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
-    lotes = _lotes_de_query(contas)
-
-    # Orçamento de leitura: divide o teto entre os lotes. O mínimo da API é 10
-    # por chamada; se há lotes demais para o teto, um cursor circular decide
-    # quais entram nesta execução (execução a execução a rotação cobre todas
-    # as contas, sem depender de sorte).
-    max_lotes = max(cfg.x_max_posts // 10, 1)
-    if len(lotes) > max_lotes:
-        print(
-            f"[aviso] {len(contas)} contas geram {len(lotes)} consultas, mas "
-            f"X_MAX_POSTS={cfg.x_max_posts} só cobre {max_lotes}; rotacionando "
-            "quais contas entram hoje (aumente X_MAX_POSTS para cobrir todas)"
-        )
-        lotes = _rotacionar(lotes, max_lotes, ESTADO_ROTACAO)
-    por_lote = min(max(cfg.x_max_posts // len(lotes), 10), 100)
-
-    posts: list[dict] = []
-    for query in lotes:
-        posts += _consultar(token, query, inicio, por_lote)
-
-    posts.sort(key=_por_engajamento, reverse=True)
-    posts = posts[: cfg.x_max_posts]
-
-    orcamento_video = getattr(cfg, "x_max_posts_video", 0) or 0
-    if orcamento_video:
-        por_lote_video = min(max(orcamento_video // len(lotes), 10), 100)
-        vistos = {p["url"] for p in posts}
-        novos: list[dict] = []
-        for query in lotes:
-            # `has:videos` cobre vídeo nativo e GIF animado, que é exatamente o
-            # que o pipeline consegue baixar e montar. O espaço deste sufixo já
-            # foi reservado em _lotes_de_query — ver SUFIXO_VIDEO.
-            for post in _consultar(
-                token, f"{query}{SUFIXO_VIDEO}", inicio, por_lote_video
-            ):
-                if post["url"] not in vistos:
-                    vistos.add(post["url"])
-                    novos.append(post)
-        novos.sort(key=_por_engajamento, reverse=True)
-        novos = novos[:orcamento_video]
-        if novos:
-            print(
-                f"[x] Varredura has:videos trouxe {len(novos)} post(s) com "
-                "clipe que a coleta por relevância havia deixado de fora."
-            )
-        posts += novos
-
-    # Timeline cronológica: o post fresco que a relevância ainda não viu.
-    vistos = {p["url"] for p in posts}
-    frescos = [
-        p
-        for p in _coletar_timelines(cfg, token, contas, ids)
-        if p["url"] not in vistos
-    ]
-    if frescos:
-        print(
-            f"[x] Timelines trouxeram {len(frescos)} post(s) recentes que a "
-            "busca por relevância não havia devolvido."
-        )
-        posts += frescos
-
-    return posts
-
-
 def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     """URLs de posts com clipe sobre o assunto, de QUALQUER conta do X.
 
-    A coleta e a varredura `has:videos` só enxergam as contas seguidas, então o
-    material fica limitado ao que elas publicaram sobre ESTE fato —
-    que é o gargalo real do formato longo (vídeo não falta no X; falta vídeo
-    concentrado num mesmo acontecimento). Esta busca é aberta.
+    A coleta só enxerga os membros da LISTA, então o material fica limitado ao
+    que eles publicaram sobre ESTE fato — que é o gargalo real do formato longo
+    (vídeo não falta no X; falta vídeo concentrado num mesmo acontecimento).
+    Esta busca é aberta.
 
     Em troca, as fontes NÃO são curadas: entra conta desconhecida, telejornal
     reempacotado e, eventualmente, material enganoso. Quem filtra depois é a
@@ -906,7 +585,8 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     orçamento aqui é modesto de propósito, e X_MAX_POSTS_BUSCA=0 desliga.
 
     Falha da API não aborta: devolve lista vazia e a execução segue com o
-    material das contas seguidas.
+    material da lista. É a única coleta que ainda falha em silêncio, e pode:
+    ela ACRESCENTA clipe a um assunto já escolhido, não decide pauta.
     """
     orcamento = getattr(cfg, "x_max_posts_busca", 0) or 0
     consulta = (consulta or "").strip()
@@ -939,8 +619,8 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     posts.sort(key=_por_engajamento, reverse=True)
     posts = posts[:orcamento]
     print(
-        f"[midia-x] Busca aberta achou {len(posts)} post(s) com clipe fora das "
-        "contas seguidas (fontes não curadas; a auditoria decide o que entra)."
+        f"[midia-x] Busca aberta achou {len(posts)} post(s) com clipe fora da "
+        "lista (fontes não curadas; a auditoria decide o que entra)."
     )
     return [p["url"] for p in posts]
 
@@ -1131,12 +811,20 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
 
 
 def coletar_trends(cfg: Config) -> list[dict]:
-    """Posts das contas que o usuário segue (X API), resumidos em trends pelo GPT.
+    """Posts da LISTA do X (X_LIST_ID), resumidos em trends pelo GPT.
 
-    As contas vêm de ``contas_seguidas`` — a lista de "following" de X_USERNAME,
-    lida a cada execução. X_ACCOUNTS no .env, quando preenchido, substitui essa
-    lista (e aí os IDs voltam a ser resolvidos pelo lookup de handles).
+    Caminho único desde 2026-08-22: não há mais fallback para as contas
+    seguidas — ver o cabeçalho do módulo. Falta de lista, token vencido ou
+    janela sem material param a execução com SystemExit, que o agendador
+    transforma em e-mail.
     """
+    if not cfg.x_list_id:
+        raise SystemExit(
+            "Sem X_LIST_ID não há pauta: a coleta lê a LISTA do X e o caminho "
+            "pelas contas seguidas não existe mais. Preencha X_LIST_ID no .env "
+            "(ou no Render) com o id da lista."
+        )
+
     token = obter_bearer(cfg)
     if token is None:
         raise SystemExit(
@@ -1144,161 +832,69 @@ def coletar_trends(cfg: Config) -> list[dict]:
             "e X_CONSUMER_SECRET no .env."
         )
 
-    # LISTA: caminho preferido quando X_LIST_ID está definido. Dispensa a lista
-    # de seguidas, os lotes e as timelines — ver `_coletar_da_lista`.
-    if cfg.x_list_id:
-        print(
-            f"[x] Lendo a lista {cfg.x_list_id} (até {cfg.x_max_posts} posts "
-            f"das últimas {cfg.janela_horas}h, ordem cronológica)..."
-        )
-        posts = _coletar_da_lista(cfg, token)
-        # MESMO FALLBACK DE JANELA da coleta por contas — ele se perdeu quando
-        # este caminho entrou, e a primeira execução real (03:03 UTC, hora
-        # morta) trouxe 5 candidatas, NENHUMA com clipe, abortando o vídeo. A
-        # janela de 4h existe para execuções seguidas não repetirem pauta, não
-        # para desistir quando o poço está seco.
-        # O gatilho olha DUAS coisas, e a segunda foi aprendida na marra: o
-        # vídeo é montado só com clipe, então uma janela cheia de posts sem
-        # vídeo nenhum é tão inútil quanto uma janela vazia. Contando só o
-        # total, a execução das 03:10 UTC passou direto pelo fallback com 20+
-        # posts e morreu logo depois em "5 candidatas sem post com vídeo".
-        def _insuficiente(lote: list[dict]) -> bool:
-            return len(lote) < MIN_POSTS_JANELA or not any(p["video"] for p in lote)
-
-        if posts and _insuficiente(posts):
-            original = cfg.janela_horas
-            for janela in JANELAS_FALLBACK:
-                if janela <= cfg.janela_horas:
-                    continue
-                print(
-                    f"[x] {len(posts)} post(s) na lista em {cfg.janela_horas}h, "
-                    f"{sum(1 for p in posts if p['video'])} com clipe; "
-                    f"reabrindo a janela para {janela}h..."
-                )
-                cfg.janela_horas = janela
-                posts = _coletar_da_lista(cfg, token)
-                if not _insuficiente(posts):
-                    break
-            cfg.janela_horas = original
-        if posts:
-            # NÃO retornar aqui. `_resumir_trends` devolve só o agrupamento cru
-            # do GPT — quem calcula `posts_com_video`, filtra as URLs e monta a
-            # trend é o bloco no fim desta função. Retornar direto (como estava
-            # até 2026-08-18) entregava trends sem contagem de clipe, e o veto
-            # da seleção derrubava TODAS: "7 candidatas sem nenhum post com
-            # vídeo nativo", com 10 clipes na coleta.
-            com_video = sum(1 for p in posts if p.get("video"))
-            print(
-                f"[x] {len(posts)} posts na lista ({com_video} com clipe de "
-                "vídeo nativo); resumindo as trends com o GPT..."
-            )
-            return _montar_trends(cfg, posts)
-        print(
-            "[aviso] A lista não devolveu posts na janela; caindo para a coleta "
-            "pelas contas seguidas."
-        )
-
-    if cfg.contas:
-        contas, ids = list(cfg.contas), None
-        print(f"[x] X_ACCOUNTS no .env: {len(contas)} contas fixas (a lista de "
-              "seguidas foi ignorada).")
-    else:
-        seguidas = contas_seguidas(cfg, token)
-        contas, ids = sorted(seguidas), seguidas
-
-    # CONTAS EXTRAS (2026-08-17): somadas às seguidas antes do veto. O pipeline
-    # lê com bearer app-only, que não segue ninguém — esta lista é como uma conta
-    # entra na pauta sem o usuário precisar segui-la. Deduplica sem drama: se ele
-    # seguir a conta depois, ela aparece uma vez só.
-    extras = [c for c in (cfg.contas_extras or []) if c]
-    if extras:
-        conhecidas = {c.lower() for c in contas}
-        novas = [c for c in extras if c.lower() not in conhecidas]
-        if novas:
-            contas = contas + novas
-            print(
-                f"[x] {len(novas)} conta(s) extra(s) somada(s) às seguidas: "
-                + ", ".join(f"@{c}" for c in novas)
-            )
-
-    # VETO DE FONTE (2026-08-17): as contas de CONTAS_VETADAS saem ANTES de
-    # qualquer leitura — não entram nos lotes da busca nem na rotação de
-    # timelines. O ganho é de orçamento: X_MAX_POSTS é teto rígido e pago, e uma
-    # conta que despeja volume (a @business fez 79 de 216 posts numa medição)
-    # empurra para fora as contas cujo material o canal usa. Ver
-    # CONTAS_VETADAS_PADRAO em config.py.
-    vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
-    if vetadas:
-        antes = len(contas)
-        contas = [c for c in contas if c.lower() not in vetadas]
-        if ids:
-            ids = {c: i for c, i in ids.items() if c.lower() not in vetadas}
-        if len(contas) < antes:
-            print(
-                f"[x] {antes - len(contas)} conta(s) vetada(s) fora da coleta "
-                f"(só publicam recorte de emissora; a cota de leitura vai para "
-                f"as outras {len(contas)})."
-            )
-
     print(
-        f"[x] Coletando até {cfg.x_max_posts} posts das últimas "
-        f"{cfg.janela_horas}h de {len(contas)} contas..."
+        f"[x] Lendo a lista {cfg.x_list_id} (até {cfg.x_max_posts} posts "
+        f"das últimas {cfg.janela_horas}h, ordem cronológica)..."
     )
-    posts = _coletar_posts(cfg, token, contas, ids)
+    posts = _coletar_da_lista(cfg, token)
 
-    # FALLBACK DE JANELA (2026-08-17, pedido do usuário). Com os Shorts de volta
-    # à cadência de 4 em 4 horas, a janela de coleta desceu para 4h — e 4h sobre
-    # as contas seguidas é um poço pequeno: madrugada, fim de semana ou um dia
-    # devagar devolvem pouco ou nada, e a execução abortava com SystemExit (que
-    # vira e-mail de falha do agendador por um dia sem notícia, não por um
-    # defeito). Em vez de abortar, a janela ABRE por etapas até achar material.
+    # FALLBACK DE JANELA (2026-08-17) — este fica: não é um caminho alternativo
+    # de coleta, é a MESMA lista lida mais para trás. A janela de 4h existe para
+    # execuções seguidas não repetirem pauta, não para desistir quando o poço
+    # está seco (a primeira execução real, às 03:03 UTC, trouxe 5 candidatas e
+    # nenhuma com clipe).
     #
-    # O piso de aceitação é MIN_POSTS_JANELA, não 1: um punhado de posts
-    # devolvidos pela janela curta não sustenta a seleção — o GPT precisa de
-    # candidatas para comparar contra a régua do canal, e uma coleta de 3 posts
-    # entrega uma escolha que não é escolha nenhuma.
-    if len(posts) < MIN_POSTS_JANELA:
-        janela_original = cfg.janela_horas
+    # O gatilho olha DUAS coisas, e a segunda foi aprendida na marra: o vídeo é
+    # montado só com clipe, então uma janela cheia de posts sem vídeo nenhum é
+    # tão inútil quanto uma janela vazia. Contando só o total, a execução das
+    # 03:10 UTC passou direto pelo fallback com 20+ posts e morreu logo depois
+    # em "5 candidatas sem post com vídeo".
+    def _insuficiente(lote: list[dict]) -> bool:
+        return len(lote) < MIN_POSTS_JANELA or not any(p["video"] for p in lote)
+
+    if posts and _insuficiente(posts):
+        original = cfg.janela_horas
         for janela in JANELAS_FALLBACK:
             if janela <= cfg.janela_horas:
                 continue
             print(
-                f"[x] Só {len(posts)} post(s) em {cfg.janela_horas}h (piso de "
-                f"{MIN_POSTS_JANELA}); reabrindo a janela para {janela}h..."
+                f"[x] {len(posts)} post(s) na lista em {cfg.janela_horas}h, "
+                f"{sum(1 for p in posts if p['video'])} com clipe; "
+                f"reabrindo a janela para {janela}h..."
             )
             cfg.janela_horas = janela
-            posts = _coletar_posts(cfg, token, contas, ids)
-            if len(posts) >= MIN_POSTS_JANELA:
+            posts = _coletar_da_lista(cfg, token)
+            if not _insuficiente(posts):
                 break
-        cfg.janela_horas = janela_original
+        cfg.janela_horas = original
 
     if not posts:
         raise SystemExit(
-            f"Nenhum post encontrado nem alargando a janela até "
-            f"{JANELAS_FALLBACK[-1]}h. Confira o token da X API ou siga mais "
-            "contas no X."
+            f"A lista {cfg.x_list_id} não devolveu post nenhum nem alargando a "
+            f"janela até {JANELAS_FALLBACK[-1]}h. Confira se ela ainda tem "
+            "membros e se o token do X está válido."
         )
-    # Quantos posts trazem clipe é O número que decide se o formato longo tem
-    # material: o vídeo é montado só com clipes, e eles precisam estar
-    # concentrados num mesmo acontecimento. Sem esta linha, a escassez só
-    # aparecia lá na frente, como "pool de 2 clipes".
+
+    # Quantos posts trazem clipe é O número que decide se há material: o vídeo é
+    # montado só com clipes. Sem esta contagem a escassez só aparecia lá na
+    # frente, como "pool de 2 clipes".
     com_video = sum(1 for p in posts if p.get("video"))
     print(
-        f"[x] {len(posts)} posts coletados ({com_video} com clipe de vídeo "
+        f"[x] {len(posts)} posts na lista ({com_video} com clipe de vídeo "
         "nativo); resumindo as trends com o GPT..."
     )
-
     return _montar_trends(cfg, posts)
 
 
 def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
     """Agrupa os posts em trends e devolve o formato que o resto consome.
 
-    Mora numa função própria desde 2026-08-18 porque os DOIS caminhos de coleta
-    precisam dela — e a leitura por lista, que retornava direto de
-    `_resumir_trends`, pulava tudo isto: as trends saíam sem `posts_com_video`,
-    e a seleção derrubava todas com "sem nenhum post com vídeo nativo" mesmo
-    havendo 10 clipes na coleta.
+    Mora numa função própria desde 2026-08-18, quando havia dois caminhos de
+    coleta e a leitura por lista retornava direto de `_resumir_trends`, pulando
+    tudo isto: as trends saíam sem `posts_com_video` e a seleção derrubava
+    todas com "sem nenhum post com vídeo nativo" mesmo havendo 10 clipes na
+    coleta. Sobrou um caminho só, mas a separação segue útil — é aqui que a
+    contagem de clipe e o filtro de URLs realmente coletadas acontecem.
     """
     brutos = _resumir_trends(cfg, posts)
     urls_reais = {p["url"] for p in posts}

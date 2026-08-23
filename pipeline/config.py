@@ -208,38 +208,22 @@ LONGO_NUM_TRENDS = 3
 # as 160+ contas restantes cobrem os mesmos fatos. Ampliar ou limpar pelo
 # .env/Render (CONTAS_VETADAS, separadas por vírgula) sem deploy — e o handle
 # vai sem o @. A lista é de FONTE: nada aqui veta assunto.
-# CONTAS EXTRAS somadas às seguidas (2026-08-17). Existem porque o pipeline lê
-# com bearer app-only, que NÃO segue ninguém: seguir é ação de conta e continua
-# sendo do usuário. Esta lista é o caminho para uma conta entrar na pauta sem
-# depender disso — e, se ele seguir a conta no X, ela pode sair daqui sem perda
-# (a coleta deduplica).
+# CONTAS EXTRAS: MECANISMO REMOVIDO em 2026-08-22, junto com a coleta pelas
+# contas seguidas. Ele existia porque o pipeline lia com bearer app-only, que
+# não segue ninguém, e X_ACCOUNTS_EXTRA era o jeito de somar uma fonte sem o
+# usuário precisar segui-la. Com a pauta vindo da LISTA do X, somar uma fonte é
+# adicioná-la como MEMBRO da lista — não há mais o que configurar aqui.
 #
-# As de conflito abaixo entraram medidas, não por reputação: posts e posts COM
-# CLIPE nas últimas 24h, contados um a um na X API em 2026-08-17. O canal só
-# monta vídeo com clipe, então a coluna que decide é a segunda.
-#
-#   @clashreport      40 posts, 29 com clipe  (72%)
-#   @visegrad24       29 posts, 14 com clipe  (48%)
-#   @warintel4u       13 posts,  9 com clipe  (69%)
-#   @Osinttechnical    5 posts,  2 com clipe
-#   @RALee85           3 posts,  2 com clipe
-#
-# Medidas e DESCARTADAS por não publicarem no período (não confundir com
-# inatividade permanente): @AuroraIntel, @IntelCrab, @UAWeapons, @War_Mapper,
-# @WarMonitors, @bellingcat, @ELINTNews, @Tendar, @CalibreObscura, @N_Waters89.
-# @GeoConfirmed publica (8 posts) mas quase só texto e imagem estática.
-#
-# CUIDADO EDITORIAL: @clashreport e @visegrad24 são agregadores — republicam
-# vídeo de terceiros em volume, com verificação fraca e enquadramento próprio.
-# É o que as torna ricas em clipe e o que exige a auditoria de pertinência
-# fazendo o trabalho dela. X_ACCOUNTS_EXTRA no .env/Render substitui esta lista.
-CONTAS_EXTRAS_PADRAO = (
-    "clashreport",
-    "visegrad24",
-    "warintel4u",
-    "Osinttechnical",
-    "RALee85",
-)
+# A medição que montou a lista fica registrada porque custou leitura paga
+# (posts e posts COM CLIPE nas últimas 24h, contados um a um na X API em
+# 2026-08-17; o canal só monta vídeo com clipe, então decide a segunda coluna):
+# @clashreport 40/29, @visegrad24 29/14, @warintel4u 13/9, @Osinttechnical 5/2,
+# @RALee85 3/2. Sem publicação no período (não é inatividade permanente):
+# @AuroraIntel, @IntelCrab, @UAWeapons, @War_Mapper, @WarMonitors, @bellingcat,
+# @ELINTNews, @Tendar, @CalibreObscura, @N_Waters89. @GeoConfirmed publica mas
+# quase só texto e imagem estática. CUIDADO EDITORIAL: @clashreport e
+# @visegrad24 são agregadores — republicam vídeo de terceiros com verificação
+# fraca, o que as torna ricas em clipe e exige a auditoria de pertinência.
 
 CONTAS_VETADAS_PADRAO = (
     "Osint613",  # recortes de Fox News; reprovado em toda execução de 17/08
@@ -418,22 +402,10 @@ class Config:
     elevenlabs_api_key: str
     x_consumer_key: str  # X API oficial: coleta dos posts + mídias
     x_consumer_secret: str
-    # Handle do X cujas CONTAS SEGUIDAS alimentam a coleta (X_USERNAME). Desde
-    # 2026-08-16 a fonte da pauta é a lista de "following" desta conta, lida da
-    # X API a cada execução (x_client.contas_seguidas) — não há mais lista fixa
-    # de handles no código. Seguir alguém novo no X passa a mudar o canal.
-    x_username: str = ""
-    # X_ACCOUNTS no .env: quando preenchido, SUBSTITUI a lista de seguidas.
-    # Escape hatch para testar um recorte de contas sem mexer em quem se segue.
-    contas: list[str] = field(default_factory=list)
-    # Contas removidas da coleta mesmo estando entre as seguidas — ver
-    # CONTAS_VETADAS_PADRAO. Vale também sobre X_ACCOUNTS.
+    # Contas cujos posts são descartados mesmo sendo membros da lista — ver
+    # CONTAS_VETADAS_PADRAO. O veto é aplicado na leitura da lista.
     contas_vetadas: list[str] = field(
         default_factory=lambda: list(CONTAS_VETADAS_PADRAO)
-    )
-    # Contas somadas às seguidas — ver CONTAS_EXTRAS_PADRAO.
-    contas_extras: list[str] = field(
-        default_factory=lambda: list(CONTAS_EXTRAS_PADRAO)
     )
     # LISTA do X como fonte da pauta (2026-08-17). Quando preenchida, a coleta
     # lê `/2/lists/{id}/tweets` e IGNORA a mecânica de `from:`: uma chamada
@@ -441,8 +413,10 @@ class Config:
     # caracteres da query, sem os 7 lotes, sem repartir o teto de leitura entre
     # eles e sem o viés de relevância que sumia com conta pequena (medido: uma
     # conta com 12 posts em 24h apareceu ZERO vezes na coleta por lotes).
-    # Vazio = comportamento antigo. Só lê lista PÚBLICA: privada exige contexto
-    # de usuário, que o bearer app-only não tem.
+    # OBRIGATÓRIA desde 2026-08-22: o caminho pelas contas seguidas foi
+    # removido e sem ela não há pauta. Lista privada exige contexto de usuário
+    # (o access token que o cron renovador distribui); pública aceita o bearer
+    # app-only.
     x_list_id: str = ""
     # OAuth 2.0 de USUÁRIO, só para ler LISTA PRIVADA (2026-08-17). O bearer
     # app-only não enxerga lista privada, e o fluxo de usuário do X tem uma
@@ -461,6 +435,12 @@ class Config:
     # presente, os crons de vídeo o consomem e NÃO renovam nada: é o que impede
     # quatro processos de queimarem o refresh um do outro.
     x_oauth_access_token: str = ""
+    # Minutos de vida restante abaixo dos quais o cron renovador troca o
+    # access token (X_TOKEN_MARGEM_MIN). Precisa ser MAIOR que o intervalo
+    # entre execuções do cron, senão o token pode vencer entre dois ticks e
+    # reabrir a janela morta que derrubava a leitura da lista 4x por dia
+    # (2026-08-22). Com o cron de hora em hora, 75 dá ~1h de folga.
+    x_token_margem_min: int = 75
     render_api_key: str = ""
     # ÚNICO lugar onde o token do X é guardado (2026-08-18, desenho do usuário):
     # o serviço do cron renovador. Todo mundo — inclusive ele — lê de lá pela
@@ -473,11 +453,6 @@ class Config:
     # ela é lida fresca a cada execução.
     render_token_service_id: str = ""
     x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
-    # Leituras extras da varredura `has:videos` sobre as MESMAS contas. A
-    # coleta normal ordena por relevância e não prefere vídeo, então o post com
-    # clipe — o único material que o formato consegue usar — perdia vaga para
-    # texto. Nenhuma fonte nova entra por aqui; 0 desliga a varredura.
-    x_max_posts_video: int = 60
     # Busca ABERTA por clipes do assunto, fora das contas do canal. EXCLUSIVA
     # do formato longo: as fontes aqui não são curadas, a auditoria julga
     # pertinência e não procedência, e o crédito de reprodução leva a @ da conta
@@ -487,13 +462,6 @@ class Config:
     # (decisão do usuário) — ele se abastece pela varredura `has:videos` sobre
     # as contas seguidas, que é material curado. 0 desliga.
     x_max_posts_busca: int = 30
-    # Leituras da TIMELINE de cada conta (/2/users/:id/tweets). A busca por
-    # relevância enterra o post recém-publicado — que ainda não teve tempo de
-    # acumular engajamento — e é exatamente aí que moram o vazamento, o comunicado
-    # e o número que acabou de sair. A timeline é cronológica e não faz esse
-    # juízo. Custa uma requisição por conta, então o orçamento cobre um
-    # SUBCONJUNTO rotativo das contas por execução (ver x_client.py). 0 desliga.
-    x_max_posts_timeline: int = 60
     video_largura: int = 1080
     video_altura: int = 1920
     text_model: str = "gpt-5.6-luna"
@@ -579,14 +547,6 @@ def carregar_config() -> Config:
             "Copie o .env.example para .env e preencha as chaves."
         )
 
-    # X_ACCOUNTS é opcional: vazio = a coleta usa as CONTAS QUE X_USERNAME SEGUE
-    # (lidas da X API em x_client.contas_seguidas); preenchido = usa somente as
-    # contas listadas no .env.
-    contas = [
-        c.strip().lstrip("@")
-        for c in os.getenv("X_ACCOUNTS", "").split(",")
-        if c.strip()
-    ]
     # CONTAS_VETADAS no .env SUBSTITUI a lista padrão (não soma), para dar como
     # esvaziá-la sem deploy: CONTAS_VETADAS=" " volta a coletar tudo.
     vetadas_env = os.getenv("CONTAS_VETADAS")
@@ -596,27 +556,18 @@ def carregar_config() -> Config:
         else list(CONTAS_VETADAS_PADRAO)
     )
 
-    extras_env = os.getenv("X_ACCOUNTS_EXTRA")
-    contas_extras = (
-        [c.strip().lstrip("@") for c in extras_env.split(",") if c.strip()]
-        if extras_env is not None
-        else list(CONTAS_EXTRAS_PADRAO)
-    )
-
     cfg = Config(
         openai_api_key=os.environ["OPENAI_API_KEY"],
         elevenlabs_api_key=os.environ["ELEVENLABS_API_KEY"],
-        contas=contas,
         contas_vetadas=contas_vetadas,
-        contas_extras=contas_extras,
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
-        x_username=(os.getenv("X_USERNAME", "") or "").strip().lstrip("@"),
         x_list_id=(os.getenv("X_LIST_ID", "") or "").strip(),
         x_oauth_client_id=(os.getenv("X_OAUTH_CLIENT_ID", "") or "").strip(),
         x_oauth_client_secret=(os.getenv("X_OAUTH_CLIENT_SECRET", "") or "").strip(),
         x_oauth_refresh_token=(os.getenv("X_OAUTH_REFRESH_TOKEN", "") or "").strip(),
         x_oauth_access_token=(os.getenv("X_OAUTH_ACCESS_TOKEN", "") or "").strip(),
+        x_token_margem_min=int(os.getenv("X_TOKEN_MARGEM_MIN", "75")),
         render_api_key=(os.getenv("RENDER_API_KEY", "") or "").strip(),
         render_token_service_id=(
             os.getenv("RENDER_TOKEN_SERVICE_ID", "") or ""
@@ -648,9 +599,7 @@ def carregar_config() -> Config:
         # canais de propaganda militar. 12 Shorts por dia não se auditam um a
         # um, então ela fica restrita ao longo (3x por semana). Para ligar assim
         # mesmo: X_MAX_POSTS_BUSCA no .env/Render.
-        x_max_posts_video=int(os.getenv("X_MAX_POSTS_VIDEO", "40")),
         x_max_posts_busca=int(os.getenv("X_MAX_POSTS_BUSCA", "0")),
-        x_max_posts_timeline=int(os.getenv("X_MAX_POSTS_TIMELINE", "60")),
         max_posts_midia=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         max_urls_trend=int(os.getenv("MAX_POSTS_MIDIA", "12")),
         pool_extra_clipes=int(os.getenv("POOL_EXTRA_CLIPES", "3")),
@@ -672,14 +621,15 @@ def carregar_config() -> Config:
         in ("1", "true", "sim", "yes"),
     )
 
-    # Sem lista manual, a coleta depende de saber DE QUEM ler as seguidas.
-    # Fail-fast aqui (e não na primeira chamada da X API) porque sem contas não
-    # há pauta nenhuma, e descobrir isso depois de pagar token e lookup é caro.
-    if not (cfg.contas or cfg.x_username):
+    # A LISTA é a única fonte de pauta desde 2026-08-22 (o caminho pelas contas
+    # seguidas foi removido). Fail-fast aqui, e não na primeira chamada da X
+    # API, porque sem ela não há pauta nenhuma — e descobrir isso depois de
+    # pagar o token é caro.
+    if not cfg.x_list_id:
         raise SystemExit(
-            "Sem contas para coletar: preencha X_USERNAME no .env com o seu "
-            "handle do X (a coleta lê as contas que ele SEGUE) ou X_ACCOUNTS "
-            "com uma lista fixa de handles."
+            "Sem X_LIST_ID não há pauta: preencha com o id da LISTA do X de "
+            "onde sai a pauta do canal (a coleta pelas contas seguidas não "
+            "existe mais)."
         )
 
     # A duração final segue o áudio da narração; este valor orienta o
@@ -720,11 +670,9 @@ def ativar_formato_longo(cfg: Config) -> Config:
     )
     # A coleta precisa devolver posts suficientes para o lookup achar os clipes.
     cfg.max_urls_trend = cfg.max_posts_midia
-    # Varredura de vídeo e busca aberta: só o longo precisa de vários clipes do
-    # MESMO fato, e é ele que trava por falta deles. Ligar isto nos Shorts
-    # custaria leitura paga 12x por dia para resolver um problema que eles não
-    # têm.
-    cfg.x_max_posts_video = int(os.getenv("X_MAX_POSTS_VIDEO", "60"))
+    # Busca ABERTA por clipes: só o longo precisa de vários clipes do MESMO
+    # fato, e é ele que trava por falta deles. Ligar isto nos Shorts custaria
+    # leitura paga 12x por dia para resolver um problema que eles não têm.
     cfg.x_max_posts_busca = int(os.getenv("X_MAX_POSTS_BUSCA", "30"))
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
     cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))

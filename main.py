@@ -8,15 +8,15 @@ nem tema obrigatório; o que decide a pauta é o valor da informação e, entre 
 candidatas, o que a audiência do canal assiste até o fim.
 
 Fluxo:
-1. X API coleta os posts das últimas 24h DAS CONTAS QUE O USUÁRIO SEGUE
-   (`/2/users/:id/following` de X_USERNAME, lido a cada execução; X_ACCOUNTS no
-   .env substitui a lista) por dois caminhos — busca por relevância e TIMELINE
-   cronológica de um subconjunto rotativo das contas, que é o que enxerga o
-   post fresco (vazamento, comunicado) ainda sem engajamento — e o GPT os
+1. X API coleta os posts da janela DA LISTA DO X (X_LIST_ID) —
+   `/2/lists/{id}/tweets`, paginado e em ordem cronológica — e o GPT os
    sumariza nas 10 trends mais quentes, ordenadas pelo VALOR DA INFORMAÇÃO
    (vazamento, exclusivo, urgência, número inédito) antes do engajamento.
-   Seguir alguém novo no X muda a pauta da próxima execução, sem commit nem
-   deploy.
+   Pôr ou tirar alguém da lista muda a pauta da próxima execução, sem commit
+   nem deploy. É o CAMINHO ÚNICO desde 2026-08-22: o fallback pelas contas
+   seguidas (busca por relevância em lotes de `from:` mais as timelines) foi
+   removido, e falha de leitura agora aborta a execução em vez de deixar o
+   vídeo sair de uma pauta pior sem ninguém ver.
 2. GPT classifica cada candidata (macrotema + imagem mental) — sem filtro
    nem score: todas as candidatas seguem vivas para a seleção.
 3. GPT escolhe a trend: primeiro corte pelo VALOR DA INFORMAÇÃO (vazamento,
