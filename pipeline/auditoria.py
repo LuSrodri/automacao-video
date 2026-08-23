@@ -35,7 +35,11 @@ A auditoria roda em duas etapas, sobre um pool maior do que o necessário:
 3. VETO POR FALTA DE MOVIMENTO (2026-08-09), em código: clipe PARADO (o mesmo
    quadro do começo ao fim — foto com áudio, slide, tela congelada) e clipe de
    PESSOA FALANDO para a câmera (entrevista, podcast, coletiva, depoimento,
-   'estudio_ou_podcast') saem da disputa. É veto duro e sem exceção de
+   'estudio_ou_podcast') saem da disputa. Desde 2026-08-23 saem também a
+   CARTELA ('cartela_ou_manchete': cartela de texto, print de manchete, motion
+   graphics) e o clipe CURTO DEMAIS para segurar a tela sem entrar em loop
+   (PISO_DUR_UTIL_S) — os dois furavam este veto por caminhos diferentes, mas
+   davam o mesmo vídeo: a tela parada do começo ao fim. É veto duro e sem exceção de
    contexto, diferente do veto por texto: os dois casos falham pelo que o
    material É, não pelo que ele mostra. O vídeo é montado sobre movimento — o
    clipe é o que prova o fato enquanto a narração o conta —, e um quadro que
@@ -82,15 +86,31 @@ TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
 # TIPOS_VETADOS porque a mesma cena vira uma cartela legítima — a foto do
 # executivo que a narração acabou de nomear.
 #
-# VAZIO desde 2026-08-17: 'estudio_ou_podcast' saiu daqui. O veto que ele fazia
-# é o mesmo do busto falante, e desde a medição por frames quem decide é a
-# FRAÇÃO — nos clipes medidos, os três rotulados 'estudio_ou_podcast' tinham
-# 8/8, 7/8 e 5/8 frames falando e caem pelo LIMITE_FALANDO sozinho. O rótulo
-# vinha do modelo, aplicado ao clipe INTEIRO, e era o último resquício do
-# julgamento global que a medida substituiu: um clipe com 2 frames de gente
-# falando em 8 morria pelo nome, sem ninguém medir. Mantido como conjunto (e
-# não removido do código) porque a regra é boa e pode voltar a ter membro.
-TIPOS_VETADOS_CLIPE: set[str] = set()
+# 'estudio_ou_podcast' saiu daqui em 2026-08-17: o veto que ele fazia é o mesmo
+# do busto falante, e desde a medição por frames quem decide é a FRAÇÃO — nos
+# clipes medidos, os três rotulados 'estudio_ou_podcast' tinham 8/8, 7/8 e 5/8
+# frames falando e caem pelo LIMITE_FALANDO sozinho. O rótulo vinha do modelo,
+# aplicado ao clipe INTEIRO, e era o último resquício do julgamento global que a
+# medida substituiu: um clipe com 2 frames de gente falando em 8 morria pelo
+# nome, sem ninguém medir.
+#
+# 'cartela_ou_manchete' ENTROU em 2026-08-23, e é o motivo de o conjunto ter
+# sido mantido vazio em vez de apagado. O Short do canal BR daquele dia era a
+# cartela promocional da Linux Foundation ocupando os 28s inteiros, e ela passou
+# por TODOS os outros vetos: o de movimento não pegou porque a cartela é motion
+# graphics (o texto anima, então `cena_estatica` é false), o de legenda queimada
+# não pegou porque título parado não transcreve fala, e o de texto na tela caiu
+# na exceção de pertinência — o texto da cartela É o assunto narrado (as três
+# conferências e a data), o que ainda lhe rendeu nota 5. Aí está o problema que
+# só uma regra fixa resolve: a nota de pertinência PREMIA a cartela, porque
+# quanto mais o clipe é um comunicado escrito na tela, mais exatamente ele
+# "mostra o que a narração diz". É o caso ótimo daquela métrica e o pior caso do
+# formato, que se sustenta em movimento — a cartela não prova fato nenhum, ela
+# só repete por escrito o que já está sendo dito e legendado por cima.
+#
+# Continua sendo material legítimo como CARTELA (a camada que chama com
+# `vetar_parado=False`): lá a imagem parada é justamente o que se quer mostrar.
+TIPOS_VETADOS_CLIPE: set[str] = {"cartela_ou_manchete"}
 
 # Fração de frames com busto falante a partir da qual o clipe É busto falante
 # (2026-08-17). Meia tela: acima da metade o vídeo é uma pessoa falando com
@@ -101,6 +121,27 @@ TIPOS_VETADOS_CLIPE: set[str] = set()
 # estúdio) continuam vetados; o vídeo do FBI, com 5 frames de agentes em ação e
 # 3 de porta-voz, deixa de ser.
 LIMITE_FALANDO = 0.5
+
+# PISO DE TRECHO ÚTIL (2026-08-23), em segundos: clipe mais curto que isto não
+# sustenta a tela. A montagem repete o clipe em loop para cobrir a janela
+# (`-stream_loop -1` em edicao.py), então um clipe curto não some do vídeo — ele
+# se REPETE, e o espectador vê o mesmo pedacinho três, cinco, sete vezes. No
+# Short da Linux Foundation o trecho útil media 4s e ficou 27,9s na tela: seis
+# voltas do mesmo material. O aviso que existia lá ("clipe fica 27.9s na tela,
+# acima do alvo de 15s") é só um print, e print não barra nada.
+#
+# O piso mora aqui, e não em edicao.py, por causa do custo: a montagem é o fim
+# da linha — barrar ali jogaria fora a execução inteira, com a narração já paga.
+# Nesta camada o clipe curto só sai da disputa, e na triagem (que roda ANTES da
+# escolha da pauta) ele faz a trend perder a vez para outra candidata.
+#
+# 5s é o teto de exibição do Short (MAX_EXIBICAO = 15s) dividido por três: até
+# três voltas o loop passa por continuidade; da quarta em diante ele vira o
+# efeito de tela travada que este veto existe para evitar. A medida é
+# `dur_util_s` (a maior sequência contígua sem busto falante, em midia_x), que é
+# de centro a centro de fatia — ela já sai ~1 fatia menor que a duração real do
+# clipe, e o piso é generoso de propósito por causa disso.
+PISO_DUR_UTIL_S = 5.0
 
 # VETO A LEGENDA QUEIMADA (2026-08-17, pedido do usuário). O vídeo do canal
 # queima as próprias legendas sobre o clipe; um clipe que já vem legendado põe
@@ -352,7 +393,14 @@ def _veto_parado(laudo: dict) -> str:
         return "clipe de pessoa falando para a câmera"
     tipo = laudo.get("tipo_material", "")
     if tipo in TIPOS_VETADOS_CLIPE:
-        return f"material do tipo '{tipo}' (gente falando, veto duro)"
+        return f"material do tipo '{tipo}' (veto duro de tipo no clipe)"
+    dur_util = laudo.get("dur_util_s")
+    if dur_util is not None and float(dur_util) < PISO_DUR_UTIL_S:
+        # Laudo sem a medida não veta ninguém, como no resto do módulo.
+        return (
+            f"clipe curto demais para segurar a tela ({float(dur_util):.0f}s "
+            f"de trecho útil; a montagem o repetiria em loop)"
+        )
     return ""
 
 
