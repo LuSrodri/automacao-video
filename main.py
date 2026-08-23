@@ -222,7 +222,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = carregar_config()
+    # Os modos que NÃO coletam pauta (renovar o token do X, autorizar o
+    # YouTube) não precisam de X_LIST_ID — e o serviço do cron renovador não
+    # tem essa env var. Exigir a lista deles derrubaria o cron que mantém o
+    # token vivo para os outros quatro.
+    coleta = not (args.renovar_x_token or args.auth_youtube or args.auth_youtube_usa)
+    cfg = carregar_config(exige_lista=coleta)
     if args.auth_youtube or args.auth_youtube_usa:
         autenticar_youtube(cfg, usa=args.auth_youtube_usa)
         return

@@ -528,7 +528,7 @@ class Config:
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
 
-def carregar_config() -> Config:
+def carregar_config(exige_lista: bool = True) -> Config:
     load_dotenv(RAIZ / ".env")
 
     faltando = [
@@ -625,7 +625,13 @@ def carregar_config() -> Config:
     # seguidas foi removido). Fail-fast aqui, e não na primeira chamada da X
     # API, porque sem ela não há pauta nenhuma — e descobrir isso depois de
     # pagar o token é caro.
-    if not cfg.x_list_id:
+    #
+    # `exige_lista=False` para os modos que NÃO coletam: o cron renovador do
+    # token e as autorizações do YouTube. O renovador não tem X_LIST_ID nas env
+    # vars dele (nunca precisou), e exigir a lista de todo mundo derrubou
+    # justamente o cron que sustenta os outros quatro — visto em produção
+    # segundos depois do deploy de 2026-08-22.
+    if exige_lista and not cfg.x_list_id:
         raise SystemExit(
             "Sem X_LIST_ID não há pauta: preencha com o id da LISTA do X de "
             "onde sai a pauta do canal (a coleta pelas contas seguidas não "
