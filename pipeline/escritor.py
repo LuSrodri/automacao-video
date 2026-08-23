@@ -489,7 +489,12 @@ ESQUEMA_ROTEIRO_LONGO = {
                             "type": "string",
                             "description": (
                                 "O tópico em até 6 palavras (ex.: 'quem paga a "
-                                "conta do data center')."
+                                "conta do data center'). VAI APARECER ESCRITO "
+                                "NA TELA, em caixa alta, como a manchete deste "
+                                "trecho — e no índice da abertura. Diga a "
+                                "COISA (fato, número, quem paga), nunca a "
+                                "categoria ('impactos', 'contexto', "
+                                "'análise'), e sem ponto final."
                             ),
                         },
                         "dado": {
@@ -506,9 +511,12 @@ ESQUEMA_ROTEIRO_LONGO = {
                                 "Trecho LITERAL de texto_video (5 a 12 "
                                 "palavras, copiado caractere por caractere, "
                                 "sem audio tags) onde este tópico COMEÇA na "
-                                "narração. Vira o carimbo de tempo do capítulo "
-                                "na descrição — trecho que não existir no "
-                                "texto simplesmente não vira capítulo."
+                                "narração — a FRASE DE VIRADA que fecha o "
+                                "tópico anterior e nomeia este. Vira o carimbo "
+                                "de tempo do capítulo na descrição E o instante "
+                                "em que a manchete deste tópico entra na tela; "
+                                "trecho que não existir no texto não vira nem "
+                                "capítulo nem manchete."
                             ),
                         },
                     },
@@ -575,9 +583,12 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "tom adulto de analista que respeita o espectador. Toda "
                     "afirmação central atribuída nominalmente à fonte "
                     "(a conta do X, ou o veículo que ela cita), somente fontes das "
-                    "listas recebidas. O vídeo NÃO tem legendas nem texto na "
-                    "tela: a narração precisa se sustentar sozinha, sem "
-                    "'como você vê aqui' nem referência a imagem."
+                    "listas recebidas. Cada tópico a partir do segundo abre com "
+                    "uma FRASE DE VIRADA curta que fecha o anterior e nomeia o "
+                    "próximo. O vídeo NÃO tem legendas, e as manchetes na tela "
+                    "só repetem o que a narração já disse: ela precisa se "
+                    "sustentar sozinha, sem 'como você vê aqui' nem referência "
+                    "a imagem."
                 ),
             },
             "resposta_curta": RESPOSTA_CURTA_PROPRIEDADE,
@@ -768,8 +779,13 @@ NARRAÇÃO:
    por causa e efeito. REPROVAM: menos de {topicos_min} tópicos; dois tópicos
    que dizem a mesma coisa com outras palavras; tópico sem nenhum dado
    concreto; e lista de bullets falados no lugar do encadeamento.
+8b. A VIRADA DE PAUTA: cada tópico a partir do segundo abre com uma frase
+   curta que fecha o anterior e nomeia o próximo. REPROVAM: virar de assunto
+   no meio de um parágrafo, sem nenhuma marca; e numerar em voz alta
+   ("segundo ponto", "tópico três", "primeiro", "por último").
 9. Nenhuma frase pode depender de texto na tela ("como você vê aqui", "no
-   gráfico") — o vídeo não tem legendas.
+   gráfico") — as manchetes na tela só repetem o que a narração já disse, e o
+   vídeo não tem legendas.
 10. A PRIMEIRA frase é uma PERGUNTA concreta e específica, e a narração a
    RESPONDE antes de acabar. REPROVAM: abrir sem pergunta; pergunta abstrata
    ou dirigida ao espectador; pergunta que fica sem resposta.
@@ -1231,9 +1247,12 @@ um número, um nome ou uma relação de causa e efeito. Enrolação, frase de
 efeito e generalidade são o defeito mais grave possível neste formato — em
 {duracao} segundos o espectador perdoa densidade, nunca vazio.
 
-SEM LEGENDAS E SEM TEXTO NA TELA: a narração precisa se sustentar sozinha.
-PROIBIDO "como você vê aqui", "na imagem", "no gráfico", ou qualquer frase que
-dependa de algo escrito na tela.
+SEM LEGENDAS: a narração precisa se sustentar sozinha. O vídeo TEM manchetes
+na tela (o título de cada tópico entra no canto inferior quando a pauta vira, e
+um índice na abertura lista o que vem), mas elas só REPETEM o que você já
+escreveu — quem ouve sem olhar não pode perder nada. PROIBIDO "como você vê
+aqui", "na imagem", "no gráfico", "essa manchete", ou qualquer frase que dependa
+de algo escrito na tela.
 
 FONTES — OBRIGATÓRIO citar nominalmente: cada afirmação central é atribuída a
 quem a publicou — a conta do X ("no post de @unusual_whales") ou o veículo que
@@ -1293,6 +1312,15 @@ ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
    dinheiro") — nunca uma lista de bullets falados. Cada tópico carrega pelo
    menos um dado concreto do material recebido, e todos são costurados pela sua
    TESE.
+   VIRADA DE PAUTA — OBRIGATÓRIA: cada tópico a partir do SEGUNDO abre com uma
+   frase curta de VIRADA (no máximo 12 palavras) que FECHA o assunto anterior e
+   NOMEIA o próximo, com o nome próprio ou o número que o identifica ("o
+   dinheiro explica a pressa; a lei explica o resto", "quem paga essa conta é o
+   consumidor americano"). Essa frase é o corte do vídeo: é ela que vira a
+   `citacao` do tópico e o instante em que a manchete daquele tópico entra na
+   tela. PROIBIDO virar de assunto no meio de um parágrafo, sem aviso — e
+   PROIBIDO numerar em voz alta ("segundo ponto", "tópico três"): a virada é
+   editorial, não é sumário falado.
 4. CONSEQUÊNCIA — O QUE ISSO MUDA PARA QUEM TRABALHA (~25s): o payload.
    Concreto e verificável: que setor contrata ou corta, que tipo de função
    entra na linha de tiro, que habilidade passa a valer, em que prazo, com que
@@ -1376,15 +1404,23 @@ número, prazo) e fecha com uma pergunta aberta que quem procura emprego
 consegue responder com a própria experiência. NÃO resume o vídeo e NÃO repete
 a narração: quem chega nos comentários já assistiu.
 
-CAPÍTULOS — cada tópico traz uma CITAÇÃO literal do trecho de texto_video em
-que ele começa (campo citacao). O pipeline procura esse trecho no texto,
-converte em carimbo de tempo pelo alinhamento da narração e publica os
-capítulos na descrição, que é o que ativa os "momentos principais" do YouTube.
-Copie o trecho caractere por caractere, do PRIMEIRO ponto em que o tópico
-entra, e nunca de dentro de uma audio tag. Trecho que não existir no texto
-simplesmente não vira capítulo — e dois tópicos que começam quase no mesmo
-instante fazem o YouTube descartar o bloco inteiro, então espalhe os tópicos
-pela narração.\
+CAPÍTULOS E MANCHETES — cada tópico traz uma CITAÇÃO literal do trecho de
+texto_video em que ele começa (campo citacao): é a FRASE DE VIRADA daquele
+tópico. O pipeline procura esse trecho no texto, converte em carimbo de tempo
+pelo alinhamento da narração e usa isso duas vezes — publica os capítulos na
+descrição (o que ativa os "momentos principais" do YouTube) e faz a MANCHETE
+daquele tópico entrar na tela naquele segundo. Copie o trecho caractere por
+caractere, do PRIMEIRO ponto em que o tópico entra, e nunca de dentro de uma
+audio tag. Trecho que não existir no texto não vira capítulo NEM manchete — e
+dois tópicos que começam quase no mesmo instante fazem o YouTube descartar o
+bloco inteiro, então espalhe os tópicos pela narração.
+
+TÍTULO DO TÓPICO (campo `titulo` de cada tópico) — ele vai APARECER ESCRITO na
+tela, em caixa alta, como a manchete daquele trecho, e também no índice da
+abertura. Escreva pensando nisso: até 6 palavras, sem ponto final, dizendo a
+COISA (o fato, o número, quem paga) e não a categoria ("impactos", "contexto",
+"análise" são títulos mortos). Ele precisa fazer sentido para quem só bateu o
+olho na tela, sem ter ouvido a frase anterior.\
 """ + INSTRUCOES_SEO_GEO + """
 
 Responda somente com o JSON pedido.\

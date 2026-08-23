@@ -38,6 +38,13 @@ atrás para tirar de foco. Os INFOGRÁFICOS ANIMADOS montados em ffmpeg
 (grafico.py) já haviam sido REMOVIDOS em 2026-08-04 — os "big numbers" da tela
 vêm só das figuras do gpt-image-2; não reintroduzir sem pedido explícito.
 
+MANCHETES (2026-08-23, só no formato longo). Sobre tudo isso entra o painel de
+texto do canto inferior esquerdo (manchetes.py): o índice "Ainda neste
+episódio" na abertura e uma manchete a cada troca de pauta. Ele NÃO é
+carrossel — não troca o conteúdo da tela, só desliza da borda esquerda até o
+seu canto e volta —, e por isso é a última camada de imagem da pilha, acima do
+clipe e do carrossel.
+
 Clipe marcado como REPRESENTAÇÃO VISUAL (material de telejornal, que só o
 formato longo admite — ver auditoria.py) entra dessaturado e com etiqueta no
 rodapé esquerdo, para não se confundir com material próprio do canal. A marca é
@@ -83,6 +90,16 @@ T_ARRASTO = 0.42
 LEITURA_MINIMA = 1.0
 # Janela mínima de uma imagem no carrossel: os dois deslizes mais a leitura.
 MIN_JANELA_CARROSSEL = 2 * T_ARRASTO + LEITURA_MINIMA
+
+# --- Manchetes (manchetes.py) ------------------------------------------------
+# Painel de texto no canto inferior esquerdo que nomeia a pauta em curso e, na
+# abertura, lista o que ainda vem. Diferente do carrossel, ele NÃO troca o
+# conteúdo da tela: é uma sobreposição fixa, que entra deslizando de fora da
+# borda esquerda e sai pelo mesmo caminho, com a mesma curva suave do carrossel
+# (`_suave`) e um fade de alfa por cima — deslize sem fade lê como corte quando
+# o painel passa por cima de um clipe claro.
+T_MANCHETE = 0.45  # tempo de entrada e de saída do painel
+FADE_MANCHETE = 0.30  # fade de alfa, dentro do tempo do deslize
 
 # Crédito de reprodução no canto superior direito DO QUADRO, por clipe: linha 1
 # fixa ("Reprodução Imagem: X") e linha 2 com a conta do post de origem.
@@ -357,6 +374,7 @@ def montar_video(
     legendas: Path | None = None,
     cartelas: list[dict] | None = None,
     figuras: list[dict] | None = None,
+    manchetes: list[dict] | None = None,
     publico: str = "brasil",
     formato: str = "curto",
 ) -> Path:
@@ -381,6 +399,15 @@ def montar_video(
     `figuras`: gráficos, tabelas e cartazes gerados pelo gpt-image-2
     (figuras.py), no mesmo formato das cartelas e tratados exatamente como
     elas na montagem; a diferença está na origem da imagem, não no ffmpeg.
+
+    `manchetes`: os painéis de texto do formato longo (manchetes.py) —
+    [{"imagem": str, "inicio_s": float, "dur_s": float, "x": int, "y": int},
+    ...]. NÃO fazem parte do carrossel: cada painel é uma sobreposição no canto
+    inferior esquerdo, que entra deslizando de fora da borda esquerda até (x,
+    y) e sai pelo mesmo caminho. Entram DEPOIS do carrossel na pilha de filtros
+    para ficarem por cima de tudo — mas quem chama já mantém as janelas
+    separadas (ver `manchetes.janelas`), porque uma cartela que tomasse o
+    quadro sob o painel taparia justamente o texto que divide a pauta.
 
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
 
@@ -586,6 +613,44 @@ def montar_video(
         )
         corrente = f"vcart{j}"
 
+    # Manchetes (manchetes.py): o painel que nomeia a pauta. Entra pela borda
+    # esquerda, PARA no seu canto e sai por onde veio — sem tocar no resto do
+    # quadro. Mesma economia de memória das cartelas: o PNG existe só na janela
+    # em que aparece, recolocado no instante certo pelo `tpad`.
+    for j, m in enumerate(manchetes or []):
+        ini = max(0.0, float(m["inicio_s"]))
+        fim = min(ini + float(m["dur_s"]), duracao)
+        if fim - ini < 2 * T_MANCHETE:
+            print(
+                f"[edicao] aviso: manchete de {fim - ini:.1f}s em {ini:.1f}s "
+                "não comporta o deslize; descartada."
+            )
+            continue
+        idx_man = prox_entrada
+        prox_entrada += 1
+        comando += [
+            "-loop", "1", "-framerate", str(FPS), "-t", f"{fim - ini:.2f}",
+            "-i", str(m["imagem"]),
+        ]
+        filtros.append(
+            f"[{idx_man}:v]format=rgba,setpts=PTS-STARTPTS,"
+            f"tpad=start_duration={ini:.2f}:start_mode=add:color=0x00000000,"
+            f"fade=t=in:st={ini:.2f}:d={FADE_MANCHETE:.2f}:alpha=1,"
+            f"fade=t=out:st={max(ini, fim - FADE_MANCHETE):.2f}"
+            f":d={FADE_MANCHETE:.2f}:alpha=1[man{j}]"
+        )
+        # x vai de -w (fora do quadro, à esquerda) até o x de repouso, pela
+        # mesma curva com aceleração e desaceleração do carrossel.
+        x = int(m["x"])
+        avanco = _expr_progresso([(ini, fim)], T_MANCHETE, T_MANCHETE)
+        filtros.append(
+            f"[{corrente}][man{j}]"
+            f"overlay=x='{x}-({x}+w)*(1-({avanco}))':y={int(m['y'])}"
+            f":eof_action=pass"
+            f":enable='between(t,{ini:.3f},{fim:.3f})'[vman{j}]"
+        )
+        corrente = f"vman{j}"
+
     if legendas is not None:
         fontes = RAIZ / "fonts"
         filtro_ass = f"ass='{_caminho_filtro(legendas)}'"
@@ -706,6 +771,7 @@ def montar_video(
     print(
         f"[edicao] Montando vídeo final com ffmpeg "
         f"({len(pares)} clipe(s), {len(cartelas)} cartela(s), "
+        f"{len(manchetes or [])} manchete(s), "
         f"{duracao:.0f}s em {largura}x{altura})..."
     )
     marcar_memoria("antes do ffmpeg")

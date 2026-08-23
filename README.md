@@ -100,10 +100,15 @@ reprodução no canto superior direito — com outra direção editorial:
 - **Fontes**: pelo menos duas citações nominais na narração (veículo ou conta
   do X) e a **lista de links reais** anexada ao final da descrição do YouTube.
 - **Sem legendas queimadas**: a narração se sustenta sozinha (nenhuma frase
-  pode depender de texto na tela).
-- **Capa customizada** (`pipeline/thumbnail.py`): um quadro real do vídeo (2s)
-  escurecido, com 2 a 5 palavras em Archivo Black na
-  base. O texto vem do GPT com duas regras duras. A primeira, dizer **o fato**,
+  pode depender de texto na tela — as manchetes abaixo só repetem o que ela já
+  disse).
+- **Manchetes na tela** (`pipeline/manchetes.py`, 2026-08-23) — ver "Como
+  funcionam as manchetes" mais abaixo.
+- **Capa customizada** (`pipeline/thumbnail.py`): uma **montagem** sobre um
+  quadro real do vídeo — fundo desfocado, recorte nítido do assunto com borda
+  branca, círculo feito à mão, seta e o texto com fantasma ciano/magenta (ver
+  "Como funciona a capa"). O texto vem do GPT com duas regras duras. A
+  primeira, dizer **o fato**,
   nunca provocar: "GOOGLE CORTA 8 MIL VAGAS" e não "VOCÊ NÃO VAI ACREDITAR",
   porque curiosidade fabricada traz clique e perde a audiência no primeiro
   segundo. A segunda, o **idioma do CANAL** — português no canal brasileiro,
@@ -192,6 +197,7 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | `LONG_MAX_FOTOS` | `6` | Só com `--long-take`: fotos dos posts baixadas para as cartelas |
 | `LONG_MAX_FIGURAS` | `4` | Só com `--long-take`: figuras geradas pelo gpt-image-2 |
 | `LONG_VELOCIDADE` | `1.0` | Só com `--long-take`: velocidade **normal** da narração (análise não se acompanha em fala apressada) |
+| `LONG_MANCHETES` | `1` | Só com `--long-take`: manchetes na tela (índice "Ainda neste episódio" + uma por tópico). Custo zero; `0` devolve o vídeo corrido de antes |
 | `YOUTUBE_CLIENT_ID` | — | Client ID OAuth (Google Cloud, tipo "Desktop app") |
 | `YOUTUBE_CLIENT_SECRET` | — | Client secret OAuth |
 | `YOUTUBE_REFRESH_TOKEN` | — | Canal português; preenchido por `--auth-youtube` |
@@ -346,7 +352,7 @@ Uma das duas camadas de imagem, ao lado das figuras geradas: nos **momentos-chav
 
 - **De onde vêm** — as **fotos dos posts da trend**, que o pipeline já lia da X API e descartava no filtro de tipo: são o material mais barato (vêm no mesmo lookup) e estão no assunto por construção. Nenhuma chamada nova de API, e nada de busca de imagem em banco. Até 2026-08-16 a **og:image das notícias** do Firecrawl completava o pool; com a busca de notícias removida, sobraram só as fotos do X.
 - **Como aparecem** — renderizadas no **tamanho exato do quadro**: a imagem entra inteira (nada de recorte que corte rosto ou número) sobre um fundo feito dela mesma, ampliado, borrado e escurecido — o mesmo tratamento que o clipe já recebe —, com o **crédito próprio numa faixa na base** (`Reprodução: X / @conta` ou `Reprodução: reuters.com`; `Image Credit` no `-usa`). O movimento é o **deslize** (ver "Como funciona a tela cheia e o carrossel"); este módulo só desenha o quadro parado. Substituiu em 2026-08-09 o cartão branco com sombra que subia de baixo do quadro — com a imagem ocupando a tela inteira, o problema de "cartão pequeno perde a disputa pela atenção", que em 2026-08-04 tinha sido tratado aumentando o cartão, deixou de existir.
-- **Onde não aparecem** — nos **3 primeiros segundos** (o gancho fica com o clipe limpo) e em cima de uma figura gerada (as janelas nunca coincidem).
+- **Onde não aparecem** — nos **3 primeiros segundos** (o gancho fica com o clipe limpo), em cima de uma figura gerada e, desde 2026-08-23, em cima de uma **manchete** (as janelas nunca coincidem: a manchete sai da estrutura do roteiro e tem a prioridade).
 - **Quantas** — até `MAX_CARTELAS` (1; 4 no `--long-take`), escolhidas pelo GPT entre as imagens aprovadas na auditoria, com o momento ancorado numa **citação exata da narração**. O plano fica em `cartelas.json`. `MAX_CARTELAS=0` desliga a feature; qualquer falha só deixa o vídeo sem cartelas.
 
 ## Como funcionam as figuras geradas
@@ -357,10 +363,46 @@ O `pipeline/figuras.py` desenha, com o **gpt-image-2**, todo o repertório de in
 - **Como são desenhadas** — o estilo visual é **fixo em código** (fundo branco, tipografia grotesca pesada, preto quase puro + um único laranja de destaque, sem 3D, sem sombra, sem marca d'água), porque identidade visual não pode variar de vídeo para vídeo. O prompt lista os rótulos exatos e proíbe qualquer texto além deles — o modelo ainda erra tipografia quando o cartaz é cheio, e figura enxuta é figura legível.
 - **Como aparecem** — na **tela inteira**, pelo mesmo deslize das cartelas, etiquetadas como **infográfico do canal** (`CHANNEL GRAPHIC` no `-usa`) na faixa da base, para o espectador não confundir com gráfico publicado por terceiro — do mesmo jeito que o crédito de reprodução distingue o clipe de terceiro. Ficam ~4s na tela. Aqui a mudança de 2026-08-09 pesa mais que nas cartelas: a figura carrega **texto** (rótulo, valor, título), e o cartão que ela ocupava — mesmo aumentado em 2026-08-04 — deixava o rótulo pequeno demais para ser lido no celular, o que anulava a razão de a figura existir. A orientação pedida ao gpt-image-2 acompanha o **quadro** (retrato no Short 9:16, paisagem no `--long-take` 16:9).
 - **Em que idioma** — no **idioma do CANAL** (`cfg.publico`), como todo o resto: título, rótulos e valores em português no canal brasileiro e em inglês no americano, com a notação de cada um (`21 mil` / `US$ 2 bi` contra `21K` / `$2B`). O idioma entra **explícito** na instrução e nos exemplos do esquema, e o texto devolvido é **conferido em código** (`config.idioma_plausivel`): uma reescrita é cobrada, e a figura que continuar no idioma errado é **descartada** — texto errado aqui sai queimado na imagem e não tem conserto depois de publicado. Até 2026-08-05 este era o último lugar do pipeline que **inferia** o idioma ("no idioma da narração", com exemplos em português dentro de um prompt em português), o mesmo sinal fraco que já tinha posto uma capa em português no canal americano.
-- **Onde não aparecem** — nos 3 primeiros segundos (gancho limpo) e em cima de uma cartela (as janelas nunca coincidem).
+- **Onde não aparecem** — nos 3 primeiros segundos (gancho limpo), em cima de uma cartela e em cima de uma **manchete** (as janelas nunca coincidem).
 - **Quantas** — até `MAX_FIGURAS` (1; 4 no `--long-take`). O plano fica em `figuras.json`. A ancoragem na narração é conferida **antes** da geração da imagem, que é a única etapa cara aqui. `MAX_FIGURAS=0` desliga; qualquer falha só deixa o vídeo sem figuras.
 
 O roteirista sabe dessa camada: o prompt pede que **todo número, comparação e lista curta seja dito na narração, com valor e unidade** — dado não falado não vira figura —, e ao mesmo tempo mantém a proibição de referenciar a tela ("como você vê no gráfico"), porque a narração tem que se sustentar de olhos fechados.
+
+## Como funcionam as manchetes
+
+`pipeline/manchetes.py`, **2026-08-23**, **só no formato longo**. Diagnóstico do usuário: o vídeo longo era **monótono e sem vida** — 135 segundos de narração corrida sobre clipes que trocam, sem nenhuma marca de que a pauta mudou. O espectador não sabia onde estava, não sabia o que ainda vinha, e não tinha por que ficar.
+
+São duas peças, as duas ancoradas em **citações literais da narração** (o mesmo mecanismo das cartelas, das figuras e dos capítulos — é o único jeito de o texto cair no segundo em que a narração diz aquilo):
+
+- **"Ainda neste episódio"** (`COMING UP` no `-usa`) — sobe logo **depois da pergunta de abertura** (o instante sai do alinhamento do ElevenLabs, não de um número fixo) e fica no máximo **10 segundos**, listando os tópicos do vídeo **um de cada vez**, com contador (`2/4`). É a promessa que segura quem chegou pelo gancho e ainda não decidiu ficar. Se não couber pelo menos dois itens antes de a primeira pauta entrar, o índice simplesmente não sai.
+- **Uma manchete por tópico** — quando a pauta vira, o título daquele tópico entra no canto inferior por ~4,2s, com o número do bloco (`02`). O instante é a `citacao` do tópico, a mesma que já virava capítulo na descrição.
+
+**A virada também é do roteiro.** Marca visual sem marca no texto seria legenda decorativa: o prompt do formato longo passou a exigir que **cada tópico a partir do segundo abra com uma frase curta de VIRADA** (até 12 palavras) que fecha o assunto anterior e nomeia o próximo — e é essa frase que vira a `citacao`. Continua **proibido numerar em voz alta** ("segundo ponto", "tópico três"): a virada é editorial, não é sumário falado. A auditoria do leigo cobra as duas coisas (regra 8b).
+
+**O estilo** (`pipeline/identidade.py`) é **misto, como pedido**: aranhaverso sobre editorial minimalista. Do aranhaverso vem a **desregistragem de impressão** — o texto repetido em ciano e magenta, deslocado alguns pixels para cada lado, como uma revista impressa fora de registro — e a **retícula Ben-Day** de fundo. Do editorial vem a estrutura: retângulo preto, **Archivo Black em caixa alta**, um fio fino sob o rótulo, uma tarja de cor à esquerda, e **uma cor de destaque só**. É o editorial que impede a parte de quadrinhos de virar poluição.
+
+**O movimento** é do ffmpeg (`edicao.py`): o painel entra **deslizando de fora da borda esquerda** até o seu canto, com a mesma curva de aceleração e desaceleração do carrossel (`_suave`) mais um fade de alfa, e sai pelo mesmo caminho — 0,45s de cada lado. Diferente do carrossel, ele **não troca o conteúdo da tela**; é a última camada de imagem da pilha, acima do clipe e das imagens. O painel fica **acima da etiqueta de representação visual** (`REPR_Y_FRAC`), que é marcação obrigatória e não pode ser coberta.
+
+**Custo: zero.** Pillow desenha, o ffmpeg anima — nenhuma chamada paga. Cada PNG tem o tamanho **exato do seu conteúdo** (não a largura do quadro) e existe **só na janela em que aparece**, pelo mesmo `tpad` das cartelas: num formato que já estourou o container de 8 GB, uma faixa de 1920px loopada por 135 segundos seria caro por nada.
+
+`LONG_MANCHETES=0` desliga e devolve o vídeo corrido de antes — é a chave para comparar retenção com e sem a divisão de pauta. Qualquer falha (fonte ausente, citação que não bate) só deixa o vídeo sem manchetes. O plano fica em `manchetes.json`.
+
+## Como funciona a capa
+
+`pipeline/thumbnail.py`, só no formato longo (no Short o feed mostra o vídeo rodando). Até **2026-08-23** a capa era um quadro do vídeo escurecido por inteiro, com uma tarja preta e uma frase branca na base. Lia bem e **não chamava ninguém**: nenhuma cor, nenhum ponto de foco, nada que separasse o vídeo dos outros vinte da mesma linha de resultados.
+
+Agora ela é uma **montagem**, na mesma identidade das manchetes:
+
+- **fundo desfocado** e dessaturado, com um **recorte nítido do assunto** por cima, cercado por uma **borda branca grossa** e uma segunda borda de cor deslocada (a mesma desregistragem do texto);
+- um **círculo feito à mão** em volta do recorte — torto, dando volta e pouco, porque um círculo que fecha exatamente onde começou lê como forma vetorial — e uma **seta curva** apontando para ele a partir do canto vazio;
+- **retícula Ben-Day** no canto de cima oposto ao recorte, e o texto em Archivo Black com **fantasma ciano/magenta**, com uma palavra dentro de um **bloco de cor chapado**;
+- o quadro escolhido entra **mais saturado**, não mais escuro: o contraste do texto vem do desfoque e de um **degradê**, não de uma tarja.
+
+**Onde fica o assunto é decidido por visão, não chutado.** A mesma chamada que escreve o texto recebe **três quadros candidatos** do vídeo já montado (a 10%, 38% e 66% da duração), escolhe o mais reconhecível, devolve a **caixa do que interessa** nele e diz **qual palavra** do texto vai no bloco de cor. Sem isso o círculo cairia no meio de um fundo vazio, que é pior do que não ter círculo nenhum. A caixa é fechada nos dois extremos em código (`_sanear_foco`): a imagem inteira não destaca nada, e um selo minúsculo é ilegível na miniatura. Falha da visão cai no primeiro quadro com enquadramento central — a capa sai mais fraca, nunca quebrada.
+
+O **texto não mudou de regra**: diz o fato, no idioma do canal, conferido em código, e se diferencia dos títulos que os outros canais já publicaram hoje sobre o mesmo assunto. O bloco de texto **encolhe até caber** no espaço livre do recorte e vai para o lado (topo ou base) em que sobra mais espaço: capa em que o texto tapa justamente o rosto que a montagem destacou é pior do que a capa antiga. As decisões ficam em `thumbnail.json`.
+
+O upload da capa exige **canal verificado** — sem verificação o YouTube devolve 403 e o log avisa. Falha aqui não aborta: o vídeo vai ao ar com a capa automática.
 
 ## Como funciona a tela cheia e o carrossel
 

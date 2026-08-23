@@ -501,6 +501,12 @@ class Config:
     # Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
     # infográfico, diagrama ou cartaz do dado que a narração cita. 0 desliga.
     max_figuras: int = 1
+    # MANCHETES (manchetes.py, 2026-08-23): o índice "Ainda neste episódio" na
+    # abertura e o painel que nomeia cada pauta quando ela vira. Só o formato
+    # LONGO usa — no Short a legenda queimada já ocupa a tela e 25 segundos não
+    # comportam índice. Desligar (LONG_MANCHETES=0) devolve o vídeo corrido de
+    # antes; é a chave para comparar retenção com e sem a divisão de pauta.
+    manchetes: bool = False
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
     youtube_refresh_token: str = ""
@@ -683,6 +689,11 @@ def ativar_formato_longo(cfg: Config) -> Config:
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
     cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))
     cfg.max_figuras = int(os.getenv("LONG_MAX_FIGURAS", str(LONGO_MAX_FIGURAS)))
+    # Manchetes: ligadas por padrão no longo (é o formato que sofria de vídeo
+    # corrido, sem marca de troca de pauta).
+    cfg.manchetes = os.getenv("LONG_MANCHETES", "1").strip().lower() not in (
+        "0", "false", "nao", "não", "off",
+    )
     cfg.velocidade = float(os.getenv("LONG_VELOCIDADE", str(LONGO_VELOCIDADE)))
 
     if not 0.5 <= cfg.velocidade <= 2.0:

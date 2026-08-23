@@ -85,6 +85,12 @@ Fluxo:
     narração falou. São a ÚNICA fonte de "big number" na tela: os infográficos
     que o ffmpeg montava a partir de PNGs do Pillow foram removidos em
     2026-08-04. Cartelas e figuras entram e saem pelo CARROSSEL (item 12).
+11b. MANCHETES (manchetes.py, só no formato longo, 2026-08-23): o índice
+    "Ainda neste episódio" logo depois da pergunta de abertura (no máximo 10
+    segundos, um tópico de cada vez) e uma manchete no canto inferior a cada
+    troca de pauta, ancorada na citação do tópico. É a camada que divide um
+    bloco corrido de 135 segundos em capítulos que o espectador percebe.
+    Planejada ANTES das cartelas e das figuras, que desviam das janelas dela.
 12. ffmpeg monta o vídeo em TELA CHEIA (2026-08-16, pedido do usuário): o
     conteúdo ocupa o QUADRO INTEIRO, com o preenchimento de fundo em desfoque
     do próprio clipe. Saíram os cenários que embrulhavam o vídeo — a moldura de
@@ -159,6 +165,7 @@ from pipeline.escritor import (
 )
 from pipeline.figuras import gerar_figuras
 from pipeline.legendas import gerar_legendas
+from pipeline.manchetes import gerar_manchetes, janelas as janelas_manchetes
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.registro import registrar
 from pipeline.seo import (
@@ -538,6 +545,22 @@ def main() -> None:
             intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
         )
 
+    # Manchetes (só no longo): o índice "Ainda neste episódio" na abertura e o
+    # painel que nomeia cada pauta quando ela vira. Vêm PRIMEIRO na fila das
+    # sobreposições porque saem da estrutura do roteiro — as camadas que tomam
+    # o quadro inteiro (cartela, figura) é que desviam delas, e não o
+    # contrário: uma imagem em cima do painel taparia justamente a marca de
+    # troca de pauta.
+    manchetes = gerar_manchetes(
+        cfg,
+        roteiro,
+        roteiro["texto_video"],
+        alinhamento,
+        duracao,
+        pasta,
+        tela=(largura, altura),
+    )
+
     # Cartelas: a foto do post da trend toma a tela inteira pelo deslize, no
     # lugar do clipe. Renderizada no tamanho do QUADRO desde a volta da tela
     # cheia (2026-08-16) — antes era o tamanho da tela do celular desenhado.
@@ -549,6 +572,7 @@ def main() -> None:
         duracao,
         pasta,
         tela=(largura, altura),
+        ocupadas=janelas_manchetes(manchetes),
     )
 
     # Figuras geradas (gpt-image-2): gráfico, tabela, infográfico, diagrama ou
@@ -557,7 +581,9 @@ def main() -> None:
     # ffmpeg montava a partir de PNGs do Pillow (grafico.py) foram removidos a
     # pedido do usuário. Entra por último na fila de sobreposições porque é a
     # camada mais cara: o que já está marcado pelas cartelas é desviado aqui.
-    ocupadas = [(c["inicio_s"], c["inicio_s"] + c["dur_s"]) for c in cartelas]
+    ocupadas = janelas_manchetes(manchetes) + [
+        (c["inicio_s"], c["inicio_s"] + c["dur_s"]) for c in cartelas
+    ]
     marcar_memoria("antes das figuras")
     figuras = gerar_figuras(
         cfg,
@@ -580,6 +606,7 @@ def main() -> None:
         legendas=legendas,
         cartelas=cartelas,
         figuras=figuras,
+        manchetes=manchetes,
         publico=cfg.publico,
         formato=cfg.formato,
     )
