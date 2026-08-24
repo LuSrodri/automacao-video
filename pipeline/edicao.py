@@ -96,10 +96,10 @@ MIN_JANELA_CARROSSEL = 2 * T_ARRASTO + LEITURA_MINIMA
 # abertura, lista o que ainda vem. Diferente do carrossel, ele NÃO troca o
 # conteúdo da tela: é uma sobreposição fixa, que entra deslizando de fora da
 # borda esquerda e sai pelo mesmo caminho, com a mesma curva suave do carrossel
-# (`_suave`) e um fade de alfa por cima — deslize sem fade lê como corte quando
-# o painel passa por cima de um clipe claro.
+# (`_suave`). Houve um fade de alfa por cima até 2026-08-24; ele saiu junto com
+# as manchetes que não desenharam no container, e o deslize sozinho já lê como
+# revelação — é o que o carrossel faz desde sempre.
 T_MANCHETE = 0.45  # tempo de entrada e de saída do painel
-FADE_MANCHETE = 0.30  # fade de alfa, dentro do tempo do deslize
 
 # Crédito de reprodução no canto superior direito DO QUADRO, por clipe: linha 1
 # fixa ("Reprodução Imagem: X") e linha 2 com a conta do post de origem.
@@ -132,6 +132,90 @@ REPR_TEXTOS = {
 REPR_FONTE_FRAC = 0.028  # fração do lado menor do quadro (mesma lógica do crédito)
 REPR_MARGEM_FRAC = 0.035  # distância da borda esquerda
 REPR_Y_FRAC = 0.912  # distância do topo como fração da altura
+
+
+def versao_ffmpeg() -> str:
+    """Primeira linha do `ffmpeg -version`, para o log.
+
+    Existe por causa de 2026-08-24: as manchetes sumiram do vídeo publicado sem
+    erro nenhum, e a mesma montagem rendida aqui (ffmpeg 5.1.2 e 8.1.1)
+    desenhava os painéis. Sem saber qual ffmpeg roda no container, a diferença
+    entre o que se testa e o que se publica fica invisível.
+    """
+    try:
+        saida = subprocess.run(
+            ["ffmpeg", "-version"], capture_output=True, text=True, check=True
+        )
+        return (saida.stdout or "").splitlines()[0][:120]
+    except (subprocess.CalledProcessError, OSError, IndexError):
+        return "desconhecida"
+
+
+def conferir_manchetes(video: Path, manchetes: list[dict]) -> None:
+    """Confere no VÍDEO PRONTO se o painel da manchete foi mesmo desenhado.
+
+    Por que isto existe: em 2026-08-23 o pipeline montou seis manchetes, logou
+    as seis, o ffmpeg saiu com código 0 — e nenhuma apareceu no vídeo
+    publicado. Uma camada que falha em silêncio custa um vídeo inteiro e só é
+    descoberta quando alguém assiste. Esta conferência transforma esse defeito
+    mudo numa linha de log.
+
+    O teste é direto: extrai um quadro do meio da janela da primeira manchete e
+    conta, DENTRO da caixa onde o painel deveria estar, os pixels próximos da
+    cor de destaque da etiqueta. Nenhum pixel = o overlay não desenhou.
+
+    Só diagnostica: nunca aborta, nunca altera o vídeo.
+    """
+    if not manchetes:
+        return
+    from . import identidade as ident
+
+    m = manchetes[0]
+    instante = float(m["inicio_s"]) + float(m["dur_s"]) / 2
+    quadro = video.with_name("_conferencia_manchete.png")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-ss", f"{instante:.2f}",
+             "-i", str(video), "-vframes", "1", str(quadro)],
+            check=True, capture_output=True,
+        )
+        from PIL import Image
+
+        with Image.open(quadro) as bruto:
+            img = bruto.convert("RGB")
+        x0, y0 = int(m["x"]), int(m["y"])
+        larg = int(m.get("largura") or 0)
+        alt = int(m.get("altura") or 0)
+        x1 = min(img.width, x0 + larg) if larg > 0 else img.width
+        y1 = min(img.height, y0 + alt) if alt > 0 else img.height
+        recorte = img.crop((x0, y0, x1, y1))
+        alvo = ident.DESTAQUES[0]
+        # Tolerância larga: o x264 desloca a cor, e o que importa é "tem um
+        # bloco da cor da etiqueta aqui?", não a fidelidade dela.
+        perto = sum(
+            1
+            for r, g, b in recorte.getdata()
+            if abs(r - alvo[0]) < 60 and abs(g - alvo[1]) < 60 and abs(b - alvo[2]) < 60
+        )
+    except Exception as erro:  # noqa: BLE001 — conferência nunca derruba nada
+        print(f"[edicao] aviso: não deu para conferir a manchete ({erro}).")
+        return
+    finally:
+        quadro.unlink(missing_ok=True)
+
+    if perto < 50:
+        print(
+            f"[edicao] ALERTA: a manchete de {instante:.1f}s NÃO aparece no "
+            f"vídeo montado (só {perto} pixels da cor da etiqueta na caixa "
+            f"{x0},{y0} {x1 - x0}x{y1 - y0}). O ffmpeg não acusou erro, então "
+            "o overlay foi montado e não desenhou — vídeo publicado sem a "
+            "divisão de pauta."
+        )
+    else:
+        print(
+            f"[edicao] Manchete conferida no vídeo montado ({perto} pixels da "
+            f"etiqueta em {instante:.1f}s)."
+        )
 
 
 def memoria_mb() -> float | None:
@@ -628,25 +712,37 @@ def montar_video(
             continue
         idx_man = prox_entrada
         prox_entrada += 1
+        # O painel usa EXATAMENTE as mesmas construções da cartela, que é o
+        # caminho comprovado no container (2026-08-24: as cartelas e as figuras
+        # apareceram no vídeo publicado; as manchetes, não). Saíram as duas
+        # coisas que só a manchete tinha:
+        #   - os dois `fade` de alfa, que dependiam do relógio INTERNO do PNG
+        #     depois do `tpad` — o carrossel nunca dependeu disso;
+        #   - o `w` (largura do overlay) dentro da expressão de x, trocado pela
+        #     largura literal, que o Python já conhece.
+        # O deslize sozinho já é a revelação: é o que o carrossel faz.
+        # A vida do PNG cobre a janela com folga dos dois lados, como a da
+        # cartela, para o overlay nunca encostar em EOF dentro do `enable`.
+        larg = int(m.get("largura") or 0) or largura
+        dur_janela = max(fim - ini + T_MANCHETE * 2, 0.1)
+        atraso = max(ini - T_MANCHETE, 0.0)
         comando += [
-            "-loop", "1", "-framerate", str(FPS), "-t", f"{fim - ini:.2f}",
+            "-loop", "1", "-framerate", str(FPS), "-t", f"{dur_janela:.2f}",
             "-i", str(m["imagem"]),
         ]
         filtros.append(
             f"[{idx_man}:v]format=rgba,setpts=PTS-STARTPTS,"
-            f"tpad=start_duration={ini:.2f}:start_mode=add:color=0x00000000,"
-            f"fade=t=in:st={ini:.2f}:d={FADE_MANCHETE:.2f}:alpha=1,"
-            f"fade=t=out:st={max(ini, fim - FADE_MANCHETE):.2f}"
-            f":d={FADE_MANCHETE:.2f}:alpha=1[man{j}]"
+            f"tpad=start_duration={atraso:.2f}:start_mode=add"
+            ":color=0x00000000[man{j}]".replace("{j}", str(j))
         )
-        # x vai de -w (fora do quadro, à esquerda) até o x de repouso, pela
-        # mesma curva com aceleração e desaceleração do carrossel.
+        # x vai de fora do quadro (à esquerda) até o x de repouso, pela mesma
+        # curva com aceleração e desaceleração do carrossel.
         x = int(m["x"])
         avanco = _expr_progresso([(ini, fim)], T_MANCHETE, T_MANCHETE)
         filtros.append(
             f"[{corrente}][man{j}]"
-            f"overlay=x='{x}-({x}+w)*(1-({avanco}))':y={int(m['y'])}"
-            f":eof_action=pass"
+            f"overlay=x='{x}-{x + larg}*(1-({avanco}))':y={int(m['y'])}"
+            f":eof_action=repeat"
             f":enable='between(t,{ini:.3f},{fim:.3f})'[vman{j}]"
         )
         corrente = f"vman{j}"
@@ -774,6 +870,7 @@ def montar_video(
         f"{len(manchetes or [])} manchete(s), "
         f"{duracao:.0f}s em {largura}x{altura})..."
     )
+    print(f"[edicao] ffmpeg: {versao_ffmpeg()}")
     marcar_memoria("antes do ffmpeg")
     # ACOMPANHA O PICO do ffmpeg (2026-08-18): o container morre com 8 GhB no
     # formato longo, e a métrica do Render mostra só o total subindo — sem
@@ -805,4 +902,5 @@ def montar_video(
         raise SystemExit(f"ffmpeg falhou:\n{(erro or '')[-2000:]}")
 
     print(f"[edicao] Vídeo final salvo em {destino}")
+    conferir_manchetes(destino, manchetes or [])
     return destino
