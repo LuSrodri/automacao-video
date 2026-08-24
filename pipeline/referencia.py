@@ -1,4 +1,4 @@
-"""Dossiê dos vídeos campeões: o que eles DIZEM e o que a capa deles MOSTRA.
+"""Dossiê dos vídeos campeões: o que a capa deles MOSTRA.
 
 Até 2026-08-22 a régua de audiência era só numérica. O modelo recebia título,
 views e retenção dos campeões e a instrução de imitar o ASSUNTO deles — e era
@@ -7,9 +7,20 @@ segurarem quem abriu (o que a capa promete, que palavras a narração usa, como
 o vídeo começa a falar) ficava fora do prompt, porque nunca tinha sido lido.
 
 Este módulo lê. Para cada campeão da lista (ver ``_lista_estrita`` em
-youtube.py) ele pega a LEGENDA publicada e a CAPA do vídeo, e devolve isso
-anexado ao próprio campeão. Quem consome é o prompt de SELEÇÃO da trend e o
-prompt do ROTEIRO (escritor.py), os dois lados do Short.
+youtube.py) ele pega a CAPA do vídeo e devolve a leitura dela anexada ao
+próprio campeão. Quem consome é o prompt de SELEÇÃO da trend e o prompt do
+ROTEIRO (escritor.py), os dois lados do Short.
+
+A LEGENDA SAIU EM 2026-08-24, e o motivo é cota. `captions.list` custa 50
+unidades e `captions.download` custa 200 — 250 por campeão, contra uma cota
+diária de 10.000 no balde principal da Data API. Com os 14 campeões reais do
+canal BR isso dava 3.500 por execução de Short e ~42.000 por dia nas 12
+execuções: mais de quatro vezes o balde inteiro. O resultado media-se no log —
+metade das execuções diárias abortava em 403 `exceeded your quota`, incluindo
+as do formato longo, que nem chegavam a escrever roteiro. A capa não tem esse
+problema: ela vem do `i.ytimg.com`, que é servidor de imagem estática e NÃO
+consome cota nenhuma. O que se perde é o texto do que foi dito; o que fica é o
+que foi PROMETIDO na imagem, que é o que decide o clique.
 
 SEM BAIXAR O VÍDEO (decisão do usuário em 2026-08-22, depois da medição). O
 desenho anterior baixava o mp4 com o yt-dlp para tirar 20 frames e transcrever
@@ -18,9 +29,7 @@ confirm you're not a bot" já num IP residencial (no IP de datacenter do Render
 seria pior, e dos sete player clients só o `android` escapou), e 20 imagens por
 campeão vezes 50 campeões vezes 12 execuções por dia era, de longe, a etapa
 mais cara do pipeline. Legenda e capa vêm da Data API com o token que o
-pipeline já tem, em duas requisições baratas, e trazem o essencial: o que foi
-DITO e o que foi PROMETIDO na imagem. O que se perde é a leitura do miolo
-visual do vídeo.
+pipeline já tem. O que se perde é a leitura do miolo visual do vídeo.
 
 SÓ NO FORMATO CURTO, nos dois canais (pedido do usuário). O formato longo
 segue com a régua numérica de antes — o molde dele não são os Shorts.
@@ -29,9 +38,9 @@ NADA É PERSISTIDO (decisão do usuário em 2026-08-22): os vídeos do canal e a
 métricas mudam a cada execução do cron, então o dossiê é montado do zero,
 usado, e some junto com o diretório temporário.
 
-FALHA ABERTA, vídeo a vídeo. Legenda que não existe, capa que não baixa, visão
-que erra — cada um desses encolhe UM dossiê e deixa os outros passarem; o
-campeão sem dossiê continua na lista com título, views e engajamento, que é
+FALHA ABERTA, vídeo a vídeo. Capa que não baixa, visão que erra — cada um
+desses encolhe UM dossiê e deixa os outros passarem; o campeão sem dossiê
+continua na lista com título, views e engajamento, que é
 exatamente o que ele tinha antes deste módulo existir. O que não pode
 acontecer é a leitura de referência derrubar uma execução inteira: ela é
 enriquecimento, não pré-requisito.
@@ -39,7 +48,6 @@ enriquecimento, não pré-requisito.
 
 import json
 import os
-import re
 import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -50,11 +58,6 @@ from openai import OpenAI
 
 from .config import AVISO_DADOS_EXTERNOS, Config
 from .midia_x import _data_uri, _reduzir
-from .youtube import (
-    CAPTIONS_URL,
-    _refresh_token_do_publico,
-    _renovar_access_token,
-)
 
 # Quantos dossiês montar em paralelo. Cada um é rede quase o tempo todo (duas
 # requisições à Data API e uma chamada de visão), então a concorrência paga.
@@ -113,69 +116,6 @@ Responda somente com o JSON pedido.\
 """
 
 
-def _limpar_legenda(bruto: str) -> str:
-    """Texto corrido a partir de uma legenda SRT/VTT.
-
-    Fora numeração de cue, marcas de tempo, tags de posicionamento e as linhas
-    repetidas que o ASR do YouTube produz ao rolar a legenda na tela — sem essa
-    deduplicação a transcrição sai com cada frase escrita duas ou três vezes, e
-    o prompt passa a mostrar um vídeo que fala repetido.
-    """
-    linhas = []
-    for linha in (bruto or "").splitlines():
-        limpa = re.sub(r"<[^>]+>", "", linha).strip()
-        if (
-            not limpa
-            or limpa.isdigit()
-            or "-->" in limpa
-            or limpa.upper().startswith(("WEBVTT", "KIND:", "LANGUAGE:"))
-        ):
-            continue
-        if not linhas or linhas[-1] != limpa:
-            linhas.append(limpa)
-    return " ".join(linhas).strip()
-
-
-def _legendas_da_api(video_id: str, token: str) -> str:
-    """Narração do vídeo pela legenda publicada. "" quando não dá.
-
-    O canal é nosso, o token já tem o escopo `youtube.force-ssl`, e
-    `captions.download` é liberado para o dono do vídeo inclusive na faixa
-    gerada automaticamente (ASR). É por isso que este caminho substituiu o
-    download + STT: mesma informação, duas requisições, sem checagem de bot.
-
-    Prefere a legenda humana à do ASR quando as duas existem: a nossa é a
-    transcrição exata do roteiro que foi narrado.
-    """
-    try:
-        lista = requests.get(
-            CAPTIONS_URL,
-            params={"part": "snippet", "videoId": video_id},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30,
-        )
-        if lista.status_code != 200:
-            return ""
-        faixas = lista.json().get("items", [])
-        if not faixas:
-            return ""
-        faixas.sort(
-            key=lambda f: f.get("snippet", {}).get("trackKind", "") == "ASR"
-        )
-        conteudo = requests.get(
-            f"{CAPTIONS_URL}/{faixas[0]['id']}",
-            params={"tfmt": "srt"},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30,
-        )
-        if conteudo.status_code != 200:
-            return ""
-        return _limpar_legenda(conteudo.text)
-    except Exception as erro:  # noqa: BLE001 — ver docstring do módulo
-        print(f"[referencia] legendas de {video_id} falharam: {erro}")
-        return ""
-
-
 def _baixar_capa(url: str, destino: Path) -> Path | None:
     """Baixa a capa e a reduz para o tamanho que a visão usa. None quando não dá.
 
@@ -219,16 +159,14 @@ def _ler_capa(cliente: OpenAI, cfg: Config, imagem: Path) -> dict:
         return {}
 
 
-def _dossie_de(cfg: Config, campeao: dict, raiz: Path, token: str) -> None:
-    """Anexa legenda e leitura da capa a UM campeão, no lugar."""
+def _dossie_de(cfg: Config, campeao: dict, raiz: Path) -> None:
+    """Anexa a leitura da capa a UM campeão, no lugar."""
     video_id = campeao.get("video_id") or ""
     if not video_id:
         return
     pasta = raiz / video_id
     pasta.mkdir(parents=True, exist_ok=True)
     try:
-        if token:
-            campeao["transcricao"] = _legendas_da_api(video_id, token)
         capa = _baixar_capa(
             campeao.get("thumbnail", ""), pasta / f"{video_id}.jpg"
         )
@@ -236,9 +174,8 @@ def _dossie_de(cfg: Config, campeao: dict, raiz: Path, token: str) -> None:
             campeao["visual"] = _ler_capa(
                 OpenAI(api_key=cfg.openai_api_key), cfg, capa
             )
-        palavras = len((campeao.get("transcricao") or "").split())
         print(
-            f"[referencia] {video_id}: {palavras} palavras de legenda, capa "
+            f"[referencia] {video_id}: capa "
             f"{'lida' if campeao.get('visual') else 'ausente'} — "
             f"{campeao.get('titulo', '')[:50]}"
         )
@@ -250,9 +187,8 @@ def montar_dossies(cfg: Config, campeoes: list[dict]) -> list[dict]:
     """Enriquece os campeões com legenda e leitura da capa, NO LUGAR.
 
     Devolve a mesma lista recebida (mutada), para quem preferir encadear. Cada
-    campeão enriquecido ganha ``transcricao`` e ``visual``; quem falhou fica sem
-    esses campos e o prompt simplesmente não os mostra (ver
-    ``_resumo_campeoes`` em escritor.py).
+    campeão enriquecido ganha ``visual``; quem falhou fica sem esse campo e o
+    prompt simplesmente não o mostra (ver ``_resumo_campeoes`` em escritor.py).
 
     Chamada só no formato curto — quem decide isso é ``main.py``, que é onde o
     formato já está resolvido.
@@ -261,34 +197,14 @@ def montar_dossies(cfg: Config, campeoes: list[dict]) -> list[dict]:
         return campeoes
     alvos = campeoes[:DOSSIE_MAX_VIDEOS] if DOSSIE_MAX_VIDEOS > 0 else campeoes
     print(
-        f"[referencia] Montando dossiê de {len(alvos)} campeão(ões): legenda "
-        "publicada e capa de cada um."
+        f"[referencia] Montando dossiê de {len(alvos)} campeão(ões): a capa de "
+        "cada um."
     )
-    # Um access token para todos: é ele que autoriza `captions.download`. Sem
-    # token o dossiê fica só com a capa, que não exige autenticação.
-    token = ""
-    try:
-        refresh = _refresh_token_do_publico(cfg)
-        if refresh:
-            token = _renovar_access_token(cfg, refresh)
-    except Exception as erro:  # noqa: BLE001 — enriquecimento, não requisito
-        print(f"[referencia] sem token para as legendas ({erro}).")
-
     with tempfile.TemporaryDirectory() as tmp:
         raiz = Path(tmp)
         with ThreadPoolExecutor(max_workers=DOSSIES_PARALELOS) as executor:
-            list(executor.map(lambda c: _dossie_de(cfg, c, raiz, token), alvos))
+            list(executor.map(lambda c: _dossie_de(cfg, c, raiz), alvos))
 
-    com_texto = sum(1 for c in alvos if (c.get("transcricao") or "").strip())
     com_capa = sum(1 for c in alvos if c.get("visual"))
-    print(
-        f"[referencia] dossiê pronto: {com_texto} com legenda e {com_capa} com "
-        f"leitura de capa, de {len(alvos)}."
-    )
-    if not com_texto and alvos:
-        print(
-            "[referencia] aviso: nenhuma legenda voltou. Se isso se repetir, "
-            "confira o escopo youtube.force-ssl do refresh token — a seleção "
-            "segue com título, métricas e capa."
-        )
+    print(f"[referencia] dossiê pronto: {com_capa} capa(s) lida(s) de {len(alvos)}.")
     return campeoes

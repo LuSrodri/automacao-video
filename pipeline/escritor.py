@@ -1597,7 +1597,6 @@ def _resumo_recentes(
 # CADA entrada. Um Short de 25s transcreve em ~70 palavras, bem abaixo do teto;
 # quem estoura é a DESCRIÇÃO publicada, que leva hashtags e links no fim.
 MAX_DESCRICAO_CAMPEAO = 300
-MAX_TRANSCRICAO_CAMPEAO = 1200
 
 
 def _cortar(texto: str, teto: int) -> str:
@@ -1614,17 +1613,15 @@ def _bloco_dossie(campeao: dict) -> list[str]:
     simplesmente encolhe. Nada neste formato depende de todos os campeões terem
     sido lidos.
 
-    A NARRAÇÃO vem da legenda publicada do próprio vídeo e a CAPA, da leitura
-    da thumbnail. Nenhum dos dois exige baixar o vídeo, que era o desenho
-    anterior e não sobreviveu à checagem de bot do YouTube.
+    A CAPA vem da leitura da thumbnail. A NARRAÇÃO vinha da legenda publicada
+    e SAIU em 2026-08-24: `captions.list` + `captions.download` custavam 250
+    unidades de cota por campeão e sozinhos estouravam o balde diário da Data
+    API (ver referencia.py). A thumbnail não consome cota nenhuma.
     """
     linhas = []
     descricao = _cortar(campeao.get("descricao", ""), MAX_DESCRICAO_CAMPEAO)
     if descricao:
         linhas.append(f"    DESCRIÇÃO: {descricao}")
-    transcricao = _cortar(campeao.get("transcricao", ""), MAX_TRANSCRICAO_CAMPEAO)
-    if transcricao:
-        linhas.append(f'    NARRAÇÃO: "{transcricao}"')
     visual = campeao.get("visual") or {}
     if visual:
         partes = [
@@ -1675,7 +1672,7 @@ def _resumo_campeoes(
         corpo = "; ".join(x for x in partes if x)
         linhas.append(f"- {c.get('titulo', '')}{marca} ({corpo})")
         linhas += _bloco_dossie(c)
-    tem_dossie = any(c.get("transcricao") or c.get("visual") for c in campeoes)
+    tem_dossie = any(c.get("visual") for c in campeoes)
     if por_engajamento:
         cabecalho = (
             "\n\nOs vídeos deste canal que MAIS SEGURAM quem abre, do maior "
@@ -2270,13 +2267,12 @@ def _resumo_estilo(
             # é onde tipo de abertura, ritmo de fala e densidade de informação
             # por segundo podem de fato ser imitados.
             partes += _bloco_dossie(c)
-        if any(c.get("transcricao") or c.get("visual") for c in campeoes):
+        if any(c.get("visual") for c in campeoes):
             partes.append(
-                "Nesses campeões, a NARRAÇÃO é a legenda real do vídeo "
-                "publicado e a CAPA é a imagem que ele usou de thumbnail. "
-                "Imite o RITMO, o tipo de abertura e a densidade de informação "
-                "por segundo; NUNCA reaproveite as frases, o título nem o "
-                "assunto deles."
+                "Nesses campeões, a CAPA é a imagem que o vídeo usou de "
+                "thumbnail. Imite o TIPO DE PROMESSA que ela faz e a relação "
+                "dela com o assunto; NUNCA reaproveite o título nem o assunto "
+                "deles."
             )
     return "\n".join(partes)
 

@@ -198,6 +198,7 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | `LONG_MAX_FIGURAS` | `4` | Só com `--long-take`: figuras geradas pelo gpt-image-2 |
 | `LONG_VELOCIDADE` | `1.0` | Só com `--long-take`: velocidade **normal** da narração (análise não se acompanha em fala apressada) |
 | `LONG_MANCHETES` | `1` | Só com `--long-take`: manchetes na tela (índice "Ainda neste vídeo" + uma por pauta). Custo zero; `0` devolve o vídeo corrido de antes |
+| `DIAS_REFERENCIA` | `90` | Janela da régua de audiência: só entram os vídeos **publicados** nos últimos N dias (campeões e últimos publicados) |
 | `LONG_PAUSA_PAUTA` | `0.7` | Só com `--long-take`: silêncio aberto em cada troca de pauta, em segundos (0 a 2). `0` desliga a separação temporal |
 | `YOUTUBE_CLIENT_ID` | — | Client ID OAuth (Google Cloud, tipo "Desktop app") |
 | `YOUTUBE_CLIENT_SECRET` | — | Client secret OAuth |
@@ -437,6 +438,22 @@ Antes disso a coleta lia as **contas seguidas** (`/2/users/:id/following`) por `
 - **Sem rede debaixo** — falha de leitura **aborta**. O fallback pelas contas seguidas foi removido em 2026-08-22 porque era ele que fazia o 401 acima passar despercebido: o vídeo saía com a pauta ordenada por relevância, e nos logs isso aparecia como um aviso no meio de uma execução bem-sucedida. Página que quebra no **meio** da paginação ainda aproveita o que já veio.
 - **Veto de fonte** — `CONTAS_VETADAS` continua valendo, agora aplicado sobre os posts da lista.
 
+## Como funciona o dossiê dos campeões
+
+`pipeline/referencia.py`, **só no formato curto**, nos dois canais. A régua de audiência era só numérica: o modelo recebia título, views e retenção dos campeões e a instrução de imitar o **assunto** deles. Tudo que fez aqueles vídeos segurarem quem abriu ficava fora do prompt porque nunca tinha sido lido.
+
+O dossiê lê a **capa** de cada campeão e anexa a leitura ao próprio campeão, que segue para o prompt de seleção da trend e para o do roteiro.
+
+**A legenda saiu em 2026-08-24, e o motivo é cota.** O desenho original também baixava a legenda publicada (`captions.list` + `captions.download`). Os números, conferidos na [documentação oficial](https://developers.google.com/youtube/v3/docs/captions/download): `captions.list` custa **50 unidades** e `captions.download` custa **200** — **250 por campeão**, contra uma cota diária de **10.000** no balde principal da Data API. Com os 14 campeões reais do canal BR isso dava **3.500 por execução de Short** e **~42.000 por dia** nas 12 execuções: mais de quatro vezes o balde inteiro.
+
+O efeito estava medido no log e passava por outro nome. Em 24/08 as execuções de 02:01 e 06:01 UTC abortavam em `403 exceeded your quota`, as de 10:09/14:06/18:10 publicavam, e as do formato longo nem chegavam a escrever roteiro — a cota reseta às **07:00 UTC** (meia-noite no Pacífico) e era consumida antes do dia acabar.
+
+Vale saber, porque muda a conta e é fácil errar de memória: **`videos.insert` e `search.list` não pesam no balde principal**. Cada um custa *1 unit* em um balde próprio (**Video Uploads** e **Search Queries**), com limites separados de ~100/dia. Ou seja, upload e panorama não competem com o resto — o que sobrava pesando nas 10.000 era essencialmente o dossiê.
+
+A **capa não tem esse problema**: ela vem do `i.ytimg.com`, servidor de imagem estática, e **não consome cota nenhuma**. O que se perde é o texto do que foi dito; o que fica é o que foi **prometido na imagem**, que é o que decide o clique.
+
+O dossiê **não persiste nada** (decisão de 2026-08-22) e **falha aberto, vídeo a vídeo**: capa que não baixa ou visão que erra encolhe **um** dossiê e deixa os outros passarem. `DOSSIE_MAX_VIDEOS` limita quantos campeões são enriquecidos (0 = todos) e `DOSSIES_PARALELOS` controla a concorrência.
+
 ## Como funciona a régua de retenção
 
 Pedido do usuário em **2026-08-16**: *"postar conforme os melhores vídeos do canal, sempre priorizando alto engajamento (versus swipe-away) de 70% ou mais"*.
@@ -477,6 +494,7 @@ Já a **ordenação** é `gancho × profundidade`, a pontuação de **antes** de
 
 ### Como está agora
 
+- **Janela de 90 dias** (`DIAS_REFERENCIA`, 2026-08-24): só entram na régua os vídeos **publicados** nos últimos 90 dias. Antes a leitura era "de todos os tempos" (`startDate=2005-01-01`), com dois defeitos: o molde do canal virava um vídeo de meses atrás, de um ciclo de notícia já morto, e cada vídeo antigo ainda custava leitura de detalhe e de curva. O corte é aplicado **duas vezes**, porque são coisas diferentes: a `startDate` da Analytics limita o **período medido**, não a idade do vídeo — sem um filtro por **data de publicação** um vídeo de um ano que ainda recebe views continuaria virando molde. Em `ultimos_publicados` a paginação simplesmente **para** ao sair da janela (a playlist de uploads é cronológica), o que também economiza chamadas. Canal sem nada publicado na janela cai no catálogo inteiro, com aviso.
 - O ranking **ordena por `gancho × profundidade`**, a pontuação da versão que funcionava.
 - O **piso de `RETENCAO_MINIMA`: retenção acima de 100%** (o vídeo foi reassistido), combinado com **`VIEWS_MINIMO_REFERENCIA` (1000 views)** para o número significar algo. O piso de views fecha o buraco por onde o vídeo de 183 views passava. Resultado: **30 vídeos de referência no BR e 25 no US**.
 - **Teto de `LIMITE_REFERENCIA` (50)**, aplicado depois da ordenação, então o corte é sempre pelos piores. 50 é também o limite de ids que `videos.list` aceita por chamada, então a lista inteira cabe numa requisição de títulos. Hoje o teto ainda não morde.

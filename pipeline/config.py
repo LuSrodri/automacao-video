@@ -366,6 +366,14 @@ VIEWS_MINIMO_ABSOLUTO = 100
 # requisição de títulos. Aplicado DEPOIS da ordenação, logo o corte é sempre
 # pelos piores.
 LIMITE_REFERENCIA = 50
+# JANELA DOS CAMPEÕES, em dias (2026-08-24, pedido do usuário): só entram na
+# régua de audiência os vídeos PUBLICADOS nos últimos DIAS_REFERENCIA dias.
+# Antes a leitura era "de todos os tempos" (startDate=2005-01-01), e isso tem
+# dois defeitos: o molde do canal passa a ser um vídeo de meses atrás, de um
+# ciclo de notícia que já morreu, e cada vídeo antigo ainda custa leitura de
+# detalhe e de curva. Noventa dias é um trimestre — tempo suficiente para o
+# canal ter volume e recente o bastante para o molde ainda valer.
+DIAS_REFERENCIA = int(os.getenv("DIAS_REFERENCIA", "90"))
 
 # Piso de ENGAJAMENTO, pedido do usuário desde 2026-08-16 ("acima de 70%") e
 # implementado em 2026-08-17 depois que o teto de 50 tornou o custo viável.

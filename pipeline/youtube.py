@@ -20,7 +20,7 @@ import secrets
 import threading
 import urllib.parse
 import webbrowser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from .config import (
     CURVAS_PARALELAS,
     ENGAJAMENTO_MINIMO,
+    DIAS_REFERENCIA,
     LIMITE_REFERENCIA,
     PASSO_FALLBACK_VIEWS,
     RETENCAO_MINIMA,
@@ -197,6 +198,18 @@ def _duracao_iso(texto: str) -> int:
     return ((dias * 24 + horas) * 60 + minutos) * 60 + segundos
 
 
+def _data_de_corte() -> str:
+    """Data ISO a partir da qual um vídeo entra na régua (hoje - DIAS_REFERENCIA).
+
+    Uma função só, usada pelos DOIS caminhos que leem o catálogo — os últimos
+    publicados e os campeões de retenção —, para as duas réguas nunca olharem
+    janelas diferentes.
+    """
+    return (
+        datetime.now(timezone.utc) - timedelta(days=DIAS_REFERENCIA)
+    ).strftime("%Y-%m-%d")
+
+
 def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
     """Últimos `n` vídeos publicados no canal selecionado (BR ou USA).
 
@@ -244,9 +257,15 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
             return []
         uploads = itens[0]["contentDetails"]["relatedPlaylists"]["uploads"]
 
+        # A playlist de uploads vem do mais novo para o mais antigo, então
+        # sair da janela é sinal de PARAR: tudo daqui para trás é mais velho
+        # ainda. Isso corta páginas de playlistItems e lotes de videos.list que
+        # antes eram lidos só para serem descartados adiante.
+        corte = _data_de_corte()
         itens_lista: list[dict] = []
         pagina = None
-        while len(itens_lista) < n:
+        fora_da_janela = False
+        while len(itens_lista) < n and not fora_da_janela:
             params = {
                 "part": "snippet,contentDetails",
                 "playlistId": uploads,
@@ -260,7 +279,11 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
             if lista.status_code != 200:
                 raise RuntimeError(f"{lista.status_code}: {lista.text[:300]}")
             corpo = lista.json()
-            itens_lista += corpo.get("items", [])
+            for item in corpo.get("items", []):
+                if (item.get("snippet", {}).get("publishedAt", "") or "")[:10] < corte:
+                    fora_da_janela = True
+                    break
+                itens_lista.append(item)
             pagina = corpo.get("nextPageToken")
             if not pagina:
                 break
@@ -314,7 +337,10 @@ def ultimos_publicados(cfg: Config, n: int = 100) -> list[dict]:
                     "duracao_s": st.get("duracao_s") or 0,
                 }
             )
-        print(f"[youtube] {len(videos)} vídeos recentes do canal carregados.")
+        print(
+            f"[youtube] {len(videos)} vídeos do canal carregados "
+            f"(publicados desde {corte}, janela de {DIAS_REFERENCIA} dias)."
+        )
         return videos
     except Exception as erro:  # noqa: BLE001 — sem os recentes a seleção é cega
         raise SystemExit(
@@ -482,9 +508,12 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
         token = _renovar_access_token(cfg, refresh)
         headers = {"Authorization": f"Bearer {token}"}
 
+        corte = _data_de_corte()
         params = {
             "ids": "channel==MINE",
-            "startDate": "2005-01-01",  # antes do YouTube existir = desde sempre
+            # A janela da Analytics acompanha a dos campeões: medir "desde
+            # sempre" traria vídeos de ciclos de notícia mortos para o molde.
+            "startDate": corte,
             "endDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "dimensions": "video",
             "metrics": "views,engagedViews,averageViewPercentage",
@@ -574,6 +603,7 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
                     detalhes[item["id"]] = {
                         "titulo": snippet.get("title", ""),
                         "descricao": snippet.get("description", ""),
+                        "publicado_em": (snippet.get("publishedAt", "") or "")[:10],
                         "duracao_s": _duracao_iso(
                             item.get("contentDetails", {}).get("duration", "")
                         ),
@@ -581,6 +611,35 @@ def top_retencao(cfg: Config, n_fallback: int = 6) -> list[dict]:
                             snippet.get("thumbnails", {})
                         ),
                     }
+
+        # JANELA DOS CAMPEÕES (2026-08-24): a `startDate` da Analytics limita
+        # o PERÍODO MEDIDO, não a idade do vídeo — um vídeo de um ano que ainda
+        # recebe views apareceria nas linhas. O corte por DATA DE PUBLICAÇÃO é
+        # este, e ele precisa dos detalhes, que custam 1 unidade por lote de 50.
+        ids_medidos = [str(r.get("video", "")) for r in linhas]
+        carregar_detalhes(ids_medidos)
+        na_janela = [
+            r
+            for r in linhas
+            if detalhes.get(str(r.get("video", {})), {}).get("publicado_em", "")
+            >= corte
+        ]
+        if na_janela:
+            if len(na_janela) < len(linhas):
+                print(
+                    f"[youtube] {len(linhas) - len(na_janela)} vídeo(s) fora da "
+                    f"janela de {DIAS_REFERENCIA} dias (publicados antes de "
+                    f"{corte}); ficam {len(na_janela)} na régua."
+                )
+            linhas = na_janela
+        else:
+            # Canal sem nada publicado na janela: melhor a régua antiga do que
+            # régua nenhuma — sem campeões a seleção fica cega.
+            print(
+                f"[youtube] aviso: nenhum vídeo publicado nos últimos "
+                f"{DIAS_REFERENCIA} dias entrou na medição; a régua usa o "
+                "catálogo inteiro desta vez."
+            )
 
         # ENGAJAMENTO pela curva de retenção — uma chamada por vídeo, em
         # paralelo (elas só esperam rede). Medido sob demanda e memorizado:
