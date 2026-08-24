@@ -9,19 +9,25 @@ Esta camada resolve isso com duas peças, ambas ancoradas em CITAÇÕES LITERAIS
 da narração (o mesmo mecanismo das cartelas, das figuras e dos capítulos — o
 único jeito de o texto na tela cair no segundo em que a narração diz aquilo):
 
-1. AINDA NESTE EPISÓDIO — logo depois da pergunta de abertura, no canto
-   inferior, por no MÁXIMO 10 segundos (ABERTURA_MAX_S): a lista do que o vídeo
-   vai tratar, um tópico de cada vez. É a promessa que segura quem chegou pelo
-   gancho e ainda não decidiu ficar.
-2. UMA MANCHETE POR TÓPICO — quando a pauta vira, a manchete daquele tópico
-   entra no mesmo canto. Junto com a VIRADA escrita no roteiro (ver
-   escritor.py: cada tópico a partir do segundo abre com uma frase curta que
-   fecha o anterior e nomeia o próximo), é o que transforma um bloco corrido
-   em capítulos que o espectador percebe.
+1. AINDA NESTE VÍDEO — no canto inferior esquerdo, ACOMPANHANDO a pauta que a
+   narração está dizendo em voz alta nos primeiros ~6 segundos (campo
+   `pauta_falada` do roteiro): os títulos entram um a um enquanto a fala os
+   nomeia. Na primeira versão (23/08) o índice subia DEPOIS da pergunta de
+   abertura e listava tópicos que a narração não mencionava — a tela dizia uma
+   coisa e o áudio dizia outra, que é a "confusão" que o usuário relatou em
+   24/08. Sem a pauta falada localizada no texto, o índice não sai.
+2. UMA MANCHETE POR PAUTA — quando a pauta vira, a manchete daquela pauta entra
+   no mesmo canto, DENTRO da pausa de silêncio que o pipeline abriu logo antes
+   da frase de virada (silencio.inserir_pausas). O espectador ouve o silêncio,
+   lê o título novo e só então a narração recomeça: é a separação temporal e
+   visual pedida em 24/08, e é o que transforma um bloco corrido em capítulos
+   que o espectador percebe.
 
-ESTILO — misto, definido em identidade.py: aranhaverso (desregistragem
-ciano/magenta, retícula Ben-Day) sobre estrutura editorial minimalista
-(retângulo preto, grotesca pesada em caixa alta, um fio, uma cor). O MOVIMENTO
+ESTILO — o MESMO da capa (identidade.py), a pedido do usuário depois de a capa
+ficar boa: etiqueta de cor chapada com retícula Ben-Day, título em grotesca
+pesada com a desregistragem ciano/magenta e um grifo à mão por baixo. A tarja
+fininha lateral da primeira versão saiu — ela lia como enfeite de template, não
+como a marca do canal. O MOVIMENTO
 é do ffmpeg (edicao.py): a manchete entra deslizando da borda esquerda com
 aceleração suave e sai pelo mesmo caminho. Aqui só se renderiza o painel
 parado, do tamanho exato do seu conteúdo — e não da largura do quadro, porque
@@ -48,20 +54,22 @@ from .cortes import _tempo_do_char
 # Idioma é regra de CANAL (config.IDIOMA_CANAL), nunca inferido: texto na tela é
 # texto do canal como qualquer outro.
 RUBRICAS = {
-    "brasil": "AINDA NESTE EPISÓDIO",
+    "brasil": "AINDA NESTE VÍDEO",
     "usa": "COMING UP",
 }
 
 # --- Tempo -------------------------------------------------------------------
-ABERTURA_MAX_S = 10.0  # teto pedido para o bloco inteiro do índice
-ABERTURA_ITEM_MIN_S = 1.7  # abaixo disso não dá tempo de ler o tópico
+# O índice acompanha a PAUTA FALADA, que o roteiro entrega em no máximo 18
+# palavras (~6s). O teto existe como guarda: se a fala escorregar, o índice não
+# invade o corpo do vídeo.
+ABERTURA_MAX_S = 6.5
+ABERTURA_ITEM_MIN_S = 1.4  # abaixo disso não dá tempo de ler o tópico
 DUR_MANCHETE = 4.2  # tempo-alvo da manchete de um tópico na tela
 DUR_MINIMA = 2.0
 GAP = 0.7  # respiro entre uma peça e a seguinte
-# O gancho fica limpo: nada de texto por cima da pergunta de abertura.
+# Piso de segurança para a manchete de um tópico: nada de painel de pauta em
+# cima da abertura. O ÍNDICE não obedece a isto — ele é a abertura.
 INICIO_MINIMO = 3.0
-# Depois da pergunta, um respiro antes de o índice subir.
-ATRASO_APOS_PERGUNTA = 0.35
 
 # --- Geometria (frações do quadro) -------------------------------------------
 MARGEM_X_FRAC = 0.052
@@ -73,7 +81,6 @@ LARGURA_MAX_FRAC = 0.62
 TITULO_FRAC = 0.050  # tamanho da fonte do título, fração da altura do quadro
 KICKER_FRAC = 0.020
 PAD_FRAC = 0.020
-FAIXA_FRAC = 0.0085  # largura da tarja de cor à esquerda
 FUNDO_ALFA = 232
 ENTRELINHA = 1.14
 TRACKING_FRAC = 0.34  # espaçamento do kicker, fração do tamanho da fonte
@@ -108,7 +115,6 @@ def _painel(
     """
     medidor = _medidor()
     pad = round(altura_quadro * PAD_FRAC)
-    faixa = max(4, round(altura_quadro * FAIXA_FRAC))
     tam_kicker = max(11, round(altura_quadro * KICKER_FRAC))
     f_kicker = ident.fonte(tam_kicker)
     # O tracking largo é o que faz uma linha pequena ler como RÓTULO. Num
@@ -116,58 +122,73 @@ def _painel(
     # deixa de ser um número: aí o espaçamento sai.
     tracking = tam_kicker * TRACKING_FRAC if len(kicker) > 3 else 0.0
 
-    util_max = largura_max - 2 * pad - faixa
+    util_max = largura_max - 2 * pad
     f_titulo, linhas = ident.caber(
         medidor, titulo.upper(), util_max, round(altura_quadro * TITULO_FRAC),
         minimo=max(16, round(altura_quadro * 0.028)), maximo_linhas=2,
     )
-
-    larg_kicker = ident.largura_espacada(medidor, kicker, f_kicker, tracking)
-    if contador:
-        larg_kicker += pad + medidor.textlength(contador, font=f_kicker)
     larg_titulo = max(
         (medidor.textlength(linha, font=f_titulo) for linha in linhas), default=0
     )
-    util = min(util_max, max(larg_kicker, larg_titulo))
+
+    # ETIQUETA: o mesmo bloco de cor chapado que na capa envolve a palavra do
+    # fato (identidade.etiqueta). Ela fica ACIMA do slab, encostada à esquerda,
+    # e é o que dá cor à peça — a tarja fininha lateral que existia antes lia
+    # como enfeite de template, não como a marca do canal.
+    pad_et = max(4, round(tam_kicker * 0.45))
+    larg_rotulo = ident.largura_espacada(medidor, kicker, f_kicker, tracking)
+    if contador:
+        larg_rotulo += pad_et * 2 + medidor.textlength(contador, font=f_kicker)
+    larg_etiqueta = round(larg_rotulo + 2 * pad_et)
+    alt_etiqueta = round(tam_kicker + 2 * pad_et)
 
     alt_linha = round(f_titulo.size * ENTRELINHA)
-    # kicker + fio + linhas do título, tudo dentro do respiro do painel.
-    alt_kicker = round(tam_kicker * 1.5)
-    largura = round(faixa + 2 * pad + util)
-    alt_conteudo = round(2 * pad + alt_kicker + alt_linha * len(linhas))
+    largura = round(max(larg_etiqueta, min(util_max, larg_titulo) + 2 * pad))
+    alt_slab = round(2 * pad + alt_linha * len(linhas))
+    alt_conteudo = alt_etiqueta + alt_slab
     altura = max(alt_conteudo, int(altura_minima))
-    sobra = (altura - alt_conteudo) // 2
+    # A etiqueta fica colada no topo; a folga da altura uniforme cai no slab,
+    # com o título centrado nela.
+    sobra = altura - alt_conteudo
 
     tela = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
     dr = ImageDraw.Draw(tela, "RGBA")
-    dr.rectangle([0, 0, largura, altura], fill=(*ident.PRETO, FUNDO_ALFA))
-    # Retícula bem fraca no corpo do painel: a textura de impressão que liga a
-    # manchete à capa, sem virar ruído atrás do texto. Na tarja de cor ela não
-    # cabe — com 16 px de largura a malha lê como tracejado, não como trama.
+
+    topo_slab = alt_etiqueta
+    dr.rectangle([0, topo_slab, largura, altura], fill=(*ident.PRETO, FUNDO_ALFA))
+    # Retícula bem fraca no corpo do slab: a textura de impressão que liga a
+    # manchete à capa, sem virar ruído atrás do texto.
     ident.reticula(
-        tela, (faixa, 0, largura, altura), cor=ident.BRANCO,
+        tela, (0, topo_slab, largura, altura), cor=ident.BRANCO,
         passo=max(9, round(altura_quadro * 0.012)), raio=1, alfa=20,
     )
-    # Tarja de cor à esquerda: o único bloco chapado da peça.
-    dr.rectangle([0, 0, faixa, altura], fill=(*cor, 255))
 
-    x = faixa + pad
-    y = pad
-    ident.escrever_espacado(dr, (x, y), kicker, f_kicker, (*cor, 255), tracking)
+    ident.etiqueta(
+        tela, (0, 0, larg_etiqueta, alt_etiqueta), cor,
+        passo_reticula=max(6, round(tam_kicker * 0.42)),
+    )
+    ident.escrever_espacado(
+        dr, (pad_et, pad_et), kicker, f_kicker, ident.PRETO, tracking
+    )
     if contador:
         dr.text(
-            (largura - pad, y), contador, font=f_kicker,
-            fill=(*ident.BRANCO, 150), anchor="ra",
+            (larg_etiqueta - pad_et, pad_et), contador, font=f_kicker,
+            fill=(*ident.PRETO, 170), anchor="ra",
         )
-    # Fio fino sob o kicker: a marca editorial que separa rótulo de manchete.
-    y_fio = y + round(tam_kicker * 1.15)
-    dr.line(
-        [(x, y_fio), (largura - pad, y_fio)], fill=(*ident.BRANCO, 55), width=1
-    )
 
-    y = pad + alt_kicker + sobra
-    for linha in linhas:
-        ident.escrever_cromatico(tela, (x, y), linha, f_titulo, ident.BRANCO)
+    y = topo_slab + pad + sobra // 2
+    for i, linha in enumerate(linhas):
+        ident.escrever_cromatico(tela, (pad, y), linha, f_titulo, ident.BRANCO)
+        if i == len(linhas) - 1:
+            # Grifo à mão sob a última linha: o traço da capa, reduzido.
+            larg_linha = medidor.textlength(linha, font=f_titulo)
+            # 1,10 do corpo da fonte deixa o traço ABAIXO das maiúsculas do
+            # Archivo Black; em 1,02 ele cortava o pé das letras.
+            ident.risco_a_mao(
+                tela, pad, pad + larg_linha, y + f_titulo.size * 1.10, cor,
+                largura=max(3, round(f_titulo.size * 0.085)),
+                sem=ident.semente(titulo),
+            )
         y += alt_linha
 
     destino.parent.mkdir(parents=True, exist_ok=True)
@@ -219,23 +240,35 @@ def _marcos_dos_topicos(
     return marcos
 
 
-def _inicio_do_indice(
+def _janela_da_pauta_falada(
     roteiro: dict, texto_video: str, alinhamento: dict, dur_total: float
-) -> float:
-    """Instante em que o índice sobe: logo depois da pergunta de abertura.
+) -> tuple[float, float]:
+    """(início, fim) do trecho em que a narração DIZ a pauta do vídeo.
 
-    A pergunta é a primeira frase do texto (regra do formato longo), e é ela
-    que decide quem fica: nada entra por cima dela. Sem conseguir localizá-la,
-    cai no piso fixo do gancho.
+    O índice na tela existe para acompanhar essa fala — os títulos aparecem
+    enquanto a narração os nomeia (2026-08-24, pedido do usuário). Antes o
+    índice subia depois da pergunta de abertura e listava tópicos que a
+    narração não mencionava: a tela dizia uma coisa e o áudio dizia outra, que
+    foi exatamente a "confusão" relatada.
+
+    Sem conseguir localizar a pauta falada no texto (modelo que não copiou o
+    campo caractere por caractere), devolve uma janela vazia e o índice não
+    sai — índice fora de sincronia com a fala é pior que índice nenhum.
     """
-    pergunta = " ".join((roteiro.get("pergunta") or "").split())
-    if pergunta:
-        pos = texto_video.lower().find(pergunta.lower())
-        if pos >= 0:
-            fim = min(pos + len(pergunta), len(texto_video) - 1)
-            instante = _tempo_do_char(alinhamento, texto_video, fim, dur_total)
-            return max(INICIO_MINIMO, instante + ATRASO_APOS_PERGUNTA)
-    return INICIO_MINIMO
+    pauta = " ".join((roteiro.get("pauta_falada") or "").split())
+    if not pauta:
+        return 0.0, 0.0
+    pos = texto_video.lower().find(pauta.lower())
+    if pos < 0:
+        print(
+            "[manchetes] A pauta falada não foi encontrada na narração "
+            "(o modelo não copiou o campo); vídeo sem índice de abertura."
+        )
+        return 0.0, 0.0
+    inicio = _tempo_do_char(alinhamento, texto_video, pos, dur_total)
+    fim_char = min(pos + len(pauta), len(texto_video) - 1)
+    fim = _tempo_do_char(alinhamento, texto_video, fim_char, dur_total)
+    return inicio, min(fim, inicio + ABERTURA_MAX_S)
 
 
 def gerar_manchetes(
@@ -292,14 +325,14 @@ def gerar_manchetes(
                 }
             )
 
-        # --- 1. AINDA NESTE EPISÓDIO ---------------------------------------
-        inicio_indice = _inicio_do_indice(
+        # --- 1. AINDA NESTE VÍDEO: o índice ACOMPANHA a pauta falada --------
+        inicio_indice, fim_indice = _janela_da_pauta_falada(
             roteiro, texto_video, alinhamento, dur_total
         )
         # O índice tem que ACABAR antes de a primeira pauta entrar: ele promete
         # o que vem, e prometer por cima do primeiro tópico já entregue é ruído.
         limite = marcos[0][0] - GAP if marcos else dur_total * 0.45
-        disponivel = min(ABERTURA_MAX_S, limite - inicio_indice)
+        disponivel = min(fim_indice, limite) - inicio_indice
         itens = [" ".join((t.get("titulo") or "").split()) for t in topicos]
         itens = [i for i in itens if i]
         cabem = int(disponivel // ABERTURA_ITEM_MIN_S) if disponivel > 0 else 0
@@ -322,9 +355,16 @@ def gerar_manchetes(
                 f"({max(disponivel, 0):.1f}s até a primeira pauta); pulado."
             )
 
-        # --- 2. Uma manchete por tópico -------------------------------------
-        for k, (inicio, titulo) in enumerate(marcos, 1):
-            proximo = marcos[k][0] if k < len(marcos) else dur_total
+        # --- 2. Uma manchete por pauta --------------------------------------
+        # A manchete entra DENTRO da pausa de silêncio que o pipeline abriu
+        # logo antes da frase de virada (silencio.inserir_pausas): o espectador
+        # ouve o silêncio, lê o título novo, e só então a narração recomeça. Sem
+        # recuar pela pausa, o painel entraria junto com a primeira palavra e a
+        # separação temporal não teria contrapartida na tela.
+        pausa = max(0.0, float(getattr(cfg, "pausa_pauta_s", 0.0) or 0.0))
+        for k, (marco, titulo) in enumerate(marcos, 1):
+            inicio = max(0.0, marco - pausa)
+            proximo = marcos[k][0] - pausa if k < len(marcos) else dur_total
             dur = min(DUR_MANCHETE, proximo - GAP - inicio, dur_total - 0.4 - inicio)
             if dur < DUR_MINIMA:
                 print(
@@ -380,6 +420,31 @@ def gerar_manchetes(
             encoding="utf-8",
         )
     return plano
+
+
+def instantes_das_viradas(
+    roteiro: dict,
+    texto_video: str,
+    alinhamento: dict,
+    dur_total: float,
+) -> list[float]:
+    """Instantes em que uma pauta começa — onde o silêncio deve ser aberto.
+
+    Roda ANTES de `gerar_manchetes` e antes de a pausa existir: os tempos saem
+    do alinhamento do áudio já aparado, e é `silencio.inserir_pausas` que os
+    consome. Depois da inserção o alinhamento muda, e `gerar_manchetes`
+    recalcula tudo em cima do alinhamento novo — por isso as duas funções
+    partem da mesma citação em vez de trocarem números entre si.
+    """
+    topicos = roteiro.get("topicos") or []
+    if not topicos:
+        return []
+    return [
+        instante
+        for instante, _ in _marcos_dos_topicos(
+            topicos, texto_video, alinhamento, dur_total
+        )
+    ]
 
 
 def janelas(manchetes: list[dict]) -> list[tuple[float, float]]:

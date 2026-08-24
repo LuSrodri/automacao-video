@@ -337,6 +337,60 @@ def seta_a_mao(
     tela.alpha_composite(camada)
 
 
+def risco_a_mao(
+    tela: Image.Image,
+    x0: float,
+    x1: float,
+    y: float,
+    cor: tuple,
+    largura: int = 6,
+    sem: int = 0,
+) -> None:
+    """Traço de caneta por baixo de uma linha de texto — grifo à mão.
+
+    É o mesmo gesto do círculo da capa reduzido a uma linha: o que marca a
+    manchete como algo que alguém sublinhou, e não como uma régua vetorial.
+    """
+    rnd = random.Random(sem + 13)
+    if x1 - x0 < 8:
+        return
+    passos = max(8, int((x1 - x0) / 40))
+    tremor = largura * 0.9
+    pontos = [
+        (
+            x0 + (x1 - x0) * i / passos,
+            y + math.sin(i / passos * 3.1 + rnd.random()) * tremor * 0.5
+            + rnd.uniform(-tremor, tremor) * 0.35,
+        )
+        for i in range(passos + 1)
+    ]
+    camada = Image.new("RGBA", tela.size, (0, 0, 0, 0))
+    ImageDraw.Draw(camada).line(
+        pontos, fill=(*cor, 240), width=largura, joint="curve"
+    )
+    tela.alpha_composite(camada)
+
+
+def etiqueta(
+    tela: Image.Image,
+    caixa: tuple[int, int, int, int],
+    cor: tuple,
+    passo_reticula: int = 10,
+) -> None:
+    """Bloco de cor chapado com retícula — a etiqueta da capa, reaproveitada.
+
+    É o mesmo elemento que na capa envolve a palavra do fato. Trazê-lo para a
+    manchete é o que faz as duas peças lerem como a mesma marca, em vez de duas
+    soluções parecidas.
+    """
+    x0, y0, x1, y1 = (int(v) for v in caixa)
+    ImageDraw.Draw(tela, "RGBA").rectangle([x0, y0, x1, y1], fill=(*cor, 255))
+    reticula(
+        tela, (x0, y0, x1, y1), cor=PRETO,
+        passo=max(6, passo_reticula), raio=max(1, passo_reticula // 5), alfa=70,
+    )
+
+
 def moldura_recorte(
     tela: Image.Image,
     caixa: tuple[int, int, int, int],

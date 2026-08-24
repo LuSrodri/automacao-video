@@ -399,10 +399,12 @@ def capitulos(
         )
 
     marcos.sort(key=lambda m: m[0])
-    abertura = " ".join((roteiro.get("pergunta") or "").split()) or _rotulos(
-        publico
-    )["abertura"]
-    lista: list[tuple[float, str]] = [(0.0, abertura.rstrip("?").strip() or "…")]
+    # O capítulo 0:00 é a PAUTA FALADA — os primeiros ~6 segundos em que a
+    # narração diz o que o vídeo vai tratar. Até 2026-08-24 ele levava a
+    # "pergunta esquisita" de abertura, que deixou de ser falada: manter a
+    # pergunta ali prometeria ao espectador um trecho que não existe mais.
+    abertura = _rotulos(publico)["abertura"]
+    lista: list[tuple[float, str]] = [(0.0, abertura)]
     for inicio, titulo in marcos:
         if inicio - lista[-1][0] < MIN_SEGUNDOS_CAPITULO:
             continue  # trecho curto demais: o YouTube rejeitaria o bloco todo

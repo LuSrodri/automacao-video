@@ -165,6 +165,10 @@ LONGO_MAX_FIGURAS = 4  # figuras/gráficos gerados (dobro de tempo de tela)
 # cadeia de causa e efeito não acompanha narração acelerada. O Short é o
 # contrário — ver Config.velocidade.
 LONGO_VELOCIDADE = 1.0
+# Silêncio aberto em cada troca de pauta (LONG_PAUSA_PAUTA no .env). 0,7s é a
+# faixa em que a pausa lê como respiro editorial: abaixo de ~0,5 ela some no
+# ritmo da fala, acima de ~1,0 o espectador acha que o vídeo travou.
+LONGO_PAUSA_PAUTA = 0.7
 # Piso de clipes APROVADOS na auditoria para o formato longo: 90-120s presos em
 # um ou dois clipes é insustentável, então abaixo disto o vídeo não sai.
 LONGO_MIN_CLIPES_APROVADOS = 3
@@ -694,6 +698,14 @@ def ativar_formato_longo(cfg: Config) -> Config:
     cfg.manchetes = os.getenv("LONG_MANCHETES", "1").strip().lower() not in (
         "0", "false", "nao", "não", "off",
     )
+    cfg.pausa_pauta_s = float(
+        os.getenv("LONG_PAUSA_PAUTA", str(LONGO_PAUSA_PAUTA))
+    )
+    if not 0.0 <= cfg.pausa_pauta_s <= 2.0:
+        raise SystemExit(
+            "LONG_PAUSA_PAUTA deve estar entre 0 e 2 segundos (0 desliga a "
+            f"pausa entre pautas; recebido: {cfg.pausa_pauta_s})."
+        )
     cfg.velocidade = float(os.getenv("LONG_VELOCIDADE", str(LONGO_VELOCIDADE)))
 
     if not 0.5 <= cfg.velocidade <= 2.0:

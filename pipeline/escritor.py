@@ -57,13 +57,26 @@ de prompt e de esquema, mantendo a mesma mecânica. A seleção passa a exigir
 pauta que renda de TOPICOS_MIN a TOPICOS_MAX tópicos (3 a 5 recortes
 diferentes do mesmo fato, tipicamente pelas quatro óticas do canal —
 tecnologia/IA, negócios, mercado de trabalho, mercado financeiro) com payload
-para quem procura emprego, e prefere trends com mais posts com clipe; o roteiro
-segue a mesma estrutura em cinco blocos do Short (pergunta esquisita,
-contextualização, desenvolvimento, consequência, conclusão), sem loop e sem
-CTA, dentro da faixa dura de 120 a 150 segundos; e a auditoria ganha regras
-próprias (fontes nominais, payload de carreira, os tópicos, nada dependendo de
-texto na tela). A regra dura (veto a repetição) compara só com os vídeos
-LONGOS já publicados — Short e análise são conteúdos diferentes.
+para quem procura emprego, e prefere trends com mais posts com clipe; e a
+auditoria ganha regras próprias (fontes nominais, os tópicos, a análise de
+bolso, nada dependendo de texto na tela). A regra dura (veto a repetição)
+compara só com os vídeos LONGOS já publicados — Short e análise são conteúdos
+diferentes.
+
+A ESTRUTURA DO LONGO DEIXOU DE SER A DO SHORT em 2026-08-24, a pedido do
+usuário, que descreveu o resultado anterior como "roteiro e montagem confusos".
+Saiu a PERGUNTA ESQUISITA de abertura (que continua existindo como campo, mas
+só para o par P:/R: da descrição — ela não é mais falada) e saiu o bloco único
+de payload de carreira no fim. Entraram: (1) a PAUTA FALADA, no máximo 18
+palavras nos primeiros ~6 segundos, dizendo em voz alta o que o vídeo vai
+tratar, na ordem — é ela que o índice "Ainda neste vídeo" acompanha na tela;
+(2) TRÊS BATIDAS por pauta — contextualização, acontecimento factual e ANÁLISE
+NA ECONOMIA MICRO DO ESPECTADOR (campo `bolso`), que é a batida que não pode
+faltar; (3) o FECHO como SÍNTESE (campo `sintese`), costurando as leituras de
+bolso em vez de repetir uma delas. A frase de VIRADA entre pautas ganhou peso:
+o pipeline abre uma PAUSA de silêncio antes dela (ver silencio.py) e faz a
+manchete da nova pauta entrar nesse silêncio, então ela precisa ser
+autossuficiente.
 
 As QUATRO ÓTICAS deixaram de ser uma cota em 2026-08-04: elas continuam sendo a
 fonte natural dos tópicos, mas o roteiro pode trocar uma delas por outro
@@ -445,18 +458,28 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "type": "string",
                 "description": "O acontecimento contemporâneo analisado no vídeo.",
             },
+            "pauta_falada": {
+                "type": "string",
+                "description": (
+                    "A PAUTA DO VÍDEO, dita em voz alta na abertura: a lista "
+                    "do que o vídeo vai tratar, em NO MÁXIMO 18 palavras (cerca "
+                    "de 6 segundos de fala). Nomeia os tópicos na MESMA ORDEM "
+                    "em que aparecem, cada um pela coisa concreta ('drones a "
+                    "1.900 quilômetros, um navio sem tripulação que atirou, e o "
+                    "gás que o Irã achou'). É a PRIMEIRA COISA de texto_video, "
+                    "copiada caractere por caractere, antes de qualquer audio "
+                    "tag. PROIBIDO 'neste vídeo você vai ver', 'vamos falar "
+                    "sobre', 'fique até o final' — comece pela coisa. Enquanto "
+                    "ela é falada, os títulos dos tópicos aparecem na tela."
+                ),
+            },
             "pergunta": {
                 "type": "string",
                 "description": (
-                    "A PERGUNTA ESQUISITA de abertura (0-5s): uma pergunta "
-                    "concreta, estranha e específica que nasce do fato e que "
-                    "ninguém faria sozinho ('quanto vale um engenheiro que a "
-                    "empresa não consegue substituir?'). Máximo 14 palavras, "
-                    "sem preâmbulo, sem data, sem nome de instituição na "
-                    "primeira posição. NÃO é retórica nem dirigida ao "
-                    "espectador: é a pergunta que o vídeo inteiro responde. A "
-                    "primeira frase de texto_video DEVE ser exatamente esta "
-                    "(copiada palavra por palavra, antes de qualquer audio tag)."
+                    "A pergunta que o vídeo responde, para a DESCRIÇÃO (par "
+                    "P:/R: que os buscadores com IA extraem) — NÃO é falada na "
+                    "narração. Concreta e específica, no máximo 14 palavras, "
+                    "respondida por `resposta_curta`."
                 ),
             },
             "tese": {
@@ -505,6 +528,19 @@ ESQUEMA_ROTEIRO_LONGO = {
                                 "prazo) e a fonte nominal dele."
                             ),
                         },
+                        "bolso": {
+                            "type": "string",
+                            "description": (
+                                "A ANÁLISE NA ECONOMIA MICRO DO ESPECTADOR "
+                                "deste tópico, em 1 frase: o que ele muda no "
+                                "dinheiro, no trabalho ou na conta de quem "
+                                "assiste — preço que sobe, setor que contrata "
+                                "ou corta, habilidade que passa a valer, "
+                                "imposto, tarifa, prazo. Concreto e ligado ao "
+                                "dado deste tópico. PROIBIDO conselho genérico "
+                                "de coach e futurologia sem base no material."
+                            ),
+                        },
                         "citacao": {
                             "type": "string",
                             "description": (
@@ -520,17 +556,18 @@ ESQUEMA_ROTEIRO_LONGO = {
                             ),
                         },
                     },
-                    "required": ["titulo", "dado", "citacao"],
+                    "required": ["titulo", "dado", "bolso", "citacao"],
                 },
             },
-            "impacto_carreira": {
+            "sintese": {
                 "type": "string",
                 "description": (
-                    "O payload central do vídeo, em 1 a 2 frases: o que este "
-                    "acontecimento muda CONCRETAMENTE para quem procura "
-                    "emprego ou está em transição de carreira — que setor, que "
-                    "tipo de vaga, que habilidade, que prazo. Nada de conselho "
-                    "genérico de coach ('se reinvente', 'esteja preparado')."
+                    "O FECHO do vídeo, em 1 a 2 frases: a linha que une as "
+                    "leituras de bolso dos tópicos numa só — o que a soma "
+                    "deles diz para o dinheiro e o trabalho de quem assiste. "
+                    "NÃO repete a análise de um tópico: costura as três. Nada "
+                    "de conselho genérico de coach ('se reinvente', 'esteja "
+                    "preparado')."
                 ),
             },
             "o_que_observar": {
@@ -573,12 +610,13 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "type": "string",
                 "description": (
                     "Texto/roteiro narrado do vídeo, no idioma definido nas "
-                    "instruções, seguindo a ESTRUTURA EM CINCO BLOCOS das "
-                    "instruções (PERGUNTA ESQUISITA → CONTEXTUALIZAÇÃO → "
-                    "DESENVOLVIMENTO, COBRINDO TODOS OS TÓPICOS DE 'topicos' → "
-                    "CONSEQUÊNCIA PARA "
-                    "QUEM TRABALHA → CONCLUSÃO, que responde a pergunta e "
-                    "aponta o que observar). Ritmo de fala natural (frases de 8 a 18 "
+                    "instruções, seguindo a ESTRUTURA das instruções: PAUTA "
+                    "FALADA (o campo `pauta_falada`, copiado como início do "
+                    "texto) → CONTEXTUALIZAÇÃO GERAL → AS PAUTAS, cada uma com "
+                    "CONTEXTUALIZAÇÃO + ACONTECIMENTO FACTUAL + ANÁLISE NA "
+                    "ECONOMIA MICRO DO ESPECTADOR (o campo `bolso` do tópico), "
+                    "separadas por uma FRASE DE VIRADA → FECHO (a `sintese` "
+                    "mais o que observar). Ritmo de fala natural (frases de 8 a 18 "
                     "palavras, teto 22), vocabulário preciso de telejornal, "
                     "tom adulto de analista que respeita o espectador. Toda "
                     "afirmação central atribuída nominalmente à fonte "
@@ -597,10 +635,11 @@ ESQUEMA_ROTEIRO_LONGO = {
         },
         "required": [
             "tema",
+            "pauta_falada",
             "pergunta",
             "tese",
             "topicos",
-            "impacto_carreira",
+            "sintese",
             "o_que_observar",
             "titulo",
             "descricao",
@@ -780,17 +819,25 @@ NARRAÇÃO:
    que dizem a mesma coisa com outras palavras; tópico sem nenhum dado
    concreto; e lista de bullets falados no lugar do encadeamento.
 8b. A VIRADA DE PAUTA: cada tópico a partir do segundo abre com uma frase
-   curta que fecha o anterior e nomeia o próximo. REPROVAM: virar de assunto
-   no meio de um parágrafo, sem nenhuma marca; e numerar em voz alta
+   curta e AUTOSSUFICIENTE que fecha o anterior e nomeia o próximo — o
+   pipeline abre uma pausa de silêncio antes dela. REPROVAM: virar de assunto
+   no meio de um parágrafo, sem nenhuma marca; virada que não diz do que se
+   trata ("mas tem mais", "e não para por aí"); e numerar em voz alta
    ("segundo ponto", "tópico três", "primeiro", "por último").
+8c. AS TRÊS BATIDAS: cada pauta traz contextualização, depois o acontecimento
+   factual com número e fonte, depois a análise de bolso — nesta ordem.
+   REPROVA a pauta que pula a contextualização e começa no número.
 9. Nenhuma frase pode depender de texto na tela ("como você vê aqui", "no
    gráfico") — as manchetes na tela só repetem o que a narração já disse, e o
    vídeo não tem legendas.
-10. A PRIMEIRA frase é uma PERGUNTA concreta e específica, e a narração a
-   RESPONDE antes de acabar. REPROVAM: abrir sem pergunta; pergunta abstrata
-   ou dirigida ao espectador; pergunta que fica sem resposta.
-11. Fechamento: conclusão que responde a pergunta + próximo marco a observar.
-   CTA falado, pedido de inscrição ou despedida REPROVAM.
+10. A ABERTURA é a PAUTA FALADA: as primeiras palavras da narração dizem, em
+   no máximo 18 palavras, o que o vídeo vai tratar, nomeando os assuntos na
+   mesma ordem em que eles aparecem depois. REPROVAM: abrir por outra coisa;
+   preâmbulo de youtuber ("neste vídeo você vai ver", "vamos falar sobre",
+   "fica até o final"); e ordem que não bate com a das pautas.
+11. Fechamento: síntese que costura as leituras de bolso das pautas + próximo
+   marco a observar. REPROVAM: CTA falado, pedido de inscrição, despedida, e
+   fecho que só repete a análise de uma das pautas.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
 problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\
@@ -1278,20 +1325,20 @@ máximo TRÊS no vídeo inteiro — mas SEMPRE traduzido em meia frase na primei
 vez que aparece ("a empresa por trás do ChatGPT", "o imposto que encarece o
 produto importado"). Sem a tradução, não use o nome.
 
-ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
-(PROIBIDO "neste vídeo vamos ver três pontos"):
-1. PERGUNTA ESQUISITA (0-8s): abra com a PERGUNTA do campo `pergunta` (primeira
-   frase do texto, palavra por palavra) — uma pergunta concreta, estranha e
-   específica, que nasce do fato e que ninguém faria sozinho ("quanto vale um
-   engenheiro que a empresa não consegue substituir?"). Nunca abstrata, nunca
-   retórica, nunca dirigida ao espectador ("você já parou pra pensar?"). Logo
-   depois, UMA frase que promete o que o espectador leva do vídeo. Nada de
-   contexto histórico, data ou nome de instituição na abertura.
-2. CONTEXTUALIZAÇÃO (~20s): o que o leigo precisa saber para a pergunta fazer
-   sentido, e o acontecimento em ordem "coisa concreta primeiro, detalhe
-   depois", com número real, quem fez, quando, e a FONTE nominal. Se o assunto
-   central for de nicho, é aqui que ele é ancorado em algo que o leigo conhece.
-3. DESENVOLVIMENTO — OS TÓPICOS (~65s, o corpo do vídeo): cubra de
+ESTRUTURA OBRIGATÓRIA — a PAUTA FALADA e depois UMA PAUTA DE CADA VEZ:
+
+1. PAUTA FALADA (0-6s, a primeira coisa do vídeo): diga em voz alta o que o
+   vídeo vai tratar — o campo `pauta_falada`, copiado palavra por palavra como
+   INÍCIO de texto_video. No máximo 18 palavras, nomeando os tópicos na mesma
+   ordem em que eles virão, cada um pela coisa concreta: "drones a 1.900
+   quilômetros, um navio sem tripulação que atirou, e o gás que o Irã achou".
+   PROIBIDO preâmbulo de youtuber ("neste vídeo você vai ver", "vamos falar
+   sobre", "fica até o final") — comece pela coisa. Enquanto você fala isso, os
+   títulos dos tópicos aparecem na tela, um a um; por isso a ordem tem que
+   bater com a de `topicos`.
+2. CONTEXTUALIZAÇÃO GERAL (~10s): a frase que amarra os três — o que eles têm
+   a ver entre si e por que valem juntos hoje. É a sua TESE dita em voz alta.
+3. AS PAUTAS (o corpo do vídeo): cubra de
    {topicos_min} a {topicos_max} TÓPICOS, os mesmos que você listou no campo
    `topicos` e na mesma ordem.
    QUANDO O MATERIAL TRAZ MAIS DE UM ACONTECIMENTO (a seleção manda três, e
@@ -1307,35 +1354,48 @@ ESTRUTURA OBRIGATÓRIA — cinco blocos, nesta ordem, sem anunciar a estrutura
    concorrente, o efeito no dinheiro, no trabalho ou no dia a dia de quem
    assiste, e o que vem depois.
    Nenhum deles é cota: cubra os que o material realmente sustenta, com dado,
-   em vez de inventar um ângulo que não existe. Duas a quatro frases por tópico,
-   ENCADEADAS por causa e efeito ("por isso", "o efeito disso", "e aí entra o
-   dinheiro") — nunca uma lista de bullets falados. Cada tópico carrega pelo
-   menos um dado concreto do material recebido, e todos são costurados pela sua
-   TESE.
+   em vez de inventar um ângulo que não existe.
+
+   CADA PAUTA TEM TRÊS BATIDAS, NESTA ORDEM, e nenhuma delas pode faltar:
+   (a) CONTEXTUALIZAÇÃO — uma ou duas frases com o que o leigo precisa saber
+       para o fato fazer sentido: quem são os envolvidos, o que existia antes,
+       por que isso não era assim. Sem contexto o fato vira ruído.
+   (b) ACONTECIMENTO FACTUAL — o que aconteceu, em ordem "coisa concreta
+       primeiro, detalhe depois": número real, quem fez, quando, e a FONTE
+       nominal. É o dado do campo `dado` deste tópico.
+   (c) ANÁLISE NA ECONOMIA MICRO DO ESPECTADOR — o campo `bolso`: o que esse
+       fato faz no dinheiro, no trabalho ou na conta de quem está assistindo.
+       Preço que sobe, tarifa, imposto, setor que contrata ou corta, função na
+       linha de tiro, habilidade que passa a valer, prazo. É a batida mais
+       importante das três: sem ela a pauta é notícia, não análise. PROIBIDO
+       conselho de coach ("se reinvente", "esteja preparado", "invista em
+       você") e futurologia sem base no material recebido.
+   As três são ENCADEADAS por causa e efeito ("por isso", "o efeito disso", "e
+   aí entra o seu bolso") — nunca uma lista de bullets falados —, e todas as
+   pautas são costuradas pela sua TESE.
+
    VIRADA DE PAUTA — OBRIGATÓRIA: cada tópico a partir do SEGUNDO abre com uma
    frase curta de VIRADA (no máximo 12 palavras) que FECHA o assunto anterior e
    NOMEIA o próximo, com o nome próprio ou o número que o identifica ("o
    dinheiro explica a pressa; a lei explica o resto", "quem paga essa conta é o
-   consumidor americano"). Essa frase é o corte do vídeo: é ela que vira a
-   `citacao` do tópico e o instante em que a manchete daquele tópico entra na
-   tela. PROIBIDO virar de assunto no meio de um parágrafo, sem aviso — e
+   consumidor americano"). Essa frase é o CORTE do vídeo: o pipeline abre uma
+   PAUSA de silêncio bem antes dela e faz a manchete da nova pauta entrar na
+   tela nesse silêncio. Por isso ela precisa ser autossuficiente — quem voltar
+   a prestar atenção ali tem que saber do que se trata. Ela vira a `citacao` do
+   tópico. PROIBIDO virar de assunto no meio de um parágrafo, sem aviso — e
    PROIBIDO numerar em voz alta ("segundo ponto", "tópico três"): a virada é
    editorial, não é sumário falado.
-4. CONSEQUÊNCIA — O QUE ISSO MUDA PARA QUEM TRABALHA (~25s): o payload.
-   Concreto e verificável: que setor contrata ou corta, que tipo de função
-   entra na linha de tiro, que habilidade passa a valer, em que prazo, com que
-   número. PROIBIDO conselho de coach ("se reinvente", "esteja preparado",
-   "invista em você") e futurologia sem base no material recebido.
-5. CONCLUSÃO (últimos ~10s): a RESPOSTA à pergunta da abertura, em uma frase
-   seca que amarra a tese, mais uma frase apontando o PRÓXIMO MARCO concreto a
-   acompanhar (decisão, balanço, data, número que sai em breve). Sem CTA, sem
-   pedido de inscrição, sem despedida, sem moral da história. Este formato NÃO
-   roda em loop: ele fecha de verdade.
+4. FECHO (últimos ~12s): a SÍNTESE do campo `sintese` — a linha que une as
+   leituras de bolso das pautas numa só, dita em uma ou duas frases secas —,
+   mais uma frase apontando o PRÓXIMO MARCO concreto a acompanhar (decisão,
+   balanço, data, número que sai em breve). NÃO repita a análise de uma pauta:
+   o fecho costura, não recapitula. Sem CTA, sem pedido de inscrição, sem
+   despedida, sem moral da história. Este formato NÃO roda em loop: ele fecha
+   de verdade.
 
-RETENÇÃO: a cada ~25 segundos abra um mini-gancho que puxa para o bloco
-seguinte ("o número que interessa não é esse", "e é aqui que isso encosta no
-seu emprego"). O vídeo não roda em loop: ele fecha — mas fecha entregando,
-nunca com suspense vazio.
+RETENÇÃO: a batida (c) de cada pauta é o próprio gancho — é ela que responde
+"e eu com isso?" antes de o espectador perguntar. O vídeo não roda em loop: ele
+fecha, mas fecha entregando, nunca com suspense vazio.
 
 PROIBIDO NO TEXTO:
 - Frases de analista vazias: "no cenário atual", "especialistas afirmam", "o
@@ -1346,8 +1406,8 @@ PROIBIDO NO TEXTO:
   se estiver no material recebido e for apresentado como cenário.
 
 PAYLOAD OBRIGATÓRIO: o roteiro entrega o fato, os {topicos_min} a
-{topicos_max} tópicos e uma consequência prática para o trabalho — tudo
-ancorado no material recebido.
+{topicos_max} tópicos e, DENTRO DE CADA UM, a análise do que aquilo faz no
+bolso de quem assiste — tudo ancorado no material recebido.
 
 TÍTULO — medido nos números do canal: título autossuficiente rende o dobro de
 views do título com nome de nicho. Regras: (1) ator + ação concreta, com uma
@@ -1359,8 +1419,8 @@ why it matters", "e agora?").
 
 DESCRIÇÃO — resumo do payload, não teaser: 2 a 4 frases que entregam o fato
 central (com número/nome concreto e a fonte nominal), a leitura que une os
-tópicos e o impacto prático no mercado de trabalho, seguidas das
-hashtags. Mesmo teste do leigo do título. PROIBIDO CTA, cauda de suspense e
+tópicos e o impacto prático no bolso e no trabalho de quem assiste, seguidas
+das hashtags. Mesmo teste do leigo do título. PROIBIDO CTA, cauda de suspense e
 frase de analista vazia.
 
 DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
@@ -1369,9 +1429,9 @@ colchetes não contam). Os DOIS limites são DUROS — o formato do canal é de
 {minimo_s} a {maximo_s} segundos, e vídeo abaixo de {minimo_s} segundos é
 DESCARTADO pelo pipeline, não publicado. Texto curto demais é o erro mais caro
 aqui: prefira errar para cima. Se faltar espaço, corte detalhe secundário do
-bloco 2 ou reduza um tópico ao essencial — nunca a pergunta, nunca o bloco 4 (o
-payload de carreira), nunca a conclusão, e nunca abaixo de {topicos_min}
-tópicos. Se sobrar espaço, cubra mais um tópico (até {topicos_max}) ou
+a contextualização geral ou encurte a batida (a) de um tópico — nunca a pauta
+falada, nunca a batida (c) de nenhuma pauta (a análise de bolso), nunca o
+fecho, e nunca abaixo de {topicos_min} tópicos. Se sobrar espaço, cubra mais um tópico (até {topicos_max}) ou
 acrescente dado concreto do material recebido (número, nome, cena) — nunca
 encha linguiça.
 
@@ -2465,15 +2525,17 @@ def gerar_roteiro(
             f"({tentativa}/{TENTATIVAS_FAIXA_PALAVRAS})..."
         )
         preservar = (
-            "mantenha a pergunta de abertura, os tópicos, o payload de "
-            "carreira e a conclusão com o que observar"
+            "mantenha a pauta falada da abertura, os tópicos com as três "
+            "batidas (contexto, fato e análise de bolso), as frases de virada "
+            "e o fecho com a síntese e o que observar"
             if longo
             else "mantenha a pergunta de abertura, a consequência única e a "
             "conclusão em tensão que emenda de volta na pergunta"
         )
         cortar = (
-            "cortando detalhe secundário dos blocos CONTEXTUALIZAÇÃO e "
-            "DESENVOLVIMENTO (sem eliminar nenhum tópico)"
+            "cortando detalhe secundário da contextualização geral e da "
+            "batida de contexto das pautas (sem eliminar nenhum tópico e sem "
+            "tocar na análise de bolso de nenhum deles)"
             if longo
             else "cortando detalhes do DESENVOLVIMENTO"
         )
@@ -2602,8 +2664,10 @@ def gerar_roteiro(
         print("[aviso] O roteiro saiu sem tags aproveitáveis; o vídeo sobe sem elas.")
     if roteiro.get("comentario"):
         print(f"[roteiro] Comentário de abertura: {roteiro['comentario']}")
+    if roteiro.get("pauta_falada"):
+        print(f"[roteiro] Pauta falada na abertura: {roteiro['pauta_falada']}")
     if roteiro.get("pergunta"):
-        print(f"[roteiro] Pergunta de abertura: {roteiro['pergunta']}")
+        print(f"[roteiro] Pergunta (P:/R: da descrição): {roteiro['pergunta']}")
     if roteiro.get("consequencia"):
         print(f"[roteiro] Consequência: {roteiro['consequencia']}")
     if roteiro.get("tese"):
@@ -2613,13 +2677,15 @@ def gerar_roteiro(
         print(f"[roteiro] {len(topicos)} tópicos cobertos:")
         for t in topicos:
             print(f"  - {t.get('titulo', '')} — {t.get('dado', '')}")
+            if t.get("bolso"):
+                print(f"      bolso: {t['bolso']}")
         if not TOPICOS_MIN <= len(topicos) <= TOPICOS_MAX:
             print(
                 f"[aviso] O roteiro cobre {len(topicos)} tópicos, fora da "
                 f"faixa de {TOPICOS_MIN} a {TOPICOS_MAX} pedida ao formato."
             )
-    if roteiro.get("impacto_carreira"):
-        print(f"[roteiro] Impacto na carreira: {roteiro['impacto_carreira']}")
+    if roteiro.get("sintese"):
+        print(f"[roteiro] Síntese do fecho: {roteiro['sintese']}")
     if roteiro.get("o_que_observar"):
         print(f"[roteiro] O que observar: {roteiro['o_que_observar']}")
     return roteiro

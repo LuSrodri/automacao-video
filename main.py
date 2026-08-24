@@ -165,7 +165,11 @@ from pipeline.escritor import (
 )
 from pipeline.figuras import gerar_figuras
 from pipeline.legendas import gerar_legendas
-from pipeline.manchetes import gerar_manchetes, janelas as janelas_manchetes
+from pipeline.manchetes import (
+    gerar_manchetes,
+    instantes_das_viradas,
+    janelas as janelas_manchetes,
+)
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.registro import registrar
 from pipeline.seo import (
@@ -174,7 +178,7 @@ from pipeline.seo import (
     panorama_do_dia,
     titulos_do_dia,
 )
-from pipeline.silencio import aparar_silencios
+from pipeline.silencio import aparar_silencios, inserir_pausas
 from pipeline.thumbnail import gerar_thumbnail
 from pipeline.triagem import triar_material
 from pipeline.x_client import (
@@ -469,6 +473,24 @@ def main() -> None:
             f"longo ({LONGO_MIN_S}-{LONGO_MAX_S}s); o vídeo segue, mas vale "
             "ajustar LONG_DURACAO se isso virar rotina."
         )
+
+    # PAUSA NAS TROCAS DE PAUTA (2026-08-24, só no longo): abre um silêncio
+    # logo ANTES da frase de virada de cada pauta — a "separação temporal" que
+    # acompanha a visual. Fica DEPOIS da conferência de piso de propósito: o
+    # piso mede FALA, e somar silêncio à duração deixaria um roteiro curto
+    # demais passar por causa do respiro. E fica antes de tudo que ancora em
+    # citação (cortes, cartelas, figuras, manchetes, capítulos), que passam a
+    # ler o alinhamento já deslocado.
+    if cfg.formato == "longo" and cfg.pausa_pauta_s > 0:
+        narracao, alinhamento, _ = inserir_pausas(
+            narracao,
+            alinhamento,
+            instantes_das_viradas(
+                roteiro, roteiro["texto_video"], alinhamento, duracao
+            ),
+            cfg.pausa_pauta_s,
+        )
+        duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
     # Posicionamento automático (reserva): clipes espalhados uniformemente,
     # com o primeiro abrindo o gancho.
