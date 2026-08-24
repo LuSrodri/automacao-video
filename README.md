@@ -512,23 +512,44 @@ A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de pro
 
 ## Custo estimado por vídeo
 
-| Etapa | Custo |
+**Preços unitários conferidos nas tabelas oficiais em 2026-08-24** — a versão anterior desta seção estava calibrada em preços velhos e superestimava a OpenAI em ~2x, porque o **Luna caiu 80% em 30/07/2026**:
+
+| Insumo | Preço unitário |
 | --- | --- |
-| Coleta de posts (X API pay-per-use, ~US$ 0,005/post, teto `X_MAX_POSTS`) | **~US$ 0,25** com os 50 posts de 2026-08-24 (era ~US$ 1,00 com 200) |
-| Busca **aberta** por clipes (`X_MAX_POSTS_BUSCA`, só `--long-take`) | ~US$ 0,15 por vídeo longo (`0` desliga) |
-| Mídias dos posts da trend (X API, até 12 posts + pool de 6 clipes e 4 fotos) | ~US$ 0,11 (~US$ 0,17 com `--long-take`: 16 posts, 11 clipes, 6 fotos) |
-| GPT 5.6 Luna (sumarização + seleção + roteiro + visão e auditoria das mídias) | ~US$ 0,08 (~US$ 0,14 com `--long-take`: mais mídias no pool) |
-| ~~Figuras geradas (gpt-image-2)~~ | **US$ 0** — removidas em 2026-08-24 (eram ~US$ 0,08 por figura, até 1 no Short e 4 no longo) |
-| ElevenLabs (~420 caracteres por narração de 25s) | ~420 créditos do plano (~1.700 no `--long-take`) |
-| Panorama do dia (YouTube Data API) | **US$ 0** — 1 busca no balde de Search Queries (100/dia) + 1 unidade de cota |
+| X API v2, pay-per-use | **US$ 0,005 por post lido** (teto de 2 mi de leituras/mês) |
+| `gpt-5.6-luna` | **US$ 0,20 / 1 mi de tokens de entrada**, US$ 1,20 / 1 mi de saída |
+| `gpt-image-2`, qualidade `medium`, retrato/paisagem | US$ 0,041 por imagem (era o que as figuras usavam) |
 
-**Total por vídeo: ~US$ 0,44 no Short** (era ~US$ 1,27) e **~US$ 0,71 no `--long-take`** (era ~US$ 1,78), fora os créditos de TTS e o tempo de máquina no Render.
+| Etapa | Short (antes → agora) | `--long-take` (antes → agora) |
+| --- | --- | --- |
+| Coleta de posts (`X_MAX_POSTS`: 200 → 50) | US$ 1,000 → **US$ 0,250** | US$ 1,000 → **US$ 0,250** |
+| Busca aberta por clipes (`X_MAX_POSTS_BUSCA`=30) | — | US$ 0,150 (inalterado) |
+| Lookup de mídias (`MAX_POSTS_MIDIA`: 12 / 16 posts) | US$ 0,060 (inalterado) | US$ 0,080 (inalterado) |
+| `gpt-5.6-luna` — tudo somado ¹ | ~US$ 0,044 (inalterado) | ~US$ 0,070 (inalterado) |
+| Figuras geradas (`gpt-image-2`) | US$ 0,041 → **US$ 0** | US$ 0,164 → **US$ 0** |
+| **Total por vídeo** | **US$ 1,15 → US$ 0,35** | **US$ 1,46 → US$ 0,55** |
+| ElevenLabs | ~420 créditos do plano | ~1.700 créditos |
+| Panorama do dia (YouTube Data API) | **US$ 0** — balde próprio de Search Queries | **US$ 0** |
 
-O maior custo de API continua sendo a leitura de posts do X — `X_MAX_POSTS` é a alavanca, e foi ela que o corte de 2026-08-24 puxou (200 → 50). A auditoria e as cartelas somam ~US$ 0,10 por vídeo (pool de mídias na X API + uma chamada de visão por mídia do pool + a chamada da nota de pertinência): para cortar isso, baixe `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` — mas lembre que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam a parte das cartelas sem mexer na auditoria dos clipes. A leitura da lista substituiu as várias consultas de busca mais uma requisição por conta das timelines: hoje a coleta é **uma** chamada paginada.
+¹ Estimado de baixo para cima a partir do código, não medido no painel da OpenAI: ~118 mil tokens de entrada e ~17 mil de saída por Short (~169 mil / ~30 mil no longo). O grosso da entrada são as **imagens de visão** — 6 clipes × 8 frames + 4 fotos + a capa de cada campeão do dossiê + 3 quadros da capa, todas reduzidas a 768px (`LADO_VISAO`) — mais as instruções, que vão repetidas em cada chamada de laudo. **É o número menos firme desta tabela; confira contra o painel da OpenAI antes de contar com ele.**
 
-**O que o corte de 2026-08-24 mudou, em números.** Três alavancas ao mesmo tempo: **3 Shorts por dia** em cada canal em vez de 6, **50 posts** lidos por vídeo em vez de 200 (com `JANELA_HORAS` virando teto duro: 8h no Short, 48h no longo) e **fim da geração de imagem**. Sobre o volume mensal (≈183 Shorts + ≈26 longos), a conta de API sai de **~US$ 510/mês para ~US$ 99/mês**. Os créditos de TTS caem de ~198k para ~121k por mês, e o tempo de máquina no Render dos crons de Short cai pela metade.
+**A conta é do X, não da OpenAI.** Com os valores acima, a leitura de posts é **~88% do custo de um Short** (US$ 0,31 dos US$ 0,35) e o Luna, ~12%. Foi por isso que o corte de 2026-08-24 puxou `X_MAX_POSTS` e a cadência: desligar a geração de imagem, sozinho, valia ~US$ 12/mês.
 
-**Cuidado com a cadência do `--long-take`**: cada vídeo longo consome ~1.700 créditos de TTS — três por semana em dois canais já são ~44k créditos/mês, e um cron diário sozinho passaria de 51k. O plano da ElevenLabs é o custo fixo que essa conta empurra.
+**As alavancas que sobraram, em ordem de tamanho.** `X_MAX_POSTS` (a coleta, US$ 0,25) e a **cadência dos crons** são as duas que movem a conta de verdade. Depois vem o pool de mídias — `MAX_POSTS_MIDIA` custa US$ 0,06 em leitura do X e ainda puxa a maior parte dos tokens de visão (cada clipe do pool são 8 frames num laudo), então `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` cortam nos dois lados; a contrapartida é que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam as cartelas sem mexer na auditoria dos clipes. No `--long-take`, `X_MAX_POSTS_BUSCA=0` corta US$ 0,15 por vídeo, ao preço de o formato voltar a travar no piso de 3 clipes. A leitura da lista é **uma** chamada paginada — não há o que economizar na forma dela, só no teto.
+
+**O que o corte de 2026-08-24 mudou, em números.** Três alavancas ao mesmo tempo: **3 Shorts por dia** em cada canal em vez de 6, **50 posts** lidos por vídeo em vez de 200 (com `JANELA_HORAS` virando teto duro: 8h no Short, 48h no longo) e **fim da geração de imagem**. Sobre o volume mensal (≈183 Shorts + ≈26 longos):
+
+| | Antes | Agora |
+| --- | --- | --- |
+| APIs (X + OpenAI) | ~US$ 456 | **~US$ 79** |
+| Render (tempo de máquina medido: Short ~7 min, longo ~16 min, `pro_plus` ≈ US$ 0,0051/min) | ~US$ 15 | **~US$ 9** |
+| **Total variável** | **~US$ 471** | **~US$ 88** |
+
+**Economia ≈ US$ 383/mês (~81%)**, repartida em ~US$ 209 da cadência, ~US$ 157 do teto de 50 posts, ~US$ 12 do fim da geração de imagem e ~US$ 6 do Render. Os créditos de TTS caem de ~198k para ~121k por mês — esse é o custo fixo que sobra.
+
+**Cuidado com a cadência do `--long-take`**: cada vídeo longo consome ~1.700 créditos de TTS — três por semana em dois canais já são ~44k créditos/mês, e um cron diário sozinho passaria de 51k.
+
+**Lição de método (2026-08-24):** a versão anterior desta seção foi escrita a partir de preços de memória e envelheceu em silêncio — superestimava a OpenAI em ~2x (o Luna caiu 80% em 30/07), o `gpt-image-2` em ~2x e o lookup de mídias em ~US$ 0,05. É o mesmo defeito que já custou caro na cota da Data API em 2026-08-24, quando `captions.*` foi citado com números errados de memória. **Preço de API não se estima de cabeça: confira na tabela oficial e anote a data da conferência.**
 
 ## Problemas comuns
 
