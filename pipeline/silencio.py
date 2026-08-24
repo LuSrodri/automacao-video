@@ -2,7 +2,7 @@
 
 Duas operações opostas vivem aqui, e as duas têm o mesmo ponto crítico: mexer
 no áudio SEM mexer no alinhamento da ElevenLabs deixaria todas as camadas
-ancoradas em citação (cortes, cartelas, figuras, manchetes, capítulos) apontando
+ancoradas em citação (cortes, cartelas, manchetes, capítulos) apontando
 para o segundo errado.
 
 1. `aparar_silencios` — a narração não pode ter trechos parados: o ffmpeg

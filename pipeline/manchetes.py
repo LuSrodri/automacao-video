@@ -6,7 +6,7 @@ de que a pauta mudou — o espectador não sabe onde está, não sabe o que aind
 vem, e não tem por que ficar.
 
 Esta camada resolve isso com duas peças, ambas ancoradas em CITAÇÕES LITERAIS
-da narração (o mesmo mecanismo das cartelas, das figuras e dos capítulos — o
+da narração (o mesmo mecanismo das cartelas e dos capítulos — o
 único jeito de o texto na tela cair no segundo em que a narração diz aquilo):
 
 1. AINDA NESTE VÍDEO — no canto inferior esquerdo, ACOMPANHANDO a pauta que a
@@ -450,7 +450,7 @@ def instantes_das_viradas(
 def janelas(manchetes: list[dict]) -> list[tuple[float, float]]:
     """(início, fim) de cada manchete — o que as outras camadas devem evitar.
 
-    Cartela e figura tomam o QUADRO INTEIRO no deslize: se uma delas entrar em
+    A cartela toma o QUADRO INTEIRO no deslize: se ela entrar em
     cima de uma manchete, ela cobre exatamente o texto que divide a pauta. As
     manchetes vêm da estrutura do roteiro e por isso ganham a prioridade.
     """

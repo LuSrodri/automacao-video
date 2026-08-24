@@ -769,8 +769,8 @@ NARRAÇÃO:
 9. No máximo 1 nome próprio de nicho no vídeo inteiro (veículo ou conta do X
    citado como FONTE não conta; nome universalmente conhecido não conta).
 10. Nenhuma frase pode depender do que está na tela ("como você vê no
-   gráfico", "veja a tabela") — as figuras entram por cima do vídeo, mas a
-   narração tem que se sustentar de olhos fechados.
+   gráfico", "veja a tabela") — a narração tem que se sustentar de olhos
+   fechados.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO
 invente problema: o que segue as regras passa, e "aprovado" = true com zero
@@ -1239,12 +1239,12 @@ não escolhe os clipes — um editor de cortes casa cada um com a narração dep
 — mas escreva o texto SABENDO disso: descreva cenas que os posts da trend
 documentam em vídeo, e lembre que o primeiro clipe + a pergunta de abertura
 decidem o "viewed vs swiped".
-Por cima dos clipes o pipeline sobrepõe, em momentos-chave, GRÁFICOS, TABELAS,
-INFOGRÁFICOS e CARTAZES gerados a partir dos DADOS que você escreveu — eles são
-ancorados em citações literais da sua narração. Então: sempre que houver um
-número, uma comparação (antes/depois, empresa A vs empresa B) ou uma lista
-curta no material recebido, ESCREVA-A explicitamente na narração, com o valor e
-a unidade. Um dado que você não falar não vira figura. Ao mesmo tempo, a
+A TELA NÃO EXPLICA NADA POR VOCÊ. O vídeo é clipe do X, e mais nada — não
+existe gráfico, tabela nem cartaz sobreposto (as figuras geradas saíram em
+2026-08-24). Então todo dado tem que estar DITO: sempre que houver um número,
+uma comparação (antes/depois, empresa A vs empresa B) ou uma lista curta no
+material recebido, ESCREVA-A explicitamente na narração, com o valor e a
+unidade — falado é o único jeito de o espectador receber. Pelo mesmo motivo, a
 narração precisa se sustentar de olhos fechados: NUNCA escreva "como você vê no
 gráfico", "veja a tabela" nem qualquer referência ao que está na tela.
 
@@ -1441,13 +1441,13 @@ estática ocupando a tela). Você não escolhe os clipes — um editor de cortes
 cada um com a narração depois — mas escreva sabendo disso: fale de cenas que os
 posts documentam em vídeo, e lembre que o primeiro clipe + a pergunta de
 abertura decidem quem fica.
-Por cima dos clipes o pipeline sobrepõe GRÁFICOS, TABELAS, INFOGRÁFICOS e
-CARTAZES gerados a partir dos DADOS que você escreveu, ancorados em citações
-literais da narração. Então diga os números por extenso na narração (valor e
-unidade), e sempre que houver comparação (antes/depois, empresa A vs empresa B)
-ou uma sequência curta de itens, ESCREVA-A — dado que você não falar não vira
-figura. A regra "sem referência ao que está na tela" continua valendo: nunca
-"como você vê no gráfico".
+A TELA NÃO EXPLICA NADA POR VOCÊ: o vídeo é clipe do X, sem gráfico, tabela ou
+cartaz sobreposto (as figuras geradas saíram em 2026-08-24). Diga os números por
+extenso na narração (valor e unidade), e sempre que houver comparação
+(antes/depois, empresa A vs empresa B) ou uma sequência curta de itens,
+ESCREVA-A — dado que você não falar o espectador não recebe. A regra "sem
+referência ao que está na tela" continua valendo: nunca "como você vê no
+gráfico".
 
 NARRAÇÃO EXPRESSIVA — insira audio tags do ElevenLabs v3 no texto_video:
 palavras em inglês entre colchetes, imediatamente antes do trecho que

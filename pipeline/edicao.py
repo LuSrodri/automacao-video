@@ -21,8 +21,8 @@ que orientar: o clipe horizontal simplesmente ganha barras borradas em cima e
 embaixo do quadro vertical, como sempre foi antes das molduras. Não
 reintroduzir cenário nenhum sem pedido explícito.
 
-CARROSSEL. As cartelas de imagem (cartelas.py) e as figuras do gpt-image-2
-(figuras.py) não são cartões sobrepostos ao clipe: elas ocupam o quadro inteiro
+CARROSSEL. As cartelas de imagem (cartelas.py) não são cartões sobrepostos ao
+clipe: elas ocupam o quadro inteiro
 e entram DESLIZANDO. No momento-chave o conteúdo corre PARA A ESQUERDA e a
 imagem entra pela direita no lugar do vídeo; no fim da janela o movimento se
 inverte e o vídeo volta. É um carrossel de duas posições: o clipe e a imagem do
@@ -35,8 +35,9 @@ pela própria borda dele — não há máscara nenhuma no ffmpeg. O deslize sobr
 Com a imagem tomando o quadro inteiro, o DESFOQUE do que ficava atrás das
 cartelas (CARTELA_BLUR_*) perdeu função e saiu em 2026-08-09: não há mais nada
 atrás para tirar de foco. Os INFOGRÁFICOS ANIMADOS montados em ffmpeg
-(grafico.py) já haviam sido REMOVIDOS em 2026-08-04 — os "big numbers" da tela
-vêm só das figuras do gpt-image-2; não reintroduzir sem pedido explícito.
+(grafico.py) já haviam sido REMOVIDOS em 2026-08-04, e as FIGURAS geradas pelo
+gpt-image-2 (figuras.py) em 2026-08-24, por custo — a tela não tem mais "big
+number" nenhum; não reintroduzir nem um nem outro sem pedido explícito.
 
 MANCHETES (2026-08-23, só no formato longo). Sobre tudo isso entra o painel de
 texto do canto inferior esquerdo (manchetes.py): o índice "Ainda neste
@@ -457,7 +458,6 @@ def montar_video(
     altura: int,
     legendas: Path | None = None,
     cartelas: list[dict] | None = None,
-    figuras: list[dict] | None = None,
     manchetes: list[dict] | None = None,
     publico: str = "brasil",
     formato: str = "curto",
@@ -479,10 +479,6 @@ def montar_video(
     "inicio_s": float, "dur_s": float}, ...], cada uma um PNG do TAMANHO EXATO
     do quadro. Entram deslizando, ocupando a tela toda no lugar do clipe, e
     saem pelo deslize de volta.
-
-    `figuras`: gráficos, tabelas e cartazes gerados pelo gpt-image-2
-    (figuras.py), no mesmo formato das cartelas e tratados exatamente como
-    elas na montagem; a diferença está na origem da imagem, não no ffmpeg.
 
     `manchetes`: os painéis de texto do formato longo (manchetes.py) —
     [{"imagem": str, "inicio_s": float, "dur_s": float, "x": int, "y": int},
@@ -508,12 +504,10 @@ def montar_video(
         )
 
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
-    # Cartelas e figuras compartilham a camada: as duas são imagens que tomam o
-    # quadro pelo mesmo deslize. Ordenadas pelo início para o log e a pilha
-    # ficarem previsíveis.
-    cartelas = sorted(
-        (cartelas or []) + (figuras or []), key=lambda c: float(c["inicio_s"])
-    )
+    # A camada do carrossel é só das cartelas desde 2026-08-24, quando as
+    # figuras do gpt-image-2 saíram (custo). Ordenadas pelo início para o log e
+    # a pilha ficarem previsíveis.
+    cartelas = sorted(cartelas or [], key=lambda c: float(c["inicio_s"]))
 
     # TELA CHEIA: a área útil de tudo é o quadro inteiro. Estes quatro nomes
     # sobrevivem à remoção dos cenários porque são o retângulo contra o qual
@@ -552,7 +546,7 @@ def montar_video(
     # Janela curta demais não comporta os dois deslizes mais o tempo de leitura
     # entre eles: a imagem entraria e já sairia, sem ninguém ler o que ela
     # mostra. Quem chama já respeita DUR_MINIMA (2,2s nas cartelas, 2,6s nas
-    # figuras); isto é a guarda.
+    # cartelas); isto é a guarda.
     pares_cart = [
         (c, (a, b))
         for c, (a, b) in zip(cartelas, janelas_cart)
@@ -660,7 +654,7 @@ def montar_video(
         )
         corrente = f"f{i}"
 
-    # Imagens do carrossel (cartelas.py e figuras.py): cada uma é um PNG do
+    # Imagens do carrossel (cartelas.py): cada uma é um PNG do
     # tamanho do quadro, que espera FORA dele, à direita, e entra empurrada pelo
     # mesmo deslocamento que tira o clipe. O que sobra fora do quadro é
     # recortado pela borda dele.
@@ -713,7 +707,7 @@ def montar_video(
         idx_man = prox_entrada
         prox_entrada += 1
         # O painel usa EXATAMENTE as mesmas construções da cartela, que é o
-        # caminho comprovado no container (2026-08-24: as cartelas e as figuras
+        # caminho comprovado no container (2026-08-24: as cartelas
         # apareceram no vídeo publicado; as manchetes, não). Saíram as duas
         # coisas que só a manchete tinha:
         #   - os dois `fade` de alfa, que dependiam do relógio INTERNO do PNG

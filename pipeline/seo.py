@@ -370,7 +370,7 @@ def capitulos(
     """Capítulos do vídeo longo, ancorados na narração; vazio se não fecham.
 
     Cada tópico do roteiro traz uma CITAÇÃO literal do trecho da narração em
-    que ele começa (mesmo mecanismo das cartelas e das figuras): a citação é
+    que ele começa (mesmo mecanismo das cartelas): a citação é
     procurada no texto e o alinhamento do ElevenLabs devolve o instante exato.
     Capítulo com carimbo chutado seria pior que capítulo nenhum — ele promete
     ao espectador um ponto do vídeo que não existe.

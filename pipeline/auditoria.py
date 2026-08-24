@@ -170,7 +170,7 @@ NOTA_MINIMA = 3  # abaixo disto a mídia não entra no vídeo
 # do contexto").
 #
 # O clipe do X entra como FUNDO de um vídeo que já é cheio de camadas: legendas
-# grandes queimadas, cartelas de imagem, figuras geradas e o crédito de
+# grandes queimadas, cartelas de imagem e o crédito de
 # reprodução. Um clipe que também é texto empilha duas leituras concorrentes na
 # mesma tela e o espectador não faz nenhuma das duas. Texto PARADO é o caso
 # pior: ele não passa — fica ali os segundos inteiros do corte, competindo com

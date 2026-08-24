@@ -40,7 +40,7 @@ BRANCO = (255, 255, 255)
 MAGENTA = (255, 42, 122)
 CIANO = (0, 229, 255)
 AMARELO = (255, 214, 0)
-LARANJA = (232, 89, 12)  # a mesma cor de destaque das figuras (figuras.ESTILO)
+LARANJA = (232, 89, 12)  # a cor de destaque da identidade do canal
 
 # Cores de destaque que uma peça pode sortear, na ordem de contraste sobre o
 # preto. A manchete usa sempre a primeira (a identidade do vídeo não pode

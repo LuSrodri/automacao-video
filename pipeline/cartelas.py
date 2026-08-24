@@ -20,9 +20,9 @@ Movimento (2026-08-09, pedido do usuário): a cartela não é um cartão sobrepo
 ao clipe. Ela é o QUADRO INTEIRO e entra DESLIZANDO — o conteúdo corre para a
 esquerda, a imagem entra pela direita, e no fim da janela o movimento se inverte
 e o vídeo retorna (ver edicao.py). Aqui só se renderiza a imagem parada, do
-tamanho exato do quadro; o movimento inteiro é do ffmpeg. As figuras geradas
-(figuras.py) seguem a mesma regra, para as duas camadas serem a mesma coisa na
-tela.
+tamanho exato do quadro; o movimento inteiro é do ffmpeg. É a ÚNICA camada de
+imagem do vídeo desde 2026-08-24, quando as figuras geradas pelo gpt-image-2
+(figuras.py) foram removidas por custo.
 
 Etapa opcional: qualquer falha (rede, GPT, Pillow, citação não encontrada) só
 deixa o vídeo sem cartelas — nunca derruba o pipeline.
@@ -46,7 +46,7 @@ DUR_CARTELA = 3.6  # s; tempo-alvo de cada cartela na tela
 # também não comporta os dois deslizes mais a leitura (MIN_JANELA_CARROSSEL,
 # 1,84s).
 DUR_MINIMA = max(2.2, MIN_JANELA_CARROSSEL)
-GAP_CARTELAS = 1.2  # s; respiro mínimo entre cartelas e para as figuras
+GAP_CARTELAS = 1.2  # s; respiro mínimo entre cartelas e para as manchetes
 # O gancho é o que decide o swipe: os primeiros segundos ficam com o clipe
 # limpo, sem nada por cima.
 INICIO_MINIMO = 3.0
@@ -183,14 +183,15 @@ def montar_tela(
 ) -> Path:
     """Renderiza a imagem do tamanho EXATO do quadro; devolve o PNG.
 
-    Compartilhada com figuras.py, porque as duas camadas são a mesma coisa na
-    tela: uma imagem que toma o quadro inteiro no lugar do vídeo.
+    Era compartilhada com figuras.py, que saiu em 2026-08-24; a regra que ela
+    implementa é a mesma: uma imagem que toma o quadro inteiro no lugar do
+    vídeo.
 
     A imagem entra INTEIRA (nada de recorte que corte rosto ou número), e o que
     sobra da proporção é preenchido pela própria imagem ampliada, borrada e
     escurecida — o mesmo tratamento que o clipe já recebe no fundo, em vez de
     duas tarjas pretas. `rodape` é o crédito (foto de terceiro) ou a etiqueta do
-    canal (figura desenhada), numa faixa na base.
+    canal, numa faixa na base.
     """
     from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 

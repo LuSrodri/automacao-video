@@ -341,7 +341,7 @@ TIPOS_MATERIAL = [
 
 # Quanto da tela é texto escrito (2026-08-07). Nasce de um pedido direto: clipe
 # de fundo cheio de texto — e principalmente texto PARADO — não pode entrar. O
-# vídeo já tem legendas grandes queimadas, cartelas e figuras por cima; um
+# vídeo já tem legendas grandes queimadas e cartelas por cima; um
 # clipe que também é texto vira uma tela onde nada se lê, e texto parado num
 # fundo em movimento é a versão pior disso, porque fica lá os segundos todos.
 # A escala é ordenada e a auditoria compara por posição (ver auditoria.py).

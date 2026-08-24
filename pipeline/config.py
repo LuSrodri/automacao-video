@@ -47,16 +47,16 @@ AVISO_DADOS_EXTERNOS = (
 # --- IDIOMA DO CANAL ---------------------------------------------------------
 # Regra do usuário, sem exceção: canal brasileiro publica TUDO em português,
 # canal americano publica TUDO em inglês. "Tudo" inclui o que ninguém lê como
-# texto do canal na hora de escrever prompt — o título de um gráfico desenhado,
-# o rótulo de uma barra, a frase da capa.
+# texto do canal na hora de escrever prompt — a manchete de uma pauta, a frase
+# da capa.
 #
 # O idioma é DADO do pipeline (`cfg.publico`), nunca inferido pelo modelo. Isso
 # está aqui, e não em cada módulo, porque o defeito já apareceu duas vezes pelo
 # mesmo motivo: um prompt inteiro escrito em português mandando o modelo usar "o
 # mesmo idioma do título" / "o idioma da narração". Contra o prompt em
 # português, esse sinal fraco perde — a capa do canal americano saiu em
-# português em 2026-08-04, e as figuras (título e rótulos DESENHADOS na imagem)
-# ainda estavam nessa condição em 2026-08-05.
+# português em 2026-08-04, e as figuras geradas (removidas em 2026-08-24) ainda
+# estavam nessa condição em 2026-08-05.
 IDIOMA_CANAL = {"brasil": "PORTUGUÊS DO BRASIL", "usa": "AMERICAN ENGLISH"}
 
 # Palavras funcionais curtas e exclusivas de cada idioma, usadas só para pegar o
@@ -160,7 +160,6 @@ LONGO_MAX_CLIPES = 8  # clipes do X por vídeo (3 seguram mal 2 minutos de tela)
 LONGO_MAX_POSTS_MIDIA = 16  # posts da trend consultados p/ achar esses clipes
 LONGO_MAX_CARTELAS = 4  # cartelas de imagem sobrepostas (dobro de tempo de tela)
 LONGO_MAX_FOTOS = 6  # fotos dos posts baixadas para alimentar as cartelas
-LONGO_MAX_FIGURAS = 4  # figuras/gráficos gerados (dobro de tempo de tela)
 # Velocidade NORMAL: o formato longo é análise, e quem veio para entender uma
 # cadeia de causa e efeito não acompanha narração acelerada. O Short é o
 # contrário — ver Config.velocidade.
@@ -464,7 +463,10 @@ class Config:
     # lia um valor congelado. Com um ponto de contato só, existe uma verdade, e
     # ela é lida fresca a cada execução.
     render_token_service_id: str = ""
-    x_max_posts: int = 200  # teto de posts lidos por execução (leitura é paga)
+    # TETO DE POSTS LIDOS POR VÍDEO — a leitura da X API é paga por post, e
+    # este é o maior item da conta. Caiu de 200 para 50 em 2026-08-24, no corte
+    # de custo pedido pelo usuário: 50 posts por vídeo, nos dois formatos.
+    x_max_posts: int = 50
     # Busca ABERTA por clipes do assunto, fora das contas do canal. EXCLUSIVA
     # do formato longo: as fontes aqui não são curadas, a auditoria julga
     # pertinência e não procedência, e o crédito de reprodução leva a @ da conta
@@ -480,12 +482,6 @@ class Config:
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
     tts_model: str = "eleven_v3"
-    # Modelo de geração de imagem das figuras/gráficos/tabelas (figuras.py).
-    imagem_model: str = "gpt-image-2"
-    # Qualidade de renderização da imagem ("low" | "medium" | "high" | "auto").
-    # "medium" é o piso para figura com texto: em "low" o gpt-image-2 entrega
-    # rótulo borrado, e rótulo borrado num gráfico não vale o custo da chamada.
-    imagem_qualidade: str = "medium"
     video_duracao: int = 25
     # Velocidade da narração (e, por consequência, do ritmo do vídeo inteiro:
     # os cortes, as legendas e as sobreposições saem do alinhamento, que é
@@ -493,7 +489,11 @@ class Config:
     # formato longo roda em velocidade NORMAL, porque é análise e o espectador
     # precisa acompanhar o raciocínio (ver ativar_formato_longo).
     velocidade: float = 1.25
-    janela_horas: int = 24
+    # JANELA DE COLETA, e TETO DURO de quanto o pipeline olha para trás (ver
+    # x_client.JANELAS_FALLBACK). 8h desde 2026-08-24: com 3 Shorts por dia em
+    # cada canal, três janelas de 8h cobrem o dia inteiro sem se repetirem. O
+    # formato longo roda com 48 (JANELA_HORAS no cron dele).
+    janela_horas: int = 8
     num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
     formato: str = "curto"  # "curto" (Shorts 9:16) ou "longo" (--long-take, 16:9)
@@ -507,12 +507,10 @@ class Config:
     max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
     # Imagens que tomam o quadro pelo deslize do carrossel, por vídeo.
     # Caiu de 2 para 1 em 2026-08-09, junto com o Short de 25 segundos: cada
-    # imagem tira ~4s de clipe da tela, e 2 cartelas + 2 figuras deixariam a
-    # maior parte do Short em imagem parada — o oposto do formato.
+    # imagem tira ~4s de clipe da tela, e duas deixariam a maior parte do Short
+    # em imagem parada — o oposto do formato. É a ÚNICA camada de imagem que
+    # sobrou: as figuras do gpt-image-2 saíram em 2026-08-24, por custo.
     max_cartelas: int = 1
-    # Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
-    # infográfico, diagrama ou cartaz do dado que a narração cita. 0 desliga.
-    max_figuras: int = 1
     # MANCHETES (manchetes.py, 2026-08-23): o índice "Ainda neste episódio" na
     # abertura e o painel que nomeia cada pauta quando ela vira. Só o formato
     # LONGO usa — no Short a legenda queimada já ocupa a tela e 25 segundos não
@@ -590,18 +588,16 @@ def carregar_config(exige_lista: bool = True) -> Config:
         render_token_service_id=(
             os.getenv("RENDER_TOKEN_SERVICE_ID", "") or ""
         ).strip(),
-        x_max_posts=int(os.getenv("X_MAX_POSTS", "200")),
+        x_max_posts=int(os.getenv("X_MAX_POSTS", "50")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
         text_model=os.getenv("TEXT_MODEL", "gpt-5.6-luna"),
-        imagem_model=os.getenv("IMAGEM_MODEL", "gpt-image-2"),
-        imagem_qualidade=os.getenv("IMAGEM_QUALIDADE", "medium"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
         video_duracao=int(os.getenv("VIDEO_DURACAO", "25")),
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", "1.25")),
-        janela_horas=int(os.getenv("JANELA_HORAS", "24")),
+        janela_horas=int(os.getenv("JANELA_HORAS", "8")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
         # VARREDURA `has:videos` LIGADA no curto desde 2026-08-17; BUSCA ABERTA
         # segue desligada, por decisão do usuário. Ela ficou zerada enquanto se
@@ -623,7 +619,6 @@ def carregar_config(exige_lista: bool = True) -> Config:
         pool_extra_clipes=int(os.getenv("POOL_EXTRA_CLIPES", "3")),
         max_fotos=int(os.getenv("MAX_FOTOS", "4")),
         max_cartelas=int(os.getenv("MAX_CARTELAS", "1")),
-        max_figuras=int(os.getenv("MAX_FIGURAS", "1")),
         youtube_client_id=os.getenv("YOUTUBE_CLIENT_ID", ""),
         youtube_client_secret=os.getenv("YOUTUBE_CLIENT_SECRET", ""),
         youtube_refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN", ""),
@@ -700,7 +695,6 @@ def ativar_formato_longo(cfg: Config) -> Config:
     cfg.x_max_posts_busca = int(os.getenv("X_MAX_POSTS_BUSCA", "30"))
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
     cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))
-    cfg.max_figuras = int(os.getenv("LONG_MAX_FIGURAS", str(LONGO_MAX_FIGURAS)))
     # Manchetes: ligadas por padrão no longo (é o formato que sofria de vídeo
     # corrido, sem marca de troca de pauta).
     cfg.manchetes = os.getenv("LONG_MANCHETES", "1").strip().lower() not in (

@@ -79,18 +79,12 @@ Fluxo:
 10. Cartelas de imagem nos momentos-chave: foto do post da trend, auditada
     igual aos clipes, tomando a TELA INTEIRA quando a narração nomeia o que ela
     mostra.
-11. Figuras geradas pelo gpt-image-2 (figuras.py): gráfico, tabela,
-    infográfico, diagrama ou cartaz DESENHADO a partir dos números que a
-    narração diz — ancorado na citação literal do trecho, e só com dado que a
-    narração falou. São a ÚNICA fonte de "big number" na tela: os infográficos
-    que o ffmpeg montava a partir de PNGs do Pillow foram removidos em
-    2026-08-04. Cartelas e figuras entram e saem pelo CARROSSEL (item 12).
-11b. MANCHETES (manchetes.py, só no formato longo, 2026-08-23): o índice
+11. MANCHETES (manchetes.py, só no formato longo, 2026-08-23): o índice
     "Ainda neste episódio" logo depois da pergunta de abertura (no máximo 10
     segundos, um tópico de cada vez) e uma manchete no canto inferior a cada
     troca de pauta, ancorada na citação do tópico. É a camada que divide um
     bloco corrido de 135 segundos em capítulos que o espectador percebe.
-    Planejada ANTES das cartelas e das figuras, que desviam das janelas dela.
+    Planejada ANTES das cartelas, que desviam das janelas dela.
 12. ffmpeg monta o vídeo em TELA CHEIA (2026-08-16, pedido do usuário): o
     conteúdo ocupa o QUADRO INTEIRO, com o preenchimento de fundo em desfoque
     do próprio clipe. Saíram os cenários que embrulhavam o vídeo — a moldura de
@@ -99,7 +93,7 @@ Fluxo:
     (cobertura total, sem instante vazio) + clipe nítido centrado + crossfade
     curto + legendas grandes (Archivo Black, altura levemente reduzida) +
     crédito de reprodução no canto superior direito ("Reprodução Imagem: X" +
-    conta do post). As cartelas e as figuras entram por um CARROSSEL de duas
+    conta do post). As cartelas entram por um CARROSSEL de duas
     posições: o conteúdo desliza para a esquerda e a imagem ocupa a tela; no
     fim da janela ela desliza de volta e o vídeo retorna. SEM música de fundo.
 13. O resultado é salvo em output/ e registrado em videos.txt, e publicado no
@@ -123,8 +117,7 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
   explica um acontecimento contemporâneo cobrindo de 3 a 5 TÓPICOS — recortes
   diferentes do mesmo fato, tirados do próprio acontecimento (quem fez, quem
   paga, quem ganha, quem perde, o que vem depois). Usa até 8 clipes do X, até
-  4 cartelas, até 4 figuras geradas, e a descrição sai com a lista de fontes
-  reais.
+  4 cartelas, e a descrição sai com a lista de fontes reais.
 
 Idioma: o canal decide, nunca o modelo. Canal brasileiro publica TUDO em
 português (título, descrição, narração, capa); canal americano (`-usa`), TUDO
@@ -163,7 +156,6 @@ from pipeline.escritor import (
     selecionar_trend,
     selecionar_trends_longo,
 )
-from pipeline.figuras import gerar_figuras
 from pipeline.legendas import gerar_legendas
 from pipeline.manchetes import (
     gerar_manchetes,
@@ -479,7 +471,7 @@ def main() -> None:
     # acompanha a visual. Fica DEPOIS da conferência de piso de propósito: o
     # piso mede FALA, e somar silêncio à duração deixaria um roteiro curto
     # demais passar por causa do respiro. E fica antes de tudo que ancora em
-    # citação (cortes, cartelas, figuras, manchetes, capítulos), que passam a
+    # citação (cortes, cartelas, manchetes, capítulos), que passam a
     # ler o alinhamento já deslocado.
     if cfg.formato == "longo" and cfg.pausa_pauta_s > 0:
         narracao, alinhamento, _ = inserir_pausas(
@@ -570,7 +562,7 @@ def main() -> None:
     # Manchetes (só no longo): o índice "Ainda neste episódio" na abertura e o
     # painel que nomeia cada pauta quando ela vira. Vêm PRIMEIRO na fila das
     # sobreposições porque saem da estrutura do roteiro — as camadas que tomam
-    # o quadro inteiro (cartela, figura) é que desviam delas, e não o
+    # o quadro inteiro (cartela) é que desviam delas, e não o
     # contrário: uma imagem em cima do painel taparia justamente a marca de
     # troca de pauta.
     manchetes = gerar_manchetes(
@@ -597,27 +589,6 @@ def main() -> None:
         ocupadas=janelas_manchetes(manchetes),
     )
 
-    # Figuras geradas (gpt-image-2): gráfico, tabela, infográfico, diagrama ou
-    # cartaz DESENHADO a partir dos números que a narração diz. São a ÚNICA
-    # fonte de "big number" na tela desde 2026-08-04 — os infográficos que o
-    # ffmpeg montava a partir de PNGs do Pillow (grafico.py) foram removidos a
-    # pedido do usuário. Entra por último na fila de sobreposições porque é a
-    # camada mais cara: o que já está marcado pelas cartelas é desviado aqui.
-    ocupadas = janelas_manchetes(manchetes) + [
-        (c["inicio_s"], c["inicio_s"] + c["dur_s"]) for c in cartelas
-    ]
-    marcar_memoria("antes das figuras")
-    figuras = gerar_figuras(
-        cfg,
-        roteiro["texto_video"],
-        trend_video,
-        alinhamento,
-        duracao,
-        pasta,
-        tela=(largura, altura),
-        ocupadas=ocupadas,
-    )
-
     marcar_memoria("antes da montagem")
     video_final = montar_video(
         narracao,
@@ -627,7 +598,6 @@ def main() -> None:
         altura,
         legendas=legendas,
         cartelas=cartelas,
-        figuras=figuras,
         manchetes=manchetes,
         publico=cfg.publico,
         formato=cfg.formato,

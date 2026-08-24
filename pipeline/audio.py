@@ -17,7 +17,7 @@ API_BASE = "https://api.elevenlabs.io/v1"
 # rápido é o que segura o feed — e o formato longo roda em 1.0, velocidade
 # normal, porque análise em fala apressada não é acompanhável. Os timestamps do
 # alinhamento são reescalados na mesma proporção, então cortes, legendas,
-# infográficos, cartelas e figuras seguem sincronizados sem saber disso.
+# infográficos e cartelas seguem sincronizados sem saber disso.
 
 
 def _acelerar_audio(audio: Path, fator: float) -> bool:

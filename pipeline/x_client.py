@@ -22,7 +22,9 @@ Sobra da arquitetura antiga uma única busca por `search/recent`,
 CLIPE de um assunto já escolhido, fora das contas do canal.
 
 Como a leitura é cobrada por post (~US$ 0,005 cada), X_MAX_POSTS limita a
-coleta e X_MAX_POSTS_BUSCA limita a busca aberta por clipes.
+coleta e X_MAX_POSTS_BUSCA limita a busca aberta por clipes. Desde 2026-08-24
+são 50 posts por vídeo nos dois formatos, e JANELA_HORAS é um TETO DURO de
+quanto o pipeline olha para trás (8h no Short, 48h no longo).
 
 Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes,
 ordenadas pelo VALOR DA INFORMAÇÃO (vazamento, exclusivo, urgência, número
@@ -52,21 +54,21 @@ LIST_TWEETS_ENDPOINT = "https://api.x.com/2/lists/{id}/tweets"
 
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 
-# Fallback de janela de coleta (2026-08-17). A janela curta existe para
-# execuções seguidas não pegarem os mesmos posts, mas em hora morta ela devolve
-# pouco ou nada — e aí abortar é a resposta errada: o problema não é defeito, é
-# um período sem notícia, e o certo é olhar mais para trás. As etapas dobram
-# até dois dias; alargar NÃO custa mais na X API (o teto de leitura é o
-# X_MAX_POSTS, a janela só decide de que intervalo saem esses posts).
-JANELAS_FALLBACK = (8, 12, 24, 48)
-# Posts abaixo disto não sustentam uma seleção: o GPT precisa de candidatas
-# para comparar contra a régua do canal, e escolher entre duas não é escolher.
-MIN_POSTS_JANELA = 20
-# Janela da BUSCA ABERTA por clipes (2026-08-17). Independente da janela de
-# coleta: lá se procura pauta que ainda não foi usada, aqui se procura imagem de
-# um assunto já escolhido — e imagem de um fato do dia continua sendo publicada
-# horas depois. Nunca encurta a janela vigente, só alarga.
-JANELA_BUSCA_HORAS = 24
+# FALLBACK DE JANELA (2026-08-17) REMOVIDO em 2026-08-24, junto com
+# MIN_POSTS_JANELA, que era o gatilho dele. Ele relia a mesma lista mais para
+# trás — 8h, 12h, 24h, 48h — quando a janela vinha pobre de posts ou de clipes.
+#
+# Saiu porque JANELA_HORAS virou TETO DURO de quanto conteúdo do X entra em cada
+# vídeo (8h no Short, 48h no longo, pedido do usuário), e porque a premissa que
+# o justificava era falsa: "alargar não custa mais na X API" ignorava que cada
+# etapa REFAZ a leitura inteira, e a leitura é paga por post — com
+# X_MAX_POSTS=50, uma execução azarada gastava 200. Ver `coletar_trends`.
+#
+# JANELA PRÓPRIA DA BUSCA ABERTA (2026-08-17) REMOVIDA no mesmo dia. Ela
+# alargava a busca por clipes para no mínimo 24h, argumentando que ali não se
+# procura pauta e sim imagem de um assunto já escolhido. JANELA_HORAS passou a
+# ser teto duro de conteúdo do X por vídeo, e a busca não é exceção. Na prática
+# nada muda: ela só roda no formato longo, que usa 48h.
 
 
 def obter_bearer(cfg: Config) -> str | None:
@@ -605,13 +607,11 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     # de todo modo — num clipe o que importa é o que aparece NA TELA, não o
     # idioma do post, e disso a auditoria de visão já cuida.
     query = f"({consulta}) has:videos -is:retweet -is:reply"
-    # JANELA PRÓPRIA (2026-08-17). A da coleta existe para execuções seguidas
-    # não repetirem PAUTA, e com JANELA_HORAS=4 ela é curta de propósito. Aqui
-    # não se procura pauta: o assunto já está escolhido, e o que se procura é
-    # imagem DELE. Um fato das 9h da manhã tem clipe publicado ao longo do dia
-    # inteiro, e herdar as 4h jogava fora justamente esse material.
-    horas = max(cfg.janela_horas, JANELA_BUSCA_HORAS)
-    inicio = datetime.now(timezone.utc) - timedelta(hours=horas)
+    # A janela é a MESMA da coleta desde 2026-08-24: JANELA_HORAS é teto duro
+    # de conteúdo do X por vídeo, e a busca não é exceção (ver o topo do
+    # módulo). Como ela só roda no formato longo, isto significa 48h — mais que
+    # as 24h da janela própria que ela tinha.
+    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
 
     print(f"[midia-x] Busca aberta por clipes sobre: {consulta}")
     posts = _consultar(token, query, inicio, min(max(orcamento, 10), 100))
@@ -838,41 +838,24 @@ def coletar_trends(cfg: Config) -> list[dict]:
     )
     posts = _coletar_da_lista(cfg, token)
 
-    # FALLBACK DE JANELA (2026-08-17) — este fica: não é um caminho alternativo
-    # de coleta, é a MESMA lista lida mais para trás. A janela de 4h existe para
-    # execuções seguidas não repetirem pauta, não para desistir quando o poço
-    # está seco (a primeira execução real, às 03:03 UTC, trouxe 5 candidatas e
-    # nenhuma com clipe).
+    # FALLBACK DE JANELA REMOVIDO em 2026-08-24 (ver o topo do módulo). Ele
+    # relia a MESMA lista mais para trás — 8h, 12h, 24h, 48h — quando a janela
+    # vinha pobre. Saiu por duas razões, nesta ordem:
+    #   1. JANELA_HORAS virou TETO DURO de conteúdo do X por vídeo (pedido do
+    #      usuário), e reabrir para 48h no Short furava justamente esse teto;
+    #   2. cada etapa refazia a leitura INTEIRA, e a leitura é paga por post:
+    #      com X_MAX_POSTS=50, uma execução azarada gastava 200.
     #
-    # O gatilho olha DUAS coisas, e a segunda foi aprendida na marra: o vídeo é
-    # montado só com clipe, então uma janela cheia de posts sem vídeo nenhum é
-    # tão inútil quanto uma janela vazia. Contando só o total, a execução das
-    # 03:10 UTC passou direto pelo fallback com 20+ posts e morreu logo depois
-    # em "5 candidatas sem post com vídeo".
-    def _insuficiente(lote: list[dict]) -> bool:
-        return len(lote) < MIN_POSTS_JANELA or not any(p["video"] for p in lote)
-
-    if posts and _insuficiente(posts):
-        original = cfg.janela_horas
-        for janela in JANELAS_FALLBACK:
-            if janela <= cfg.janela_horas:
-                continue
-            print(
-                f"[x] {len(posts)} post(s) na lista em {cfg.janela_horas}h, "
-                f"{sum(1 for p in posts if p['video'])} com clipe; "
-                f"reabrindo a janela para {janela}h..."
-            )
-            cfg.janela_horas = janela
-            posts = _coletar_da_lista(cfg, token)
-            if not _insuficiente(posts):
-                break
-        cfg.janela_horas = original
-
+    # O que sustenta a decisão é a aritmética nova: com 3 Shorts por dia e
+    # janela de 8h, cada execução tem o DOBRO do intervalo que tinha com 4h, e
+    # as três juntas cobrem o dia sem sobreposição. Se ainda assim a janela vier
+    # seca, a execução aborta — e abortar de graça é mais barato que insistir
+    # pagando. A escassez continua sendo medida logo abaixo (posts com clipe).
     if not posts:
         raise SystemExit(
-            f"A lista {cfg.x_list_id} não devolveu post nenhum nem alargando a "
-            f"janela até {JANELAS_FALLBACK[-1]}h. Confira se ela ainda tem "
-            "membros e se o token do X está válido."
+            f"A lista {cfg.x_list_id} não devolveu post nenhum nas últimas "
+            f"{cfg.janela_horas}h, que é o teto de conteúdo do X por vídeo. "
+            "Confira se ela ainda tem membros e se o token do X está válido."
         )
 
     # Quantos posts trazem clipe é O número que decide se há material: o vídeo é
@@ -947,7 +930,8 @@ def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
     if not trends:
         raise SystemExit(
             f"Nenhuma trend identificada nos {len(posts)} posts coletados. "
-            "Aumente JANELA_HORAS ou X_MAX_POSTS no .env."
+            "As alavancas são JANELA_HORAS e X_MAX_POSTS no .env — as duas "
+            "custam leitura paga na X API, então subi-las é decisão de gasto."
         )
 
     print(f"[x] {len(trends)} trends identificadas")
