@@ -47,10 +47,12 @@ Fluxo:
    dependência nenhuma do Firecrawl.
 5. GPT escreve o roteiro explicativo (análise/educacional) em tom adulto,
    citando as fontes (as contas do X que trouxeram o fato, e o veículo que elas
-   citam), na estrutura PERGUNTA ESQUISITA -> CONTEXTUALIZAÇÃO ->
-   DESENVOLVIMENTO -> CONSEQUÊNCIA -> CONCLUSÃO, com a conclusão respondendo a
-   pergunta de um jeito que emenda de volta nela quando o Short reinicia
-   (loop).
+   citam), na estrutura PREVIEW -> CONTEXTUALIZAÇÃO ->
+   ACONTECIMENTO -> CONSEQUÊNCIA -> CONCLUSÃO: a abertura DIZ o que o vídeo vai
+   entregar (sem dar o número, que é do acontecimento) e a conclusão entrega
+   isso de um jeito que emenda de volta no preview quando o Short reinicia
+   (loop). A pergunta esquisita que abria o Short saiu da narração em
+   2026-08-25; ela sobrou como campo, só para o par P:/R: da descrição.
 6. X API baixa um POOL de clipes de vídeo dos posts originais da trend (mais
    do que os 3 que entram na montagem, como folga para a auditoria), junto das
    fotos dos posts, que alimentam as cartelas. Imagem estática nunca ocupa a
