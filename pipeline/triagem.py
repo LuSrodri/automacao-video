@@ -73,7 +73,10 @@ def triar_material(cfg: Config, trends: list[dict], pasta: Path) -> None:
         if not laudo:
             continue
 
-        veto, _ = _motivo_do_veto(laudo, cfg.formato == "longo", True)
+        # Os mesmos vetos duros da auditoria, na mesma ordem: o que a amostra
+        # reprova aqui a candidata inteira perderia depois, com o roteiro já
+        # escrito e a visão já paga.
+        veto, _ = _motivo_do_veto(laudo, cfg.formato == "longo", True, True)
         trend["clipe_aprovado"] = not veto
         trend["clipe_motivo"] = veto
         # O arquivo fica: se esta trend for a escolhida, a auditoria reusa o

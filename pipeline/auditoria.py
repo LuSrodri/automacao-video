@@ -61,6 +61,18 @@ A auditoria roda em duas etapas, sobre um pool maior do que o necessário:
    Vale só para os clipes, que ficam em tela cheia por baixo das legendas
    queimadas — as cartelas passam com `vetar_texto=False`.
 
+5. VETO A TUDO QUE NÃO É LIVE FOOTAGE (2026-08-25), em código: o clipe só entra
+   se uma CÂMERA o filmou no mundo físico. Gravação de tela, slide,
+   apresentação, cartela, motion graphics, animação, render, vídeo gerado por
+   IA e gameplay saem — e sai também a MOLDURA, que é o caso que nenhum dos
+   vetos anteriores pegava: filmagem de verdade embrulhada em mockup de
+   celular, borda decorativa ou template com painel ao lado. Vale só para os
+   clipes (`vetar_nao_filmado`), pelo mesmo motivo dos itens 3 e 4: a cartela é
+   print e foto por definição. A visão responde `imagem_filmada` (midia_x.py) e
+   a regra mora aqui. É o veto mais amplo do módulo e roda PRIMEIRO — o tipo de
+   material, o texto e o movimento só interessam depois de o clipe ser
+   filmagem.
+
 A etapa 2 falha aberta (aviso no log e todo mundo passa): o veto duro já
 resolveu a reclamação principal, e derrubar o vídeo inteiro por um erro
 transitório da OpenAI desperdiçaria tudo que foi gasto antes. Já a decisão de
@@ -108,9 +120,15 @@ TIPOS_VETADOS = {"reportagem_tv", "logo_ou_marca"}
 # formato, que se sustenta em movimento — a cartela não prova fato nenhum, ela
 # só repete por escrito o que já está sendo dito e legendado por cima.
 #
+# 'gravacao_de_tela' ENTROU em 2026-08-25, com o veto a tudo que não é live
+# footage: captura de app, site, terminal, planilha ou gráfico de mercado não é
+# o fato sendo filmado, é uma tela de computador reproduzida. Fica aqui e não em
+# TIPOS_VETADOS pelo mesmo motivo da cartela — como CARTELA o print de tela é
+# material legítimo, e é justamente ele que mostra o post citado pela narração.
+#
 # Continua sendo material legítimo como CARTELA (a camada que chama com
 # `vetar_parado=False`): lá a imagem parada é justamente o que se quer mostrar.
-TIPOS_VETADOS_CLIPE: set[str] = {"cartela_ou_manchete"}
+TIPOS_VETADOS_CLIPE: set[str] = {"cartela_ou_manchete", "gravacao_de_tela"}
 
 # Fração de frames com busto falante a partir da qual o clipe É busto falante
 # (2026-08-17). Meia tela: acima da metade o vídeo é uma pessoa falando com
@@ -142,6 +160,28 @@ LIMITE_FALANDO = 0.5
 # de centro a centro de fatia — ela já sai ~1 fatia menor que a duração real do
 # clipe, e o piso é generoso de propósito por causa disso.
 PISO_DUR_UTIL_S = 5.0
+
+# VETO A TUDO QUE NÃO É LIVE FOOTAGE (2026-08-25, pedido do usuário: "veto
+# qualquer vídeo do X que não seja live footage — gravação de tela, slides,
+# apresentações, molduras e afins"). O clipe só entra em tela cheia se uma
+# CÂMERA o filmou no mundo físico; o que nasceu dentro de um computador
+# (captura de tela, slide, cartela, motion graphics, animação, render, vídeo de
+# IA, gameplay) ou foi remontado por cima de outra mídia (MOLDURA: filmagem
+# dentro de mockup de celular, de borda decorativa, de template com painel ao
+# lado) sai da disputa.
+#
+# É veto duro, sem exceção de contexto e sem exceção de formato, pela mesma
+# razão do veto por falta de movimento: o problema é o que o material É, não a
+# relação dele com a narração. E a nota de pertinência não resolveria — ela
+# PREMIA a peça montada, porque quanto mais o clipe é um slide sobre o assunto,
+# mais exatamente ele "mostra o que a narração diz" (foi o que aconteceu com a
+# cartela da Linux Foundation, nota 5). Vale só nos CLIPES: a cartela é print e
+# foto por definição, e barrar material não filmado lá derrubaria o print do
+# post citado, que é o material daquela camada.
+#
+# A medida é `imagem_filmada` (midia_x.py). Laudo sem o campo não veta ninguém,
+# como no resto do módulo: ausência de medida não é prova. Desligar com
+# VETO_NAO_FILMADO=0 no .env/Render.
 
 # VETO A LEGENDA QUEIMADA (2026-08-17, pedido do usuário). O vídeo do canal
 # queima as próprias legendas sobre o clipe; um clipe que já vem legendado põe
@@ -404,6 +444,24 @@ def _veto_parado(laudo: dict) -> str:
     return ""
 
 
+def _veto_nao_filmado(laudo: dict) -> str:
+    """Motivo do veto a material que não é live footage; vazio quando pode entrar.
+
+    Só o clipe passa por aqui (ver `auditar_midias`). O campo é um booleano do
+    clipe INTEIRO, e não uma fração por frame como o busto falante: um vídeo
+    metade filmado e metade slide continua sendo uma peça montada, e é a peça
+    que o canal não usa.
+    """
+    if laudo.get("imagem_filmada") is not False:
+        return ""
+    tipo = (laudo.get("tipo_material") or "").strip()
+    return (
+        "material que não é live footage (gravação de tela, slide, cartela, "
+        "animação ou filmagem dentro de moldura)"
+        + (f"; a visão classificou como '{tipo}'" if tipo else "")
+    )
+
+
 def _veto_legendas(laudo: dict) -> str:
     """Motivo do veto por legenda queimada; vazio quando o clipe pode entrar.
 
@@ -423,15 +481,25 @@ def _veto_legendas(laudo: dict) -> str:
     )
 
 
-def _motivo_do_veto(laudo: dict, marcar_tv: bool, vetar_parado: bool) -> tuple[str, bool]:
+def _motivo_do_veto(
+    laudo: dict,
+    marcar_tv: bool,
+    vetar_parado: bool,
+    vetar_nao_filmado: bool = True,
+) -> tuple[str, bool]:
     """(motivo do veto, marcar como representação visual).
 
     Motivo vazio = a mídia segue para a nota de pertinência. Com `marcar_tv`
     (formato longo), telejornal e selo de emissora não vetam mais: a mídia
     passa marcada, e a marcação vira dessaturação + etiqueta na montagem — mas
-    o veto por falta de movimento roda ANTES e não conhece essa exceção, então
-    âncora falando em quadro sai mesmo no formato longo.
+    os vetos por FALTA DE MOVIMENTO e por MATERIAL NÃO FILMADO rodam ANTES e
+    não conhecem essa exceção, então âncora falando em quadro e slide de
+    telejornal saem mesmo no formato longo.
     """
+    if vetar_nao_filmado:
+        nao_filmado = _veto_nao_filmado(laudo)
+        if nao_filmado:
+            return nao_filmado, False
     if vetar_parado:
         parado = _veto_parado(laudo)
         if parado:
@@ -523,6 +591,7 @@ def auditar_midias(
     pasta: Path | None = None,
     vetar_texto: bool = True,
     vetar_parado: bool = True,
+    vetar_nao_filmado: bool = True,
 ) -> list[dict]:
     """Aprova até `limite` mídias, da mais pertinente para a menos.
 
@@ -535,12 +604,14 @@ def auditar_midias(
     Com `pasta`, grava `auditoria_{rotulo}.json` com aprovadas e reprovadas
     para dar rastro do que foi barrado e por quê.
 
-    `vetar_texto` liga o veto por texto na tela (ver DENSIDADE_VETO) e
-    `vetar_parado`, o veto por falta de movimento (ver `_veto_parado`). Os dois
-    valem para os CLIPES, que são o corpo do vídeo. As cartelas passam False
-    nos dois: elas são imagens PARADAS por definição — o print do post citado,
-    o rosto de quem foi nomeado —, e aplicar ali as regras dos clipes barraria
-    exatamente o material que aquela camada existe para mostrar.
+    `vetar_texto` liga o veto por texto na tela (ver DENSIDADE_VETO),
+    `vetar_parado`, o veto por falta de movimento (ver `_veto_parado`), e
+    `vetar_nao_filmado`, o veto a tudo que não é live footage (ver
+    `_veto_nao_filmado`). Os três valem para os CLIPES, que são o corpo do
+    vídeo. As cartelas passam False nos três: elas são imagens PARADAS por
+    definição — o print do post citado, o rosto de quem foi nomeado —, e
+    aplicar ali as regras dos clipes barraria exatamente o material que aquela
+    camada existe para mostrar.
     """
     if not midias:
         return []
@@ -548,6 +619,9 @@ def auditar_midias(
     marcar_tv = getattr(cfg, "formato", "curto") == "longo"
     vetar_texto = vetar_texto and getattr(cfg, "veto_texto_denso", True)
     vetar_parado = vetar_parado and getattr(cfg, "veto_clipe_parado", True)
+    vetar_nao_filmado = vetar_nao_filmado and getattr(
+        cfg, "veto_nao_filmado", True
+    )
 
     candidatas: list[dict] = []
     reprovadas: list[dict] = []
@@ -556,7 +630,9 @@ def auditar_midias(
         if not laudo:
             reprovadas.append(dict(m, motivo="sem laudo de visão"))
             continue
-        veto, marcada = _motivo_do_veto(laudo, marcar_tv, vetar_parado)
+        veto, marcada = _motivo_do_veto(
+            laudo, marcar_tv, vetar_parado, vetar_nao_filmado
+        )
         if veto:
             reprovadas.append(dict(m, laudo=laudo, motivo=veto))
             continue

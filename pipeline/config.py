@@ -556,6 +556,11 @@ class Config:
     # (auditoria.py). Desligar aceita de volta o busto falante e a foto com
     # áudio como fundo do vídeo.
     veto_clipe_parado: bool = True
+    # Veto a clipe que NÃO É LIVE FOOTAGE — gravação de tela, slide,
+    # apresentação, cartela, animação, vídeo gerado por IA e filmagem
+    # embrulhada em moldura/mockup (auditoria.py). Desligar aceita de volta a
+    # peça montada em tela cheia.
+    veto_nao_filmado: bool = True
     output_dir: Path = field(default_factory=lambda: RAIZ / "output")
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
@@ -647,6 +652,8 @@ def carregar_config(exige_lista: bool = True) -> Config:
         veto_texto_denso=os.getenv("VETO_TEXTO_DENSO", "1").strip().lower()
         in ("1", "true", "sim", "yes"),
         veto_clipe_parado=os.getenv("VETO_CLIPE_PARADO", "1").strip().lower()
+        in ("1", "true", "sim", "yes"),
+        veto_nao_filmado=os.getenv("VETO_NAO_FILMADO", "1").strip().lower()
         in ("1", "true", "sim", "yes"),
     )
 

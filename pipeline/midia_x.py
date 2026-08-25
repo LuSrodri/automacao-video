@@ -355,6 +355,18 @@ DENSIDADES_TEXTO = ["nenhum", "pouco", "moderado", "muito"]
 # ocupam a tela enquanto a narração o conta. A visão mede as duas coisas aqui;
 # quem veta é a auditoria (auditoria.py).
 
+# LIVE FOOTAGE (2026-08-25, pedido do usuário: "veto qualquer vídeo do X que não
+# seja live footage — gravação de tela, slides, apresentações, molduras e
+# afins"). `imagem_filmada` é o campo que separa o que uma CÂMERA captou do
+# mundo físico de tudo que nasceu dentro de um computador ou foi remontado por
+# cima de outra mídia. Ele existe porque `tipo_material` não dava conta do
+# pedido: o enum tem uma casa para gravação de tela e uma para cartela, mas não
+# tem nenhuma para MOLDURA (filmagem dentro de mockup de celular, de borda
+# decorativa ou de template com painel ao lado), para animação, para render 3D
+# nem para vídeo gerado por IA — todos esses caíam em 'cena_real' ou em 'outro'
+# e passavam. Quem veta é a auditoria (auditoria.py), e só nos CLIPES: a
+# cartela é print e foto por definição.
+
 ESQUEMA_DESCRICAO = {
     "name": "descricao_de_midia",
     "strict": True,
@@ -442,6 +454,29 @@ ESQUEMA_DESCRICAO = {
                     "responda true."
                 ),
             },
+            "imagem_filmada": {
+                "type": "boolean",
+                "description": (
+                    "true SOMENTE se isto é LIVE FOOTAGE: imagem CAPTADA POR "
+                    "UMA CÂMERA apontada para o mundo físico — pessoas, "
+                    "lugares, objetos, equipamentos, veículos, um evento "
+                    "acontecendo. Celular na mão, câmera de estúdio, drone, "
+                    "câmera de segurança, imagem aérea e cinegrafista contam "
+                    "como filmadas. "
+                    "false para TUDO que nasceu dentro de um computador ou "
+                    "que é outra mídia remontada: gravação de tela (app, "
+                    "site, terminal, chat, planilha, gráfico de mercado, "
+                    "chamada de vídeo), slide, apresentação, cartela, motion "
+                    "graphics, infográfico, print de post, animação, render "
+                    "3D, vídeo gerado por IA, gameplay — e qualquer MOLDURA "
+                    "ou template: conteúdo posto dentro de mockup de celular "
+                    "ou de navegador, dentro de borda decorativa, em "
+                    "split-screen com painel de texto ao lado, ou foto/print "
+                    "com zoom e deslize por cima. "
+                    "Se o quadro é filmagem de verdade mas está EMBRULHADO "
+                    "numa moldura dessas, responda false. Na dúvida, false."
+                ),
+            },
             "pessoa_falando": {
                 "type": "boolean",
                 "description": (
@@ -498,6 +533,7 @@ ESQUEMA_DESCRICAO = {
             "densidade_texto",
             "texto_estatico",
             "cena_estatica",
+            "imagem_filmada",
             "pessoa_falando",
             "legendas_queimadas",
             "frames_busto_falante",
@@ -528,6 +564,15 @@ eles é irrelevante (um relógio, uma legenda) e o QUADRO é o mesmo.
 entrevista, podcast, coletiva, depoimento, âncora — e não uma cena em que
 pessoas AGEM. Em "cena_estatica", na dúvida responda true: material parado é o
 que este canal não usa.
+
+"imagem_filmada" é a regra mais dura deste canal, e vale para o clipe INTEIRO:
+só é true o que uma CÂMERA filmou no mundo físico. Gravação de tela, slide,
+apresentação, cartela, motion graphics, infográfico, animação, render, vídeo
+gerado por IA, gameplay e chamada de vídeo respondem false por mais que o
+assunto seja exatamente o da notícia. MOLDURA também derruba: filmagem posta
+dentro de mockup de celular, de borda decorativa ou de template com painel ao
+lado não é live footage — o que está na tela é uma peça montada, não o
+acontecimento sendo filmado. Na dúvida, false.
 
 "legendas_queimadas" é só sobre TRANSCRIÇÃO DE FALA na imagem: a faixa que
 acompanha o que a pessoa está dizendo e muda a cada frame. MARCA D'ÁGUA NÃO É
@@ -713,6 +758,8 @@ def descrever_midias(cfg: Config, midias: list[dict]) -> dict[str, dict]:
                     )
                 )
                 movimento = " [cena parada]" if laudo.get("cena_estatica") else ""
+                if laudo.get("imagem_filmada") is False:
+                    movimento += " [não filmado]"
                 if laudo.get("legendas_queimadas"):
                     movimento += " [legendado]"
                 marcas = laudo.get("frames_busto_falante") or []

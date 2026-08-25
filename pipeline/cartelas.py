@@ -298,6 +298,10 @@ def gerar_cartelas(
             # para mostrar.
             vetar_texto=False,
             vetar_parado=False,
+            # E o veto a material que não é live footage é dos clipes pela mesma
+            # razão: a cartela mais útil do canal é o PRINT do post que a
+            # narração está citando, que nenhuma câmera filmou.
+            vetar_nao_filmado=False,
         )
         if not imagens:
             print("[cartelas] Nenhuma imagem aprovada na auditoria.")
