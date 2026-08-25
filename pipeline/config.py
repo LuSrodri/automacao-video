@@ -464,9 +464,14 @@ class Config:
     # ela é lida fresca a cada execução.
     render_token_service_id: str = ""
     # TETO DE POSTS LIDOS POR VÍDEO — a leitura da X API é paga por post, e
-    # este é o maior item da conta. Caiu de 200 para 50 em 2026-08-24, no corte
-    # de custo pedido pelo usuário: 50 posts por vídeo, nos dois formatos.
-    x_max_posts: int = 50
+    # este é o maior item da conta. 100 desde 2026-08-25 (pedido do usuário):
+    # é o MÁXIMO que `/2/lists/{id}/tweets` entrega por chamada, então o teto e
+    # o limite da API coincidem e a coleta cabe em UMA leitura, US$ 0,50 por
+    # vídeo. Subiu de 50 no mesmo dia em que a JANELA_HORAS deixou de recortar a
+    # lista: sem janela, o teto é o único limitador de quanto material entra —
+    # e agora ele é o único item da conta que se mexe sozinho. Era 200 até
+    # 2026-08-24, quando caiu para 50 no corte de custo.
+    x_max_posts: int = 100
     # Busca ABERTA por clipes do assunto, fora das contas do canal. EXCLUSIVA
     # do formato longo: as fontes aqui não são curadas, a auditoria julga
     # pertinência e não procedência, e o crédito de reprodução leva a @ da conta
@@ -489,10 +494,13 @@ class Config:
     # formato longo roda em velocidade NORMAL, porque é análise e o espectador
     # precisa acompanhar o raciocínio (ver ativar_formato_longo).
     velocidade: float = 1.25
-    # JANELA DE COLETA, e TETO DURO de quanto o pipeline olha para trás (ver
-    # x_client.JANELAS_FALLBACK). 8h desde 2026-08-24: com 3 Shorts por dia em
-    # cada canal, três janelas de 8h cobrem o dia inteiro sem se repetirem. O
-    # formato longo roda com 48 (JANELA_HORAS no cron dele).
+    # JANELA DE TEMPO — NÃO SE APLICA MAIS À LISTA DO X (2026-08-25, pedido do
+    # usuário). A v2 não filtra data no endpoint de lista, então recortar por
+    # janela era jogar fora post JÁ PAGO; a coleta agora lê os X_MAX_POSTS mais
+    # recentes e pronto (a ordem cronológica reversa faz o papel da janela).
+    # Continua valendo onde o filtro é do SERVIDOR e economiza de verdade: o
+    # `start_time` da busca aberta por clipes (x_client) e a janela do panorama
+    # do YouTube (seo.py). Os crons do formato longo passam 48.
     janela_horas: int = 8
     num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
@@ -588,7 +596,7 @@ def carregar_config(exige_lista: bool = True) -> Config:
         render_token_service_id=(
             os.getenv("RENDER_TOKEN_SERVICE_ID", "") or ""
         ).strip(),
-        x_max_posts=int(os.getenv("X_MAX_POSTS", "50")),
+        x_max_posts=int(os.getenv("X_MAX_POSTS", "100")),
         video_largura=int(os.getenv("VIDEO_LARGURA", "1080")),
         video_altura=int(os.getenv("VIDEO_ALTURA", "1920")),
         text_model=os.getenv("TEXT_MODEL", "gpt-5.6-luna"),

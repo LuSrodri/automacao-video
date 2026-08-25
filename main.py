@@ -417,8 +417,9 @@ def main() -> None:
             f"As {TENTATIVAS_TREND} candidatas tentadas hoje não renderam "
             "material aproveitável — nenhuma passou do piso de clipes "
             "auditados; abortando sem publicar. Se isso virar rotina, as "
-            "alavancas são alargar JANELA_HORAS, subir X_MAX_POSTS ou revisar "
-            "as contas acompanhadas."
+            "alavancas são pôr na lista do X contas que publiquem VÍDEO (de "
+            "graça) ou subir X_MAX_POSTS, que já está no teto de 100 da API "
+            "e é decisão de gasto."
         )
 
     marcar_memoria("antes da narração")

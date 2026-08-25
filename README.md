@@ -141,16 +141,16 @@ reprodução no canto superior direito — com outra direção editorial:
   compara **só com os vídeos longos** já publicados — a rajada de Shorts do
   dia não bloqueia o longo, e um Short sobre o mesmo fato não conta como
   repetição.
-- **Janela de coleta maior (`JANELA_HORAS=48` nos crons longos)**: o gargalo do
-  formato não é a edição, é achar **um acontecimento com vários posts de vídeo
-  nativo**. Vídeo de um fato específico é raro — a maior parte dos posts sobre
-  ele é texto. Com a janela curta dos Shorts, execuções reais achavam trends com
-  0, 1 ou 2 clipes e abortavam no piso de 3. Com 48h entram *outros* posts: os
-  de dois dias, em vez dos de uma janela de horas. Case a janela com a
-  **cadência do cron** — 8h para os Shorts, que rodam de 8 em 8 horas, e 48h
-  para quem roda segunda/quarta/sexta. Desde 2026-08-24 esse valor é um **teto
-  duro**, não um ponto de partida: o fallback que o reabria por etapas saiu, e
-  cada etapa custava uma leitura inteira.
+- **Mais material por execução**: o gargalo do formato não é a edição, é achar
+  **um acontecimento com vários posts de vídeo nativo**. Vídeo de um fato
+  específico é raro — a maior parte dos posts sobre ele é texto, e execuções
+  reais achavam trends com 0, 1 ou 2 clipes e abortavam no piso de 3. Quem
+  resolve isso hoje é o teto de leitura (`X_MAX_POSTS=100`, o máximo da X API
+  por chamada) somado ao **filtro de clipe na coleta**: os 100 mais recentes da
+  lista entram, e só os que têm vídeo sobem. `JANELA_HORAS=48` nos crons longos
+  não recorta mais a lista (ver "Como funciona a leitura da lista do X") — ele
+  sobrou para o `start_time` da busca aberta por clipes e para o panorama do
+  YouTube.
 
 A duração final segue a narração: o roteirista escreve dentro de uma faixa
 dura de palavras (~277 a 316 faladas, calculada a partir do ritmo real medido
@@ -166,9 +166,9 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | --- | --- | --- |
 | `X_LIST_ID` | — | Id da **lista do X** de onde sai a pauta. **Obrigatório**: é o caminho único da coleta desde 2026-08-22 |
 | `X_TOKEN_MARGEM_MIN` | `75` | Minutos de vida restante abaixo dos quais o cron renovador troca o access token do X. Precisa ser **maior que o intervalo do cron renovador**, senão o token vence entre dois ticks |
-| `X_MAX_POSTS` | `50` | Teto de posts lidos **por vídeo** (a X API cobra por post lido). Caiu de 200 para 50 em 2026-08-24, no corte de custo — é o maior item da conta |
+| `X_MAX_POSTS` | `100` | Teto de posts lidos **por vídeo** (a X API cobra por post lido) — é o maior item da conta. `100` é o **máximo por chamada** do endpoint de lista, então a coleta cabe em uma leitura só. Foi 200 até 2026-08-24, 50 no corte de custo daquele dia, e voltou a 100 em 2026-08-25, quando a janela de tempo saiu da lista e o teto virou o único limitador de material |
 | `X_MAX_POSTS_BUSCA` | `30` (só `--long-take`) | Busca **aberta** por clipes do assunto, fora das contas do canal. Fontes **não curadas** — a auditoria é a única guarda, e ela julga pertinência, não veracidade; `0` desliga |
-| `JANELA_HORAS` | `8` | **Limite duro** de quanto conteúdo do X entra em cada vídeo (idade máxima dos posts coletados). Desde 2026-08-24 é um teto, não um ponto de partida: o fallback que reabria a janela até 48h foi removido, porque cada etapa refazia a leitura inteira e a leitura é paga. Case com a **cadência do cron**: em produção os Shorts rodam com `8` (**3 por dia** em cada canal, de 8 em 8 horas — três janelas cobrem o dia sem sobreposição) e os crons `--long-take` com `48` |
+| `JANELA_HORAS` | `8` | **Não recorta mais a coleta da lista** (2026-08-25): o endpoint não aceita `start_time`, e cortar por data depois da resposta era jogar fora post já pago — a recência vem da ordem cronológica reversa. Continua valendo onde o filtro é do **servidor** e economiza de verdade: o `start_time` da busca aberta por clipes (`--long-take`) e a janela do panorama do YouTube em `seo.py`. Produção: `8` nos Shorts, `48` nos crons `--long-take` |
 | `NUM_TRENDS` | `10` | Quantas trends mais faladas do X coletar para escolher a do vídeo |
 | `TEXT_MODEL` | `gpt-5.6-luna` | Modelo do roteiro, da sumarização das trends e da visão |
 | `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
@@ -338,7 +338,7 @@ A trend é escolhida por um sinal **indireto** de material: quantos posts dela t
 
 Desde **2026-08-05**, a candidata que não rende material sai da disputa e o pipeline refaz os passos 4 a 7 com a **próxima trend**, até `TENTATIVAS_TREND` (3) candidatas por execução. As duas falhas cobertas são: **nenhum clipe baixado** e **auditoria abaixo do piso**.
 
-O laço fecha **antes do TTS** de propósito. Cada tentativa extra custa notícias + roteiro + visão, e **nenhuma custa narração** — que é o crédito caro. Por isso o **piso de duração continua abortando seco**: narração curta é defeito do roteiro, e trocar de tema não conserta isso, só paga o ElevenLabs de novo. Se as 3 candidatas falharem, aí sim a execução aborta, e as alavancas são as de sempre: alargar `JANELA_HORAS`, subir `X_MAX_POSTS` ou revisar as contas acompanhadas.
+O laço fecha **antes do TTS** de propósito. Cada tentativa extra custa notícias + roteiro + visão, e **nenhuma custa narração** — que é o crédito caro. Por isso o **piso de duração continua abortando seco**: narração curta é defeito do roteiro, e trocar de tema não conserta isso, só paga o ElevenLabs de novo. Se as 3 candidatas falharem, aí sim a execução aborta, e as alavancas são as de sempre: pôr na lista do X contas que publiquem **vídeo** (de graça) ou subir `X_MAX_POSTS`, que já está no teto de 100 por chamada da API.
 
 **Exceção do `--long-take`: telejornal entra marcado, não vetado.** No formato longo, material de tipo `reportagem_tv` e mídia com selo de emissora deixam de cair no veto duro e entram **marcados como representação visual** — o clipe vai para a tela **dessaturado**, com a etiqueta `REPRESENTAÇÃO VISUAL` (`ILLUSTRATIVE FOOTAGE` no `-usa`) no rodapé esquerdo, enquanto os outros clipes da mesma montagem seguem coloridos e sem etiqueta. O motivo: 120 a 150 segundos de tela raramente se sustentam só com cena crua, e a marcação resolve o que originou o veto — o espectador tomar cobertura de terceiro por material do canal. `logo_ou_marca` continua vetado nos dois formatos (vinheta de logotipo não representa assunto nenhum), a nota de pertinência continua valendo para todo mundo, e no formato curto **nada muda**. O `auditoria_clipe.json` marca cada aprovada com `representacao_visual`.
 
@@ -422,8 +422,10 @@ A pauta sai de **uma lista do X** (`X_LIST_ID`), lida em `/2/lists/{id}/tweets`:
 
 Antes disso a coleta lia as **contas seguidas** (`/2/users/:id/following`) por `search/recent` com `from:` em lotes. O problema era mecânico: 162 contas não cabem numa query de 512 caracteres, viravam 7 lotes, e o teto de leitura era **repartido** entre eles — 28 posts para 25 contas, escolhidos por **relevância**. O efeito medido em 2026-08-17: `@sentdefender` publicou 12 vezes em 24h e apareceu **zero** vez na coleta. A lista não tem nada disso.
 
-- **Paginação** — de 100 em 100 até `X_MAX_POSTS`, parando no primeiro post mais velho que a janela (como a ordem é cronológica reversa, o resto também será).
-- **Janela** — a lista **não** aceita `start_time`; o corte é feito no cliente. Quando a janela devolve pouco (ou nada com clipe), ela **reabre por etapas** — 8h, 12h, 24h, 48h — sobre a mesma lista.
+- **Uma chamada, os 100 mais recentes** — `X_MAX_POSTS=100` é o **máximo que a X API entrega por chamada**, então o teto do pipeline e o limite do endpoint coincidem: uma leitura, US$ 0,50, sem paginação. O teto conta post **lido**, que é o que o X cobra, não post aprovado.
+- **Sem janela de tempo** (2026-08-25) — o endpoint de lista **não** aceita `start_time`. Confirmado no OpenAPI oficial: `getListsPosts` aceita `id`, `max_results`, `pagination_token` e os `*.fields`, e **nada mais** — nem `start_time`/`end_time`, nem `since_id`/`until_id`, nem `exclude=retweets` (o `/2/users/:id/tweets` tem todos eles; o de lista, nenhum). Filtrar por data aqui seria descartar post **já pago**, então a janela saiu: como a timeline é cronológica reversa, **ler os 100 primeiros já é a janela**, e ela se ajusta sozinha ao ritmo da lista. Se a lista estiver parada, entra post mais velho — é material, não defeito, e a data de cada post vai no prompt do curador.
+- **Só post com clipe** (2026-08-25) — o vídeo é montado apenas com clipes do X, então post sem mídia nativa não vira pauta: ele só empurrava para a frente uma trend que a seleção vetaria depois por "sem nenhum post com vídeo nativo". O filtro é no cliente (a v2 também não filtra mídia no servidor), sobre `expansions=attachments.media_keys` + `media.fields=type`, que já vêm no mesmo envelope e não custam chamada extra.
+- **Repost fora** (2026-08-25) — o repost é casca: a X API não manda `attachments` nele (o clipe mora no post original) nem o texto inteiro, só `"RT @fulano: …"`. Como não dá para excluí-lo no servidor, ele é lido e pago de qualquer jeito; o que se evita é ele ocupar uma vaga do teto. Na **busca** (`--long-take`) o tratamento é outro: lá o repost é **resolvido** para o post original, com texto íntegro e mídia.
 - **Autenticação** — lista **privada** exige contexto de usuário. O access token OAuth 2.0 é distribuído por um cron dedicado (`--renovar-x-token`), que o grava junto com o **vencimento** nas env vars do próprio serviço; os crons de vídeo leem de lá pela API do Render, em tempo de execução, e **não renovam nada** (com quatro crons renovando por conta própria, quem renovasse por último invalidava o refresh dos outros — o token é de uso único).
 - **Renovação por idade, não por morte** (2026-08-22) — o renovador trocava o token só depois que ele **morria**: testava `/2/users/me` e, com 200, não fazia nada. Como o token vale 2h e o cron roda de hora em hora, a troca saía de 3 em 3 horas e sobrava uma **janela morta de até uma hora** em cada ciclo. Medido em 22/08: renovações às 00:20, 03:20, 06:20… e **401 na leitura da lista em exatamente as quatro execuções de vídeo que caíam nessas janelas** (US 03:02, BR 06:03, US 15:04, BR 18:04) — 4 das 12 do dia. Agora o vencimento é gravado junto com o token e a troca acontece com `X_TOKEN_MARGEM_MIN` minutos de vida ainda pela frente. A margem tem que ser **maior que o intervalo do cron renovador**; o `/2/users/me` ficou como conferência para o caso de token revogado antes da hora.
 - **Sem rede debaixo** — falha de leitura **aborta**. O fallback pelas contas seguidas foi removido em 2026-08-22 porque era ele que fazia o 401 acima passar despercebido: o vídeo saía com a pauta ordenada por relevância, e nos logs isso aparecia como um aviso no meio de uma execução bem-sucedida. Página que quebra no **meio** da paginação ainda aproveita o que já veio.
@@ -522,20 +524,22 @@ A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de pro
 
 | Etapa | Short (antes → agora) | `--long-take` (antes → agora) |
 | --- | --- | --- |
-| Coleta de posts (`X_MAX_POSTS`: 200 → 50) | US$ 1,000 → **US$ 0,250** | US$ 1,000 → **US$ 0,250** |
+| Coleta de posts (`X_MAX_POSTS`: 200 → 50 → **100**) | US$ 1,000 → 0,250 → **US$ 0,500** | US$ 1,000 → 0,250 → **US$ 0,500** |
 | Busca aberta por clipes (`X_MAX_POSTS_BUSCA`=30) | — | US$ 0,150 (inalterado) |
 | Lookup de mídias (`MAX_POSTS_MIDIA`: 12 / 16 posts) | US$ 0,060 (inalterado) | US$ 0,080 (inalterado) |
 | `gpt-5.6-luna` — tudo somado ¹ | ~US$ 0,044 (inalterado) | ~US$ 0,070 (inalterado) |
 | Figuras geradas (`gpt-image-2`) | US$ 0,041 → **US$ 0** | US$ 0,164 → **US$ 0** |
-| **Total por vídeo** | **US$ 1,15 → US$ 0,35** | **US$ 1,46 → US$ 0,55** |
+| **Total por vídeo** | US$ 1,15 → 0,35 → **US$ 0,60** | US$ 1,46 → 0,55 → **US$ 0,80** |
 | ElevenLabs | ~420 créditos do plano | ~1.700 créditos |
 | Panorama do dia (YouTube Data API) | **US$ 0** — balde próprio de Search Queries | **US$ 0** |
 
 ¹ Estimado de baixo para cima a partir do código, não medido no painel da OpenAI: ~118 mil tokens de entrada e ~17 mil de saída por Short (~169 mil / ~30 mil no longo). O grosso da entrada são as **imagens de visão** — 6 clipes × 8 frames + 4 fotos + a capa de cada campeão do dossiê + 3 quadros da capa, todas reduzidas a 768px (`LADO_VISAO`) — mais as instruções, que vão repetidas em cada chamada de laudo. **É o número menos firme desta tabela; confira contra o painel da OpenAI antes de contar com ele.**
 
-**A conta é do X, não da OpenAI.** Com os valores acima, a leitura de posts é **~88% do custo de um Short** (US$ 0,31 dos US$ 0,35) e o Luna, ~12%. Foi por isso que o corte de 2026-08-24 puxou `X_MAX_POSTS` e a cadência: desligar a geração de imagem, sozinho, valia ~US$ 12/mês.
+**A conta é do X, não da OpenAI.** Com `X_MAX_POSTS=100`, a leitura de posts é **~93% do custo de um Short** (US$ 0,56 dos US$ 0,60, contando o lookup de mídias) e o Luna, ~7%. Mexer em modelo de texto não economiza nada relevante; as duas alavancas reais são `X_MAX_POSTS` e a **cadência dos crons**.
 
-**As alavancas que sobraram, em ordem de tamanho.** `X_MAX_POSTS` (a coleta, US$ 0,25) e a **cadência dos crons** são as duas que movem a conta de verdade. Depois vem o pool de mídias — `MAX_POSTS_MIDIA` custa US$ 0,06 em leitura do X e ainda puxa a maior parte dos tokens de visão (cada clipe do pool são 8 frames num laudo), então `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` cortam nos dois lados; a contrapartida é que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam as cartelas sem mexer na auditoria dos clipes. No `--long-take`, `X_MAX_POSTS_BUSCA=0` corta US$ 0,15 por vídeo, ao preço de o formato voltar a travar no piso de 3 clipes. A leitura da lista é **uma** chamada paginada — não há o que economizar na forma dela, só no teto.
+**As alavancas que sobraram, em ordem de tamanho.** `X_MAX_POSTS` (a coleta, US$ 0,25) e a **cadência dos crons** são as duas que movem a conta de verdade. Depois vem o pool de mídias — `MAX_POSTS_MIDIA` custa US$ 0,06 em leitura do X e ainda puxa a maior parte dos tokens de visão (cada clipe do pool são 8 frames num laudo), então `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` cortam nos dois lados; a contrapartida é que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam as cartelas sem mexer na auditoria dos clipes. No `--long-take`, `X_MAX_POSTS_BUSCA=0` corta US$ 0,15 por vídeo, ao preço de o formato voltar a travar no piso de 3 clipes. A leitura da lista é **uma** chamada — não há o que economizar na forma dela, só no teto: nada é filtrável no servidor (nem data, nem mídia, nem repost), então todo post que a API manda já foi cobrado.
+
+**2026-08-25 — a coleta subiu de volta para 100 posts.** Pedido do usuário, junto com a saída da janela de tempo e o filtro de clipe. É a única alavanca que se moveu; cadência, geração de imagem e o resto seguem como ficaram em 24/08. Ela sozinha leva o Short de US$ 0,35 para **US$ 0,60** e o longo de US$ 0,55 para **US$ 0,80** — sobre o mesmo volume mensal, **APIs de ~US$ 79 para ~US$ 131** (+US$ 52). A contrapartida é material: com o filtro de clipe ligado, ler 50 podia devolver punhado nenhum de vídeo, e o piso de 3 clipes do longo já era o gargalo do formato.
 
 **O que o corte de 2026-08-24 mudou, em números.** Três alavancas ao mesmo tempo: **3 Shorts por dia** em cada canal em vez de 6, **50 posts** lidos por vídeo em vez de 200 (com `JANELA_HORAS` virando teto duro: 8h no Short, 48h no longo) e **fim da geração de imagem**. Sobre o volume mensal (≈183 Shorts + ≈26 longos):
 

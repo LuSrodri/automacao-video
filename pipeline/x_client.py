@@ -5,6 +5,12 @@ do usuário). O pipeline lê `/2/lists/{id}/tweets`: uma chamada paginada,
 cronológica, com todos os membros da lista. Pôr ou tirar alguém da lista no X é
 a forma de mexer na pauta do canal — sem commit e sem deploy.
 
+E SÓ SOBE POST COM CLIPE (2026-08-25, pedido do usuário): repost e post sem
+mídia nativa são descartados na coleta. A v2 não filtra mídia no servidor — não
+existe parâmetro de tipo no endpoint de lista —, então o corte é feito aqui,
+sobre `expansions=attachments.media_keys` + `media.fields=type`, que já vêm no
+mesmo envelope e não custam chamada extra.
+
 CAMINHO ÚNICO. Até 2026-08-22 existia embaixo dele a arquitetura anterior
 inteira, como fallback: as CONTAS SEGUIDAS (`/2/users/:id/following`) lidas por
 `search/recent` com `from:` em lotes de 512 caracteres, mais a TIMELINE de um
@@ -22,9 +28,18 @@ Sobra da arquitetura antiga uma única busca por `search/recent`,
 CLIPE de um assunto já escolhido, fora das contas do canal.
 
 Como a leitura é cobrada por post (~US$ 0,005 cada), X_MAX_POSTS limita a
-coleta e X_MAX_POSTS_BUSCA limita a busca aberta por clipes. Desde 2026-08-24
-são 50 posts por vídeo nos dois formatos, e JANELA_HORAS é um TETO DURO de
-quanto o pipeline olha para trás (8h no Short, 48h no longo).
+coleta e X_MAX_POSTS_BUSCA limita a busca aberta por clipes. Desde 2026-08-25
+são 100 posts por vídeo — o máximo que a X API entrega numa chamada, e por isso
+o teto virou UMA leitura só, de US$ 0,50, sem paginação.
+
+JANELA_HORAS NÃO SE APLICA MAIS À LISTA (2026-08-25, pedido do usuário). A v2
+não filtra data no endpoint de lista (confirmado no OpenAPI: `getListsPosts`
+aceita só `id`, `max_results` e `pagination_token`), então a janela era um corte
+DEPOIS de pagar — jogava fora post já comprado. Como a timeline vem em ordem
+cronológica reversa, ler os 100 mais recentes já É a janela, e ela se ajusta
+sozinha ao movimento da lista. JANELA_HORAS segue valendo onde o filtro é do
+SERVIDOR e não custa leitura à toa: `start_time` da busca aberta por clipes e a
+janela do panorama do YouTube em seo.py.
 
 Os posts coletados vão para o GPT, que os agrupa nas N trends mais quentes,
 ordenadas pelo VALOR DA INFORMAÇÃO (vazamento, exclusivo, urgência, número
@@ -63,6 +78,9 @@ MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 # o justificava era falsa: "alargar não custa mais na X API" ignorava que cada
 # etapa REFAZ a leitura inteira, e a leitura é paga por post — com
 # X_MAX_POSTS=50, uma execução azarada gastava 200. Ver `coletar_trends`.
+#
+# E a JANELA DA LISTA saiu inteira em 2026-08-25: ver o topo do módulo. O que
+# restou aqui como teto é X_MAX_POSTS, que é o que o X de fato cobra.
 #
 # JANELA PRÓPRIA DA BUSCA ABERTA (2026-08-17) REMOVIDA no mesmo dia. Ela
 # alargava a busca por clipes para no mínimo 24h, argumentando que ali não se
@@ -126,9 +144,11 @@ def _normalizar_posts(dados: dict) -> list[dict]:
         # pertencem a quem publicou. Baixar pelo id do repost não traria clipe
         # nenhum — /2/tweets do repost devolve o mesmo envelope vazio.
         id_post = post["id"]
+        repost = False
         for ref in post.get("referenced_tweets") or []:
             if ref.get("type") != "retweeted":
                 continue
+            repost = True
             original = originais.get(ref.get("id"))
             if not original:
                 continue
@@ -154,6 +174,14 @@ def _normalizar_posts(dados: dict) -> list[dict]:
                 + metricas.get("quote_count", 0),
                 "respostas": metricas.get("reply_count", 0),
                 "video": tem_video,
+                # Repost. A LISTA DESCARTA (2026-08-25, pedido do usuário): a
+                # casca do repost gastava uma das 50 vagas do teto sem entregar
+                # nada — não traz `attachments` (o clipe fica invisível) e o
+                # texto vem truncado em "RT @fulano: …". A BUSCA não usa esta
+                # marca: lá o repost já virou o post original logo acima, com
+                # texto íntegro e mídia, que é o material que ela existe para
+                # achar.
+                "repost": repost,
             }
         )
     return posts
@@ -514,19 +542,44 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
     (@sentdefender publicou 12 vezes em 24h e apareceu zero vez). A lista não
     tem nada disso: é a timeline dos membros, em ordem de publicação.
 
-    Pagina de 100 em 100 até `x_max_posts` e PARA no primeiro post mais velho
-    que a janela — como a ordem é cronológica reversa, o resto também será.
+    UMA CHAMADA, os `x_max_posts` posts MAIS RECENTES da lista (100 é o teto
+    da X API por chamada e é o valor em produção desde 2026-08-25). Não há
+    filtro de data: a v2 não oferece um no endpoint de lista, e recortar por
+    janela depois da resposta seria descartar post já pago. A recência sai de
+    graça da ordem cronológica reversa — os 100 primeiros SÃO os 100 mais
+    novos. Se a lista estiver parada, entra post mais velho; é material, não
+    defeito, e a data de cada post vai no prompt do curador.
+
+    SÓ POST COM CLIPE SOBE (2026-08-25, pedido do usuário). O endpoint de lista
+    NÃO filtra mídia no servidor: a v2 não tem parâmetro para isso, então o
+    filtro é aqui, no envelope que já veio — `expansions=attachments.media_keys`
+    + `media.fields=type`, e fica quem tem `video` ou `animated_gif`. Junto sai
+    o REPOST, que é casca: a X API não manda `attachments` nele (o clipe mora no
+    post original) nem o texto inteiro, só "RT @fulano: …".
+
+    O TETO `x_max_posts` CONTA POST LIDO, não post aprovado — é assim que o X
+    cobra (US$ 0,005 cada). Filtrar por vídeo e continuar paginando até somar
+    100 APROVADOS seria ler 400-1000 posts por vídeo, porque clipe nativo é
+    minoria na timeline; o custo do Short iria a US$ 2-5. Com o teto na
+    leitura, a conta é fixa: 100 posts lidos, US$ 0,50, e o que vier de clipe
+    dentro deles é o material do vídeo.
     """
     posts: list[dict] = []
+    lidos = 0  # posts que a X API devolveu — é por eles que o X cobra
+    reposts = 0
+    sem_clipe = 0
     # Lista PRIVADA exige contexto de usuário; na pública o app-only basta.
     token = _token_de_usuario(cfg) or token
-    inicio = datetime.now(timezone.utc) - timedelta(hours=cfg.janela_horas)
     vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
     pagina = None
-    while len(posts) < cfg.x_max_posts:
+    while lidos < cfg.x_max_posts:
         params = {
-            "max_results": min(100, max(cfg.x_max_posts - len(posts), 10)),
-            "tweet.fields": "created_at,public_metrics,text",
+            "max_results": min(100, max(cfg.x_max_posts - lidos, 10)),
+            # `referenced_tweets` é o que revela o REPOST, para descartá-lo
+            # abaixo. As expansões do post ORIGINAL (que a busca pede) ficam
+            # de fora de propósito: aqui o repost não é resolvido, é jogado
+            # fora, então trazer o original só engordaria o envelope.
+            "tweet.fields": "created_at,public_metrics,text,referenced_tweets",
             "expansions": "author_id,attachments.media_keys",
             "user.fields": "username",
             "media.fields": "type",
@@ -552,24 +605,32 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
         lote = _normalizar_posts(dados)
         if not lote:
             break
-        antigos = False
+        lidos += len(lote)
         for post in lote:
-            # `data` chega como "YYYY-MM-DD HH:MM" (ver _normalizar_posts)
-            try:
-                quando = datetime.strptime(post["data"], "%Y-%m-%d %H:%M").replace(
-                    tzinfo=timezone.utc
-                )
-            except ValueError:
-                quando = None
-            if quando and quando < inicio:
-                antigos = True
-                continue
             if post["usuario"].lower() in vetadas:
+                continue
+            # REPOST FORA (2026-08-25): casca sem `attachments` e com texto
+            # truncado. Vem antes do filtro de clipe só para o log separar as
+            # duas causas — o repost cairia no filtro de baixo de qualquer
+            # jeito, já que sem `attachments` ele nunca marca `video`.
+            if post.get("repost"):
+                reposts += 1
+                continue
+            # SÓ POST COM CLIPE (2026-08-25): o vídeo é montado apenas com
+            # clipes dos posts, então post sem mídia nativa não vira material
+            # nem pauta — ele só empurrava para a frente uma trend que a
+            # seleção ia vetar depois por "sem nenhum post com vídeo nativo".
+            if not post.get("video"):
+                sem_clipe += 1
                 continue
             posts.append(post)
         pagina = (dados.get("meta") or {}).get("next_token")
-        if antigos or not pagina:
+        if not pagina:
             break
+    print(
+        f"[x] lista: {lidos} posts lidos na X API, {len(posts)} com clipe "
+        f"(descartados: {reposts} repost, {sem_clipe} sem mídia nativa)"
+    )
     return posts
 
 
@@ -652,8 +713,11 @@ Não existe assunto vetado por tema, e não existe assunto obrigatório: o que
 decide é o VALOR DA INFORMAÇÃO abaixo e, depois dele, o que a audiência do
 canal assiste.
 
-Você recebe os posts publicados nas últimas {horas} horas pelas contas que o
-usuário SEGUE no X, com autor, data, métricas de engajamento e texto. Agrupe-os
+Você recebe os posts MAIS RECENTES da lista do X que o usuário curou — todos
+com clipe de vídeo nativo —, com autor, data, métricas de engajamento e texto.
+A DATA DE CADA POST ESTÁ NA LINHA DELE: use-a. Não existe recorte de janela
+aqui, então pauta velha pode aparecer, e o que decide o quão quente ela está é
+a data que você está lendo, não a suposição de que tudo chegou agora. Agrupe-os
 nas ATÉ {n} TRENDS mais quentes: anúncios e lançamentos, resultados, números
 divulgados, mudanças de preço, demissões e contratações, aquisições, decisões e
 julgamentos, regulação, quedas de serviço, descobertas, pesquisas, acidentes e
@@ -788,7 +852,6 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
         else ""
     )
     instrucoes = INSTRUCOES_RESUMO.format(
-        horas=cfg.janela_horas,
         n=cfg.num_trends,
         foco_usa=foco_usa,
         max_urls=cfg.max_urls_trend,
@@ -833,8 +896,8 @@ def coletar_trends(cfg: Config) -> list[dict]:
         )
 
     print(
-        f"[x] Lendo a lista {cfg.x_list_id} (até {cfg.x_max_posts} posts "
-        f"das últimas {cfg.janela_horas}h, ordem cronológica)..."
+        f"[x] Lendo a lista {cfg.x_list_id} (os {cfg.x_max_posts} posts mais "
+        "recentes, só os que têm clipe)..."
     )
     posts = _coletar_da_lista(cfg, token)
 
@@ -853,18 +916,21 @@ def coletar_trends(cfg: Config) -> list[dict]:
     # pagando. A escassez continua sendo medida logo abaixo (posts com clipe).
     if not posts:
         raise SystemExit(
-            f"A lista {cfg.x_list_id} não devolveu post nenhum nas últimas "
-            f"{cfg.janela_horas}h, que é o teto de conteúdo do X por vídeo. "
-            "Confira se ela ainda tem membros e se o token do X está válido."
+            f"A lista {cfg.x_list_id} não devolveu NENHUM post com clipe "
+            f"dentro dos {cfg.x_max_posts} posts mais recentes — e o vídeo é "
+            "montado só com clipes. A linha '[x] lista:' acima diz o que foi "
+            "descartado: se lá houver muito post lido e pouco clipe, é a lista "
+            "publicando texto em vez de vídeo; se não veio post nenhum, "
+            "confira se ela ainda tem membros e se o token do X está válido."
         )
 
-    # Quantos posts trazem clipe é O número que decide se há material: o vídeo é
-    # montado só com clipes. Sem esta contagem a escassez só aparecia lá na
+    # Todo post que chega aqui tem clipe (o filtro está em _coletar_da_lista),
+    # então a contagem é o próprio tamanho da coleta. Ela segue impressa porque
+    # é O número que decide se há material: sem ela a escassez só aparecia lá na
     # frente, como "pool de 2 clipes".
-    com_video = sum(1 for p in posts if p.get("video"))
     print(
-        f"[x] {len(posts)} posts na lista ({com_video} com clipe de vídeo "
-        "nativo); resumindo as trends com o GPT..."
+        f"[x] {len(posts)} posts com clipe de vídeo nativo na lista; "
+        "resumindo as trends com o GPT..."
     )
     return _montar_trends(cfg, posts)
 
@@ -930,8 +996,9 @@ def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
     if not trends:
         raise SystemExit(
             f"Nenhuma trend identificada nos {len(posts)} posts coletados. "
-            "As alavancas são JANELA_HORAS e X_MAX_POSTS no .env — as duas "
-            "custam leitura paga na X API, então subi-las é decisão de gasto."
+            "A alavanca é X_MAX_POSTS no .env (já no teto de 100 da X API em "
+            "produção) ou a própria lista no X — pôr contas que publiquem "
+            "vídeo é de graça, subir o teto é decisão de gasto."
         )
 
     print(f"[x] {len(trends)} trends identificadas")

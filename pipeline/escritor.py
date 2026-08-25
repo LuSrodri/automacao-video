@@ -2084,9 +2084,9 @@ def selecionar_trend(
                 "precisa para chegar ao piso da auditoria — o vídeo não teria "
                 f"material para {LONGO_MIN_S}-{LONGO_MAX_S}s de tela; "
                 "abortando antes de gastar "
-                "roteiro e narração. Se isso virar rotina, as alavancas são "
-                "alargar JANELA_HORAS, subir X_MAX_POSTS ou revisar as contas "
-                "acompanhadas."
+                "roteiro e narração. Se isso virar rotina, a alavanca é a "
+                "própria lista do X: contas que publiquem VÍDEO. X_MAX_POSTS "
+                "já está no teto de 100 por chamada da API."
             )
         candidatas = com_material
 
