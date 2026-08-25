@@ -257,34 +257,6 @@ ESQUEMA_SELECAO = {
     },
 }
 
-# Comentário do dono, postado pelo pipeline logo após o upload (2026-07-28).
-# Motivo, dos números do canal: 306.947 views no topo da faixa geraram 82
-# comentários e 39 compartilhamentos (0,027% e 0,013%) — propagação social
-# praticamente nula, enquanto a retenção já estava ótima (avp 121%). O vídeo
-# entrega informação fechada e não dá o que discutir. Este comentário é a
-# semente da thread: entra sozinho no vídeo novo e é o primeiro texto que quem
-# abre os comentários lê.
-# NÃO confundir com os comentários automáticos removidos em 2026-07-14: aqueles
-# eram divulgação (Turing/Firecrawl) no canal US. Este é editorial e existe
-# para abrir discussão, não para divulgar nada.
-COMENTARIO_PROPRIEDADE = {
-    "type": "string",
-    "description": (
-        "Comentário do DONO do canal, para ser postado no vídeo assim que ele "
-        "sair. Duas frases, no idioma definido nas instruções, até 280 "
-        "caracteres. Frase 1: o dado, número ou contexto REAL que não coube "
-        "nos segundos do vídeo (algo dos posts recebidos — "
-        "nunca inventado, nunca repetição literal da narração). Frase 2: uma "
-        "pergunta aberta e concreta sobre a DISPUTA do assunto, que uma pessoa "
-        "comum consiga responder com opinião a partir do que o vídeo mostrou "
-        "('quem paga essa conta no fim?'). PROIBIDO: pedir like, inscrição ou "
-        "compartilhamento; link ou nome de produto/serviço; emoji em excesso "
-        "(no máximo 1); hashtag; e pergunta de quiz com resposta certa — a "
-        "pergunta existe para abrir briga civilizada, não para testar o "
-        "espectador."
-    ),
-}
-
 # TAGS do vídeo (2026-08-07). Elas SEMPRE existiram na chamada de publicação
 # (`publicar(..., tags=roteiro.get("tags"))`) e NUNCA no esquema do roteiro —
 # ou seja, todo vídeo do canal subiu com a lista de tags vazia desde o começo.
@@ -431,7 +403,6 @@ ESQUEMA_ROTEIRO = {
             },
             "resposta_curta": RESPOSTA_CURTA_PROPRIEDADE,
             "tags": TAGS_PROPRIEDADE,
-            "comentario": COMENTARIO_PROPRIEDADE,
         },
         "required": [
             "tema",
@@ -442,7 +413,6 @@ ESQUEMA_ROTEIRO = {
             "resposta_curta",
             "tags",
             "texto_video",
-            "comentario",
         ],
     },
 }
@@ -631,7 +601,6 @@ ESQUEMA_ROTEIRO_LONGO = {
             },
             "resposta_curta": RESPOSTA_CURTA_PROPRIEDADE,
             "tags": TAGS_PROPRIEDADE,
-            "comentario": COMENTARIO_PROPRIEDADE,
         },
         "required": [
             "tema",
@@ -646,7 +615,6 @@ ESQUEMA_ROTEIRO_LONGO = {
             "resposta_curta",
             "tags",
             "texto_video",
-            "comentario",
         ],
     },
 }
@@ -1253,16 +1221,7 @@ palavras em inglês entre colchetes, imediatamente antes do trecho que modificam
 Exemplos: [excited], [curious], [whispers], [surprised], [sighs], [laughs],
 [short pause]. Use de 8 a 12 tags, variando a emoção conforme o conteúdo (elas
 não são faladas nem aparecem nas legendas). A pontuação também guia a entrega:
-reticências para suspense, MAIÚSCULAS para ênfase pontual.
-
-COMENTÁRIO DE ABERTURA (campo `comentario`) — o pipeline posta esse texto como
-comentário do dono do canal assim que o vídeo sai, e ele é o primeiro texto que
-quem abre a aba de comentários lê. Serve para uma coisa só: abrir a discussão
-que a narração não pode abrir (a narração não tem CTA e não pode quebrar o
-loop). Então ele vai onde o vídeo não foi — o dado que sobrou, o número de
-contexto, o lado que não coube — e termina numa pergunta aberta sobre a
-disputa. Ele NÃO resume o vídeo e NÃO repete a narração: quem chega nos
-comentários já assistiu.\
+reticências para suspense, MAIÚSCULAS para ênfase pontual.\
 """ + INSTRUCOES_SEO_GEO + """
 
 Responda somente com o JSON pedido.\
@@ -1455,14 +1414,6 @@ modificam. Exemplos: [serious], [curious], [emphatic], [short pause],
 [thoughtful], [surprised]. Use de 15 a 25 tags ao longo do texto, variando
 conforme o conteúdo (elas não são faladas). A pontuação também guia a entrega:
 reticências para suspense, MAIÚSCULAS para ênfase pontual.
-
-COMENTÁRIO DE ABERTURA (campo `comentario`) — o pipeline posta esse texto como
-comentário do dono do canal assim que o vídeo sai, e ele é o primeiro texto que
-quem abre a aba de comentários lê. Aqui ele serve à mesma promessa do vídeo:
-leva o dado de carreira ou de mercado que não coube na narração (setor, vaga,
-número, prazo) e fecha com uma pergunta aberta que quem procura emprego
-consegue responder com a própria experiência. NÃO resume o vídeo e NÃO repete
-a narração: quem chega nos comentários já assistiu.
 
 CAPÍTULOS E MANCHETES — cada tópico traz uma CITAÇÃO literal do trecho de
 texto_video em que ele começa (campo citacao): é a FRASE DE VIRADA daquele
@@ -2349,43 +2300,6 @@ def _aparar_hook_final(roteiro: dict) -> None:
         )
 
 
-# Teto de caracteres do comentário de abertura. A API aceita muito mais, mas o
-# YouTube corta o texto com "Ler mais" por volta disto no app — e a pergunta,
-# que é o motivo do comentário existir, é a última coisa do texto.
-MAX_CARACTERES_COMENTARIO = 280
-
-
-def _limpar_comentario(roteiro: dict) -> None:
-    """Aplica em código as duas regras do comentário que não podem vazar.
-
-    URL e pedido de like/inscrição estão proibidos na descrição do campo, mas
-    regra de comportamento nunca fica só em prompt (é a mesma lição que criou a
-    auditoria pró-leigo). As duas doem de verdade: link em comentário do dono
-    reduz o alcance do vídeo, e pedido de like é exatamente o CTA que o formato
-    tirou da narração — reintroduzi-lo pela porta dos comentários anularia a
-    escolha. Sanear é melhor do que descartar: o resto do texto continua útil.
-    """
-    texto = (roteiro.get("comentario") or "").strip()
-    if not texto:
-        return
-    texto = re.sub(r"\S*(?:https?://|www\.)\S*", "", texto)
-    texto = re.sub(
-        r"(?im)^.*\b(?:se inscrev\w*|inscreva-se|deixa? o like|dá o like|"
-        r"curte a[ií]|compartilh\w+ com|subscribe|hit the like|smash that)\b.*$",
-        "",
-        texto,
-    )
-    texto = re.sub(r"\s{2,}", " ", texto).strip()
-    if len(texto) > MAX_CARACTERES_COMENTARIO:
-        texto = texto[:MAX_CARACTERES_COMENTARIO].rsplit(" ", 1)[0].rstrip(" ,;:—-")
-    roteiro["comentario"] = texto
-    if not texto:
-        print(
-            "[aviso] Comentário de abertura ficou vazio depois do saneamento "
-            "(era só link ou pedido de like) — o vídeo sai sem comentário."
-        )
-
-
 def _auditar_leigo(cliente: OpenAI, cfg: Config, roteiro: dict) -> list[str]:
     """Violações pró-leigo no título, na descrição e na narração (vazia = ok).
 
@@ -2640,9 +2554,6 @@ def gerar_roteiro(
             print("[roteiro] Reescrita aprovada pela auditoria pró-leigo.")
         palavras = _contar_palavras(roteiro["texto_video"])
 
-    # Depois da reescrita, não antes: a auditoria devolve o JSON completo e
-    # traria um comentário e tags novos, ainda por sanear.
-    _limpar_comentario(roteiro)
     # As tags passam pelo saneamento em código porque o limite que importa é o
     # da API, não o do prompt: o YouTube recusa o UPLOAD INTEIRO quando a soma
     # das tags passa de 500 caracteres — um vídeo já pago não pode morrer numa
@@ -2658,8 +2569,6 @@ def gerar_roteiro(
         print(f"[roteiro] Tags: {', '.join(roteiro['tags'])}")
     else:
         print("[aviso] O roteiro saiu sem tags aproveitáveis; o vídeo sobe sem elas.")
-    if roteiro.get("comentario"):
-        print(f"[roteiro] Comentário de abertura: {roteiro['comentario']}")
     if roteiro.get("pauta_falada"):
         print(f"[roteiro] Pauta falada na abertura: {roteiro['pauta_falada']}")
     if roteiro.get("pergunta"):

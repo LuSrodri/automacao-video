@@ -73,7 +73,6 @@ VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 # gasta da cota de 10.000 unidades/dia — cai no balde separado de "Search
 # Queries", de 100 buscas/dia.
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
-COMMENT_THREADS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
 # Legendas dos vídeos do PRÓPRIO canal (referencia.py): `captions.download` é
 # liberado para o dono do vídeo, inclusive na faixa gerada pelo ASR. É o
 # caminho reserva da transcrição quando o download do vídeo é barrado.
@@ -807,55 +806,6 @@ def _enviar_thumbnail(token: str, video_id: str, thumbnail: Path) -> None:
         print(f"[aviso] Capa não aplicada ({erro}). O vídeo está no ar.")
 
 
-def _postar_comentario(token: str, video_id: str, texto: str) -> None:
-    """Posta o comentário de abertura do dono no vídeo recém-publicado.
-
-    Por que existe (2026-07-28): os números do canal mostram retenção ótima
-    (avp 121% na faixa de topo) e propagação social nula — 306.947 views
-    renderam 82 comentários e 39 compartilhamentos. A narração não pode pedir
-    discussão (não tem CTA falado, e pedido explícito quebraria o loop, que é
-    a métrica que sustenta a distribuição), então a discussão é semeada aqui:
-    o comentário leva o dado que não coube no vídeo e termina numa pergunta
-    aberta. Custa 50 unidades de cota (o upload custa 1.600 das 10.000/dia).
-
-    O comentário NÃO fica fixado: a Data API v3 não tem endpoint de fixar
-    comentário — a fixação é manual no YouTube Studio. Como comentário do dono,
-    ele já aparece com destaque na aba.
-
-    Falha aqui só avisa: o vídeo já está no ar quando isto roda, e derrubar a
-    execução depois da publicação bem-sucedida seria trocar um comentário
-    perdido por um alarme falso de "falha na publicação".
-    """
-    try:
-        resposta = requests.post(
-            COMMENT_THREADS_URL,
-            params={"part": "snippet"},
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "snippet": {
-                    "videoId": video_id,
-                    "topLevelComment": {"snippet": {"textOriginal": texto}},
-                }
-            },
-            timeout=60,
-        )
-        if resposta.status_code in (200, 201):
-            print("[youtube] Comentário de abertura postado.")
-        elif resposta.status_code == 403:
-            print(
-                "[aviso] YouTube recusou o comentário (403): comentários "
-                "podem estar desativados no canal ou no vídeo. O vídeo está "
-                "no ar."
-            )
-        else:
-            print(
-                f"[aviso] Comentário não postado ({resposta.status_code}): "
-                f"{resposta.text[:200]}. O vídeo está no ar."
-            )
-    except requests.RequestException as erro:
-        print(f"[aviso] Comentário não postado ({erro}). O vídeo está no ar.")
-
-
 def publicar(
     cfg: Config,
     video: Path,
@@ -863,7 +813,6 @@ def publicar(
     descricao: str,
     tags: list[str] | None = None,
     thumbnail: Path | None = None,
-    comentario: str | None = None,
 ) -> str:
     """Publica o vídeo no YouTube e devolve a URL.
 
@@ -943,10 +892,6 @@ def publicar(
         # automática do YouTube — não vale derrubar uma execução inteira.
         if thumbnail is not None and thumbnail.is_file():
             _enviar_thumbnail(token, video_id, thumbnail)
-        # Mesma lógica da capa: já está no ar, falhar aqui só custa o
-        # comentário.
-        if comentario and comentario.strip():
-            _postar_comentario(token, video_id, comentario.strip())
         return url
     except Exception as erro:  # noqa: BLE001 — sucesso sem publicar é falha oculta
         raise SystemExit(
