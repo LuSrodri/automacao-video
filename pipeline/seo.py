@@ -53,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from .config import Config
-from .cortes import _tempo_do_char
+from .cortes import _tempo_do_char, localizar_citacao
 from .youtube import (
     SEARCH_URL,
     VIDEOS_URL,
@@ -383,17 +383,21 @@ def capitulos(
     if len(topicos) + 1 < MIN_CAPITULOS:
         return []
 
-    texto_baixo = texto_video.lower()
+    # Mesma busca da montagem (cortes.localizar_citacao): tolera audio tag no
+    # meio da frase e espaço colapsado. Antes era um `find` cru no texto, e o
+    # capítulo sumia quando o modelo copiava a fala por cima de um "[pausa]".
     marcos: list[tuple[float, str]] = []
+    cursor = 0
     for t in topicos:
-        citacao = (t.get("citacao") or "").strip().lower()
+        citacao = (t.get("citacao") or "").strip()
         titulo = " ".join((t.get("titulo") or "").split())
         if not citacao or not titulo:
             continue
-        pos = texto_baixo.find(citacao)
-        if pos < 0:
+        pos = localizar_citacao(texto_video, citacao, cursor)
+        if pos is None:
             print(f"[seo] Capítulo sem âncora na narração, descartado: {titulo}")
             continue
+        cursor = pos + 1
         marcos.append(
             (_tempo_do_char(alinhamento, texto_video, pos, duracao), titulo)
         )

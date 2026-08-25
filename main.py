@@ -76,15 +76,13 @@ Fluxo:
 9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
    o momento exato da narração (citações do texto -> timestamps do
    alinhamento).
-10. Cartelas de imagem nos momentos-chave: foto do post da trend, auditada
-    igual aos clipes, tomando a TELA INTEIRA quando a narração nomeia o que ela
-    mostra.
-11. MANCHETES (manchetes.py, só no formato longo, 2026-08-23): o índice
-    "Ainda neste episódio" logo depois da pergunta de abertura (no máximo 10
-    segundos, um tópico de cada vez) e uma manchete no canto inferior a cada
-    troca de pauta, ancorada na citação do tópico. É a camada que divide um
-    bloco corrido de 135 segundos em capítulos que o espectador percebe.
-    Planejada ANTES das cartelas, que desviam das janelas dela.
+10. Cartelas de imagem nos momentos-chave (SÓ NO SHORT desde 2026-08-25): foto
+    do post da trend, auditada igual aos clipes, tomando a TELA INTEIRA quando a
+    narração nomeia o que ela mostra.
+11. Daqui em diante os DOIS FORMATOS SE SEPARAM (2026-08-25). O FORMATO LONGO
+    passou a ser montado em QUATRO PARTES separadas, coladas no ffmpeg — ver o
+    bloco do formato longo mais abaixo e pipeline/montagem_longa.py. O que segue
+    nos itens 12 e 13 é o caminho do SHORT.
 12. ffmpeg monta o vídeo em TELA CHEIA (2026-08-16, pedido do usuário): o
     conteúdo ocupa o QUADRO INTEIRO, com o preenchimento de fundo em desfoque
     do próprio clipe. Saíram os cenários que embrulhavam o vídeo — a moldura de
@@ -114,10 +112,37 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 120 a 150 segundos
   (o piso de 120s é duro: abaixo dele a execução aborta), SEM legendas e em
   velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
-  explica um acontecimento contemporâneo cobrindo de 3 a 5 TÓPICOS — recortes
-  diferentes do mesmo fato, tirados do próprio acontecimento (quem fez, quem
-  paga, quem ganha, quem perde, o que vem depois). Usa até 8 clipes do X, até
-  4 cartelas, e a descrição sai com a lista de fontes reais.
+  explica um acontecimento contemporâneo cobrindo EXATAMENTE 3 TÓPICOS —
+  recortes diferentes do mesmo fato, tirados do próprio acontecimento (quem
+  fez, quem paga, quem ganha, quem perde, o que vem depois).
+
+  A MONTAGEM EM QUATRO PARTES (2026-08-25, desenho do usuário) é o que define
+  este formato. O vídeo NÃO é um bloco corrido com sobreposições ligando e
+  desligando: são quatro arquivos renderizados sozinhos e colados no ffmpeg
+  (pipeline/montagem_longa.py).
+
+      +--------------+ +----------+ +----------+ +----------+
+      |   3 clipes   | | clipe 1  | | clipe 2  | | clipe 3  |
+      | [AINDA NESTE | | [MANCHETE| | [MANCHETE| | [MANCHETE|
+      |    VÍDEO]    | |    1]    | |    2]    | |    3]    |
+      +--------------+ +----------+ +----------+ +----------+
+           ~10s       ^           ^            ^         fade
+                    pausa       pausa        pausa       out 3s
+                    0,7s        0,7s         0,7s
+
+  As regras que a estrutura torna DURAS, e que antes eram só preferências de
+  prompt:
+    - O PAINEL DE TEXTO NUNCA SAI DA TELA. Cada parte tem o seu do primeiro ao
+      último quadro; a troca acontece dentro da pausa de silêncio da virada, o
+      painel velho saindo pela esquerda e o novo entrando. Três trocas no vídeo
+      inteiro. Antes a manchete durava 4,2s e sumia.
+    - CADA PAUTA TEM O SEU CLIPE, e um clipe não serve a duas. Quem casa clipe
+      e pauta é `cortes.atribuir_clipes`, e a montagem ABORTA se um repetir.
+      A abertura mostra os três em sequência — é a prévia do que foi prometido.
+    - As três CITAÇÕES de virada são conferidas ANTES da narração
+      (escritor._conferir_estrutura_longa): sem elas não há onde cortar.
+  Usa até 8 clipes do X (3 entram na montagem), NÃO usa cartelas, e a descrição
+  sai com a lista de fontes reais.
 
 Idioma: o canal decide, nunca o modelo. Canal brasileiro publica TUDO em
 português (título, descrição, narração, capa); canal americano (`-usa`), TUDO
@@ -129,6 +154,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 
 from pipeline.audio import gerar_narracao
 from pipeline.auditoria import auditar_midias
@@ -143,7 +169,7 @@ from pipeline.config import (
     ativar_formato_longo,
     carregar_config,
 )
-from pipeline.cortes import planejar_cortes
+from pipeline.cortes import atribuir_clipes, planejar_cortes
 from pipeline.edicao import (
     RESPIRO_FINAL,
     duracao_audio,
@@ -151,17 +177,14 @@ from pipeline.edicao import (
     marcar_memoria,
     montar_video,
 )
+from pipeline.montagem_longa import montar_video_longo
 from pipeline.escritor import (
     gerar_roteiro,
     selecionar_trend,
     selecionar_trends_longo,
 )
 from pipeline.legendas import gerar_legendas
-from pipeline.manchetes import (
-    gerar_manchetes,
-    instantes_das_viradas,
-    janelas as janelas_manchetes,
-)
+from pipeline.manchetes import instantes_das_viradas, planejar_partes
 from pipeline.midia_x import baixar_midias_posts, descrever_midias
 from pipeline.registro import registrar
 from pipeline.seo import (
@@ -467,15 +490,24 @@ def main() -> None:
             "ajustar LONG_DURACAO se isso virar rotina."
         )
 
-    # PAUSA NAS TROCAS DE PAUTA (2026-08-24, só no longo): abre um silêncio
-    # logo ANTES da frase de virada de cada pauta — a "separação temporal" que
-    # acompanha a visual. Fica DEPOIS da conferência de piso de propósito: o
-    # piso mede FALA, e somar silêncio à duração deixaria um roteiro curto
-    # demais passar por causa do respiro. E fica antes de tudo que ancora em
-    # citação (cortes, cartelas, manchetes, capítulos), que passam a
-    # ler o alinhamento já deslocado.
-    if cfg.formato == "longo" and cfg.pausa_pauta_s > 0:
-        narracao, alinhamento, _ = inserir_pausas(
+    # --- Daqui para baixo o formato longo tem um caminho PRÓPRIO --------------
+    #
+    # O longo deixou de ser "o Short com outros parâmetros" em 2026-08-25: ele
+    # é montado em QUATRO PARTES separadas, coladas no ffmpeg
+    # (montagem_longa.py). O que muda:
+    #   - as pausas de virada não são mais um respiro editorial, são os PONTOS
+    #     DE CORTE das partes, e `inserir_pausas` devolve onde cada uma ficou;
+    #   - o planejador de cortes por citação sai de cena: cada pauta recebe UM
+    #     clipe, escolhido por `atribuir_clipes`, e nenhum clipe serve a duas;
+    #   - cartelas e legendas continuam fora (as cartelas saíram agora, com o
+    #     resto: foto tomando o quadro no meio de uma pauta é a pauta sem o
+    #     vídeo dela).
+    if cfg.formato == "longo":
+        # PAUSA NAS TROCAS DE PAUTA: abre um silêncio logo ANTES da frase de
+        # virada de cada pauta. Fica DEPOIS da conferência de piso de propósito:
+        # o piso mede FALA, e somar silêncio à duração deixaria um roteiro curto
+        # demais passar por causa do respiro.
+        narracao, alinhamento, pausas = inserir_pausas(
             narracao,
             alinhamento,
             instantes_das_viradas(
@@ -485,71 +517,110 @@ def main() -> None:
         )
         duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
-    # Posicionamento automático (reserva): clipes espalhados uniformemente,
-    # com o primeiro abrindo o gancho.
-    sobreposicoes = [
-        {
-            "caminho": m["caminho"],
-            "inicio_frac": k / max(len(clipes), 1),
-            "fim_frac": None,
-            "conta": m.get("conta", ""),
-            "representacao": bool(m.get("representacao")),
-            "inicio_util_s": m.get("inicio_util_s"),
-        }
-        for k, m in enumerate(clipes)
-    ]
-
-    # Planejador de cortes: a IA casa cada clipe com o momento da narração.
-    # Os clipes já vêm auditados, com a descrição da visão dentro de cada um —
-    # descrever o arquivo real evita casar a narração com a cena errada e
-    # melhora a escolha do primeiro clipe, o que decide o swipe.
-    midias_plano = [
-        {
-            "caminho": m["caminho"],
-            "tipo": m.get("tipo", ""),
-            "dur_s": m.get("dur_s"),
-            "conta": m.get("conta", ""),
-            "descricao": (
-                m.get("descricao") or "clipe anexado a um post original da trend"
-            ),
-        }
-        for m in clipes
-    ]
-    plano = planejar_cortes(
-        cfg, roteiro["texto_video"], midias_plano, alinhamento, duracao
-    )
-    if plano:
-        # O plano volta só com caminho/tempos; a conta de origem (crédito de
-        # reprodução na tela) e a marcação de representação visual (material de
-        # telejornal no formato longo) são reanexadas pelo caminho do arquivo.
-        conta_por_caminho = {str(m["caminho"]): m.get("conta", "") for m in clipes}
-        repr_por_caminho = {
-            str(m["caminho"]): bool(m.get("representacao")) for m in clipes
-        }
-        util_por_caminho = {
-            str(m["caminho"]): m.get("inicio_util_s") for m in clipes
-        }
-        for p in plano:
-            p["conta"] = conta_por_caminho.get(str(p["caminho"]), "")
-            p["representacao"] = repr_por_caminho.get(str(p["caminho"]), False)
-            p["inicio_util_s"] = util_por_caminho.get(str(p["caminho"]))
-        sobreposicoes = plano
-        (pasta / "cortes.json").write_text(
-            json.dumps(
-                [
-                    {"midia": str(p["caminho"].name), "inicio_s": p["inicio_s"]}
-                    for p in plano
-                ],
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        # As quatro partes, com o painel de texto de cada uma. Aborta se a
+        # divisão não fechar — sem ela o vídeo sairia como o bloco corrido que
+        # o formato deixou de ser.
+        partes = planejar_partes(
+            cfg, roteiro, pausas, duracao, pasta, tela=(largura, altura)
         )
 
-    # Formato longo é SEM legendas queimadas (pedido do usuário): a narração
-    # se sustenta sozinha e a tela fica limpa para o clipe.
-    legendas = None
-    if cfg.formato != "longo":
+        # UM CLIPE POR PAUTA, sem repetir. A abertura mostra os três em
+        # sequência: ela é o "ainda neste vídeo" em imagem, a prévia do que foi
+        # prometido no painel.
+        midias = [
+            {
+                "caminho": m["caminho"],
+                "tipo": m.get("tipo", ""),
+                "dur_s": m.get("dur_s"),
+                "conta": m.get("conta", ""),
+                "representacao": bool(m.get("representacao")),
+                "inicio_util_s": m.get("inicio_util_s"),
+                "descricao": (
+                    m.get("descricao")
+                    or "clipe anexado a um post original da trend"
+                ),
+            }
+            for m in clipes
+        ]
+        clipes_da_pauta = atribuir_clipes(cfg, roteiro, midias)
+        clipes_por_parte = [clipes_da_pauta, *([c] for c in clipes_da_pauta)]
+
+        marcar_memoria("antes da montagem")
+        video_final = montar_video_longo(
+            narracao,
+            partes,
+            clipes_por_parte,
+            pasta / "video_final.mp4",
+            largura,
+            altura,
+            publico=cfg.publico,
+        )
+        sobreposicoes = clipes_da_pauta
+    else:
+        # Posicionamento automático (reserva): clipes espalhados uniformemente,
+        # com o primeiro abrindo o gancho.
+        sobreposicoes = [
+            {
+                "caminho": m["caminho"],
+                "inicio_frac": k / max(len(clipes), 1),
+                "fim_frac": None,
+                "conta": m.get("conta", ""),
+                "representacao": bool(m.get("representacao")),
+                "inicio_util_s": m.get("inicio_util_s"),
+            }
+            for k, m in enumerate(clipes)
+        ]
+
+        # Planejador de cortes: a IA casa cada clipe com o momento da narração.
+        # Os clipes já vêm auditados, com a descrição da visão dentro de cada um
+        # — descrever o arquivo real evita casar a narração com a cena errada e
+        # melhora a escolha do primeiro clipe, o que decide o swipe.
+        midias_plano = [
+            {
+                "caminho": m["caminho"],
+                "tipo": m.get("tipo", ""),
+                "dur_s": m.get("dur_s"),
+                "conta": m.get("conta", ""),
+                "descricao": (
+                    m.get("descricao")
+                    or "clipe anexado a um post original da trend"
+                ),
+            }
+            for m in clipes
+        ]
+        plano = planejar_cortes(
+            cfg, roteiro["texto_video"], midias_plano, alinhamento, duracao
+        )
+        if plano:
+            # O plano volta só com caminho/tempos; a conta de origem (crédito de
+            # reprodução na tela) e a marcação de representação visual são
+            # reanexadas pelo caminho do arquivo.
+            conta_por_caminho = {
+                str(m["caminho"]): m.get("conta", "") for m in clipes
+            }
+            repr_por_caminho = {
+                str(m["caminho"]): bool(m.get("representacao")) for m in clipes
+            }
+            util_por_caminho = {
+                str(m["caminho"]): m.get("inicio_util_s") for m in clipes
+            }
+            for p in plano:
+                p["conta"] = conta_por_caminho.get(str(p["caminho"]), "")
+                p["representacao"] = repr_por_caminho.get(str(p["caminho"]), False)
+                p["inicio_util_s"] = util_por_caminho.get(str(p["caminho"]))
+            sobreposicoes = plano
+            (pasta / "cortes.json").write_text(
+                json.dumps(
+                    [
+                        {"midia": str(p["caminho"].name), "inicio_s": p["inicio_s"]}
+                        for p in plano
+                    ],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
         legendas = gerar_legendas(
             roteiro["texto_video"],
             alinhamento,
@@ -560,49 +631,31 @@ def main() -> None:
             intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
         )
 
-    # Manchetes (só no longo): o índice "Ainda neste episódio" na abertura e o
-    # painel que nomeia cada pauta quando ela vira. Vêm PRIMEIRO na fila das
-    # sobreposições porque saem da estrutura do roteiro — as camadas que tomam
-    # o quadro inteiro (cartela) é que desviam delas, e não o
-    # contrário: uma imagem em cima do painel taparia justamente a marca de
-    # troca de pauta.
-    manchetes = gerar_manchetes(
-        cfg,
-        roteiro,
-        roteiro["texto_video"],
-        alinhamento,
-        duracao,
-        pasta,
-        tela=(largura, altura),
-    )
+        # Cartelas: a foto do post da trend toma a tela inteira pelo deslize, no
+        # lugar do clipe. Renderizada no tamanho do QUADRO desde a volta da tela
+        # cheia (2026-08-16).
+        cartelas = gerar_cartelas(
+            cfg,
+            roteiro["texto_video"],
+            fotos,
+            alinhamento,
+            duracao,
+            pasta,
+            tela=(largura, altura),
+        )
 
-    # Cartelas: a foto do post da trend toma a tela inteira pelo deslize, no
-    # lugar do clipe. Renderizada no tamanho do QUADRO desde a volta da tela
-    # cheia (2026-08-16) — antes era o tamanho da tela do celular desenhado.
-    cartelas = gerar_cartelas(
-        cfg,
-        roteiro["texto_video"],
-        fotos,
-        alinhamento,
-        duracao,
-        pasta,
-        tela=(largura, altura),
-        ocupadas=janelas_manchetes(manchetes),
-    )
-
-    marcar_memoria("antes da montagem")
-    video_final = montar_video(
-        narracao,
-        sobreposicoes,
-        pasta / "video_final.mp4",
-        largura,
-        altura,
-        legendas=legendas,
-        cartelas=cartelas,
-        manchetes=manchetes,
-        publico=cfg.publico,
-        formato=cfg.formato,
-    )
+        marcar_memoria("antes da montagem")
+        video_final = montar_video(
+            narracao,
+            sobreposicoes,
+            pasta / "video_final.mp4",
+            largura,
+            altura,
+            legendas=legendas,
+            cartelas=cartelas,
+            publico=cfg.publico,
+            formato=cfg.formato,
+        )
 
     # CAPÍTULOS (só no formato longo): cada tópico do roteiro trouxe uma citação
     # literal do ponto da narração em que ele começa, e o alinhamento converte
@@ -633,6 +686,11 @@ def main() -> None:
     # Capa customizada (só no longo, onde a thumbnail decide o clique — no
     # Short o feed mostra o vídeo rodando). Falha aqui não aborta: o YouTube
     # cai na capa automática e o vídeo vai ao ar do mesmo jeito.
+    #
+    # Os quadros candidatos saem dos CLIPES, não do vídeo montado (2026-08-25):
+    # desde que o painel de manchete ficou fixo na tela, todo frame do vídeo
+    # montado traz o painel — e a capa é uma montagem em cima desse frame, com
+    # recorte e desfoque, então o painel entraria dentro da capa.
     capa = None
     if cfg.formato == "longo":
         capa = gerar_thumbnail(
@@ -642,6 +700,7 @@ def main() -> None:
             roteiro["texto_video"],
             pasta,
             titulos_do_dia=titulos_do_dia(panorama),
+            fontes=[Path(m["caminho"]) for m in sobreposicoes],
         )
 
     url_youtube = publicar_youtube(

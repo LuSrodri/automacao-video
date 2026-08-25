@@ -1,44 +1,49 @@
-"""Manchetes do formato longo: o texto que dá ritmo e divisão ao vídeo.
+"""As quatro partes do vídeo longo e o painel de texto que nomeia cada uma.
 
-O problema (2026-08-23, diagnóstico do usuário): o vídeo longo é MONÓTONO. Ele
-tem 135 segundos de narração corrida sobre clipes que trocam, sem nenhuma marca
-de que a pauta mudou — o espectador não sabe onde está, não sabe o que ainda
-vem, e não tem por que ficar.
+DESENHO DO USUÁRIO (2026-08-25). O vídeo longo tem QUATRO PARTES, montadas
+separadamente e coladas no ffmpeg (montagem_longa.py):
 
-Esta camada resolve isso com duas peças, ambas ancoradas em CITAÇÕES LITERAIS
-da narração (o mesmo mecanismo das cartelas e dos capítulos — o
-único jeito de o texto na tela cair no segundo em que a narração diz aquilo):
+    +--------------+ +----------+ +----------+ +----------+
+    |   3 clipes   | | clipe 1  | | clipe 2  | | clipe 3  |
+    | [AINDA NESTE | | [MANCHETE| | [MANCHETE| | [MANCHETE|
+    |    VÍDEO]    | |    1]    | |    2]    | |    3]    |
+    +--------------+ +----------+ +----------+ +----------+
+         ~10s       ^           ^            ^         fade
+                  pausa       pausa        pausa       out 3s
+                  0,7s        0,7s         0,7s
 
-1. AINDA NESTE VÍDEO — no canto inferior esquerdo, ACOMPANHANDO a pauta que a
-   narração está dizendo em voz alta nos primeiros ~6 segundos (campo
-   `pauta_falada` do roteiro): os títulos entram um a um enquanto a fala os
-   nomeia. Na primeira versão (23/08) o índice subia DEPOIS da pergunta de
-   abertura e listava tópicos que a narração não mencionava — a tela dizia uma
-   coisa e o áudio dizia outra, que é a "confusão" que o usuário relatou em
-   24/08. Sem a pauta falada localizada no texto, o índice não sai.
-2. UMA MANCHETE POR PAUTA — quando a pauta vira, a manchete daquela pauta entra
-   no mesmo canto, DENTRO da pausa de silêncio que o pipeline abriu logo antes
-   da frase de virada (silencio.inserir_pausas). O espectador ouve o silêncio,
-   lê o título novo e só então a narração recomeça: é a separação temporal e
-   visual pedida em 24/08, e é o que transforma um bloco corrido em capítulos
-   que o espectador percebe.
+O que mudou em relação à versão de 2026-08-23, e por quê — o usuário viu o
+vídeo publicado e disse que "ainda ficou uma merda":
 
-ESTILO — o MESMO da capa (identidade.py), a pedido do usuário depois de a capa
-ficar boa: etiqueta de cor chapada com retícula Ben-Day, título em grotesca
-pesada com a desregistragem ciano/magenta e um grifo à mão por baixo. A tarja
-fininha lateral da primeira versão saiu — ela lia como enfeite de template, não
-como a marca do canal. O MOVIMENTO
-é do ffmpeg (edicao.py): a manchete entra deslizando da borda esquerda com
-aceleração suave e sai pelo mesmo caminho. Aqui só se renderiza o painel
-parado, do tamanho exato do seu conteúdo — e não da largura do quadro, porque
-um PNG de faixa inteira multiplicaria a memória do overlay num formato que já
-estourou o container.
+1. O PAINEL NUNCA SAI DA TELA. Antes cada manchete durava DUR_MANCHETE = 4,2s
+   e sumia, deixando 40 segundos de tela sem nenhuma marca de onde o
+   espectador está — que é justamente o problema que a camada existia para
+   resolver. Agora o painel da parte fica de ponta a ponta dela, e o que
+   acontece na virada é uma TROCA: o painel velho sai deslizando e o novo
+   entra, dentro da pausa de silêncio. Três trocas no vídeo inteiro, uma por
+   virada de pauta.
+2. O ÍNDICE É UM PAINEL SÓ, com os três títulos listados. Antes eram três
+   painéis piscando um de cada vez (1/3, 2/3, 3/3) dentro dos ~6s da pauta
+   falada — tempo de ver que algo piscou, não de ler.
+3. AS PARTES SÃO O CORTE DO VÍDEO, não uma sobreposição sobre um vídeo corrido.
+   Cada parte é renderizada sozinha, com o SEU clipe (montagem_longa.py), o que
+   torna impossível um clipe atravessar duas pautas.
+
+Por isso esta camada deixou de ser opcional. Antes qualquer falha só deixava o
+vídeo sem manchetes; agora ela devolve a divisão do vídeo, e falhar aqui é
+falhar a montagem inteira — `planejar_partes` levanta SystemExit em vez de
+devolver lista vazia. O que protege a execução é a conferência de estrutura no
+escritor (`_conferir_estrutura_longa`), que roda ANTES da narração e garante os
+três tópicos com citação literal.
+
+ESTILO — o MESMO da capa (identidade.py): etiqueta de cor chapada com retícula
+Ben-Day, título em grotesca pesada com a desregistragem ciano/magenta e um
+grifo à mão por baixo. O MOVIMENTO é do ffmpeg (montagem_longa.py): o painel
+entra deslizando da borda esquerda com aceleração suave e sai pelo mesmo
+caminho.
 
 Só o formato LONGO usa esta camada: o Short tem legenda queimada ocupando a
 tela e 25 segundos que não comportam índice nenhum.
-
-Etapa opcional: qualquer falha (fonte ausente, Pillow, citação não encontrada)
-só deixa o vídeo sem manchetes — nunca derruba o pipeline.
 """
 
 import json
@@ -48,7 +53,6 @@ from PIL import Image, ImageDraw
 
 from . import identidade as ident
 from .config import Config
-from .cortes import _tempo_do_char
 
 # --- Rótulos por canal -------------------------------------------------------
 # Idioma é regra de CANAL (config.IDIOMA_CANAL), nunca inferido: texto na tela é
@@ -58,32 +62,28 @@ RUBRICAS = {
     "usa": "COMING UP",
 }
 
-# --- Tempo -------------------------------------------------------------------
-# O índice acompanha a PAUTA FALADA, que o roteiro entrega em no máximo 18
-# palavras (~6s). O teto existe como guarda: se a fala escorregar, o índice não
-# invade o corpo do vídeo.
-ABERTURA_MAX_S = 6.5
-ABERTURA_ITEM_MIN_S = 1.4  # abaixo disso não dá tempo de ler o tópico
-DUR_MANCHETE = 4.2  # tempo-alvo da manchete de um tópico na tela
-DUR_MINIMA = 2.0
-GAP = 0.7  # respiro entre uma peça e a seguinte
-# Piso de segurança para a manchete de um tópico: nada de painel de pauta em
-# cima da abertura. O ÍNDICE não obedece a isto — ele é a abertura.
-INICIO_MINIMO = 3.0
-
 # --- Geometria (frações do quadro) -------------------------------------------
 MARGEM_X_FRAC = 0.052
-# Base do painel. Fica ACIMA da etiqueta de REPRESENTAÇÃO VISUAL (edicao.py,
-# REPR_Y_FRAC = 0.912), que é marcação obrigatória de material de terceiro e
-# não pode ser coberta.
+# Base do painel. Fica ACIMA da etiqueta de REPRESENTAÇÃO VISUAL
+# (montagem_longa.REPR_Y_FRAC = 0.912), que é marcação obrigatória de material
+# de terceiro e não pode ser coberta.
 BASE_FRAC = 0.880
 LARGURA_MAX_FRAC = 0.62
 TITULO_FRAC = 0.050  # tamanho da fonte do título, fração da altura do quadro
+# As linhas do índice são menores que a manchete de uma pauta: são três, e o
+# painel inteiro tem que caber acima da etiqueta de representação.
+INDICE_FRAC = 0.033
 KICKER_FRAC = 0.020
 PAD_FRAC = 0.020
 FUNDO_ALFA = 232
 ENTRELINHA = 1.14
+ENTRELINHA_INDICE = 1.42  # respiro maior: três linhas coladas viram parágrafo
 TRACKING_FRAC = 0.34  # espaçamento do kicker, fração do tamanho da fonte
+
+# Duração mínima de uma parte para ela ainda ler como parte. Abaixo disso o
+# painel entra e já sai, e o clipe não chega a se estabelecer. Só AVISA — a
+# execução não morre por um roteiro desequilibrado que já foi narrado e pago.
+PARTE_CURTA_S = 6.0
 
 
 def _medidor() -> ImageDraw.ImageDraw:
@@ -91,27 +91,65 @@ def _medidor() -> ImageDraw.ImageDraw:
     return ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
 
-def _painel(
+def _etiqueta_medida(
+    medidor: ImageDraw.ImageDraw,
+    kicker: str,
+    f_kicker,
+    tracking: float,
+    tam_kicker: int,
+) -> tuple[int, int, int]:
+    """(largura, altura, padding) da etiqueta de cor chapada do topo do painel."""
+    pad_et = max(4, round(tam_kicker * 0.45))
+    larg = ident.largura_espacada(medidor, kicker, f_kicker, tracking)
+    return round(larg + 2 * pad_et), round(tam_kicker + 2 * pad_et), pad_et
+
+
+def _fundo_slab(tela: Image.Image, topo: int, altura_quadro: int) -> None:
+    """Pinta o corpo do painel: preto quase opaco com a retícula da capa."""
+    largura, altura = tela.size
+    dr = ImageDraw.Draw(tela, "RGBA")
+    dr.rectangle([0, topo, largura, altura], fill=(*ident.PRETO, FUNDO_ALFA))
+    # Retícula bem fraca no corpo do slab: a textura de impressão que liga a
+    # manchete à capa, sem virar ruído atrás do texto.
+    ident.reticula(
+        tela,
+        (0, topo, largura, altura),
+        cor=ident.BRANCO,
+        passo=max(9, round(altura_quadro * 0.012)),
+        raio=1,
+        alfa=20,
+    )
+
+
+def _encurtar(medidor, texto: str, fonte, largura_max: float) -> str:
+    """Corta o texto com reticências até caber em `largura_max`."""
+    if medidor.textlength(texto, font=fonte) <= largura_max:
+        return texto
+    corte = texto
+    while corte and medidor.textlength(corte + "...", font=fonte) > largura_max:
+        corte = corte[:-1].rstrip()
+    return (corte + "...") if corte else texto
+
+
+def _painel_pauta(
     titulo: str,
     kicker: str,
     destino: Path,
     altura_quadro: int,
     largura_max: int,
     cor: tuple,
-    contador: str = "",
     altura_minima: int = 0,
 ) -> tuple[Path, int, int]:
-    """Renderiza um painel de manchete; devolve (caminho, largura, altura).
+    """Painel de UMA pauta; devolve (caminho, largura, altura).
 
     O PNG tem o tamanho do CONTEÚDO — não a largura do quadro. Um PNG de faixa
     inteira custaria memória de overlay em cada frame da janela sem desenhar
     nada nas bordas, e este é um formato que já estourou o container.
 
-    `altura_minima` iguala a altura de todos os painéis do vídeo. Sem isso, um
+    `altura_minima` iguala a altura dos três painéis de pauta. Sem isso, um
     título que quebra em duas linhas gera um painel mais alto que o do vizinho,
-    e a lista da abertura sobe e desce a cada item — o painel é ancorado pela
-    BASE, então altura variável vira solavanco. Com a altura fixa, o título
-    ganha o espaço que sobra centrado abaixo do fio.
+    e como o painel é ancorado pela BASE, a troca vira solavanco em vez de
+    deslize. Com a altura fixa, o título ganha o espaço que sobra centrado.
     """
     medidor = _medidor()
     pad = round(altura_quadro * PAD_FRAC)
@@ -124,23 +162,19 @@ def _painel(
 
     util_max = largura_max - 2 * pad
     f_titulo, linhas = ident.caber(
-        medidor, titulo.upper(), util_max, round(altura_quadro * TITULO_FRAC),
-        minimo=max(16, round(altura_quadro * 0.028)), maximo_linhas=2,
+        medidor,
+        titulo.upper(),
+        util_max,
+        round(altura_quadro * TITULO_FRAC),
+        minimo=max(16, round(altura_quadro * 0.028)),
+        maximo_linhas=2,
     )
     larg_titulo = max(
         (medidor.textlength(linha, font=f_titulo) for linha in linhas), default=0
     )
-
-    # ETIQUETA: o mesmo bloco de cor chapado que na capa envolve a palavra do
-    # fato (identidade.etiqueta). Ela fica ACIMA do slab, encostada à esquerda,
-    # e é o que dá cor à peça — a tarja fininha lateral que existia antes lia
-    # como enfeite de template, não como a marca do canal.
-    pad_et = max(4, round(tam_kicker * 0.45))
-    larg_rotulo = ident.largura_espacada(medidor, kicker, f_kicker, tracking)
-    if contador:
-        larg_rotulo += pad_et * 2 + medidor.textlength(contador, font=f_kicker)
-    larg_etiqueta = round(larg_rotulo + 2 * pad_et)
-    alt_etiqueta = round(tam_kicker + 2 * pad_et)
+    larg_etiqueta, alt_etiqueta, pad_et = _etiqueta_medida(
+        medidor, kicker, f_kicker, tracking, tam_kicker
+    )
 
     alt_linha = round(f_titulo.size * ENTRELINHA)
     largura = round(max(larg_etiqueta, min(util_max, larg_titulo) + 2 * pad))
@@ -153,39 +187,31 @@ def _painel(
 
     tela = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
     dr = ImageDraw.Draw(tela, "RGBA")
-
-    topo_slab = alt_etiqueta
-    dr.rectangle([0, topo_slab, largura, altura], fill=(*ident.PRETO, FUNDO_ALFA))
-    # Retícula bem fraca no corpo do slab: a textura de impressão que liga a
-    # manchete à capa, sem virar ruído atrás do texto.
-    ident.reticula(
-        tela, (0, topo_slab, largura, altura), cor=ident.BRANCO,
-        passo=max(9, round(altura_quadro * 0.012)), raio=1, alfa=20,
-    )
-
+    _fundo_slab(tela, alt_etiqueta, altura_quadro)
     ident.etiqueta(
-        tela, (0, 0, larg_etiqueta, alt_etiqueta), cor,
+        tela,
+        (0, 0, larg_etiqueta, alt_etiqueta),
+        cor,
         passo_reticula=max(6, round(tam_kicker * 0.42)),
     )
     ident.escrever_espacado(
         dr, (pad_et, pad_et), kicker, f_kicker, ident.PRETO, tracking
     )
-    if contador:
-        dr.text(
-            (larg_etiqueta - pad_et, pad_et), contador, font=f_kicker,
-            fill=(*ident.PRETO, 170), anchor="ra",
-        )
 
-    y = topo_slab + pad + sobra // 2
+    y = alt_etiqueta + pad + sobra // 2
     for i, linha in enumerate(linhas):
         ident.escrever_cromatico(tela, (pad, y), linha, f_titulo, ident.BRANCO)
         if i == len(linhas) - 1:
-            # Grifo à mão sob a última linha: o traço da capa, reduzido.
+            # Grifo à mão sob a última linha: o traço da capa, reduzido. 1,10 do
+            # corpo da fonte deixa o traço ABAIXO das maiúsculas do Archivo
+            # Black; em 1,02 ele cortava o pé das letras.
             larg_linha = medidor.textlength(linha, font=f_titulo)
-            # 1,10 do corpo da fonte deixa o traço ABAIXO das maiúsculas do
-            # Archivo Black; em 1,02 ele cortava o pé das letras.
             ident.risco_a_mao(
-                tela, pad, pad + larg_linha, y + f_titulo.size * 1.10, cor,
+                tela,
+                pad,
+                pad + larg_linha,
+                y + f_titulo.size * 1.10,
+                cor,
                 largura=max(3, round(f_titulo.size * 0.085)),
                 sem=ident.semente(titulo),
             )
@@ -196,265 +222,274 @@ def _painel(
     return destino, largura, altura
 
 
-def _tempo_da_citacao(
-    texto_baixo: str, texto_video: str, alinhamento: dict, dur_total: float,
-    citacao: str,
-) -> float | None:
-    trecho = " ".join((citacao or "").split()).lower()
-    if not trecho:
-        return None
-    pos = texto_baixo.find(trecho)
-    if pos < 0:
-        return None
-    return _tempo_do_char(alinhamento, texto_video, pos, dur_total)
+def _painel_indice(
+    itens: list[str],
+    rubrica: str,
+    destino: Path,
+    altura_quadro: int,
+    largura_max: int,
+    cor: tuple,
+) -> tuple[Path, int, int]:
+    """Painel da abertura: a rubrica e os três títulos LISTADOS de uma vez.
 
-
-def _marcos_dos_topicos(
-    topicos: list[dict], texto_video: str, alinhamento: dict, dur_total: float
-) -> list[tuple[float, str]]:
-    """(instante, título) de cada tópico que tem âncora real na narração."""
-    texto_baixo = texto_video.lower()
-    marcos: list[tuple[float, str]] = []
-    for topico in topicos:
-        titulo = " ".join((topico.get("titulo") or "").split())
-        if not titulo:
-            continue
-        inicio = _tempo_da_citacao(
-            texto_baixo, texto_video, alinhamento, dur_total,
-            topico.get("citacao") or "",
-        )
-        if inicio is None:
-            print(
-                f"[manchetes] Tópico sem âncora na narração, sem manchete: "
-                f"{titulo}"
-            )
-            continue
-        if inicio < INICIO_MINIMO:
-            print(
-                f"[manchetes] '{titulo}' cai em {inicio:.1f}s, dentro do "
-                f"gancho (< {INICIO_MINIMO:.0f}s); sem manchete."
-            )
-            continue
-        marcos.append((inicio, titulo))
-    marcos.sort(key=lambda m: m[0])
-    return marcos
-
-
-def _janela_da_pauta_falada(
-    roteiro: dict, texto_video: str, alinhamento: dict, dur_total: float
-) -> tuple[float, float]:
-    """(início, fim) do trecho em que a narração DIZ a pauta do vídeo.
-
-    O índice na tela existe para acompanhar essa fala — os títulos aparecem
-    enquanto a narração os nomeia (2026-08-24, pedido do usuário). Antes o
-    índice subia depois da pergunta de abertura e listava tópicos que a
-    narração não mencionava: a tela dizia uma coisa e o áudio dizia outra, que
-    foi exatamente a "confusão" relatada.
-
-    Sem conseguir localizar a pauta falada no texto (modelo que não copiou o
-    campo caractere por caractere), devolve uma janela vazia e o índice não
-    sai — índice fora de sincronia com a fala é pior que índice nenhum.
+    Um painel, não três. Na versão anterior os títulos entravam um a um dentro
+    dos ~6 segundos da pauta falada, o que dava menos de dois segundos por item
+    — tempo de ver que algo piscou, não de ler. Aqui os três ficam juntos na
+    tela durante a abertura inteira, numerados, e o espectador lê no ritmo dele
+    enquanto a narração diz os mesmos três assuntos na mesma ordem.
     """
-    pauta = " ".join((roteiro.get("pauta_falada") or "").split())
-    if not pauta:
-        return 0.0, 0.0
-    pos = texto_video.lower().find(pauta.lower())
-    if pos < 0:
-        print(
-            "[manchetes] A pauta falada não foi encontrada na narração "
-            "(o modelo não copiou o campo); vídeo sem índice de abertura."
+    medidor = _medidor()
+    pad = round(altura_quadro * PAD_FRAC)
+    tam_kicker = max(11, round(altura_quadro * KICKER_FRAC))
+    f_kicker = ident.fonte(tam_kicker)
+    tracking = tam_kicker * TRACKING_FRAC
+    larg_etiqueta, alt_etiqueta, pad_et = _etiqueta_medida(
+        medidor, rubrica, f_kicker, tracking, tam_kicker
+    )
+
+    # O número de cada linha ("01") é desenhado na cor de destaque e ocupa uma
+    # coluna fixa, para os títulos alinharem entre si.
+    tam_num = max(12, round(altura_quadro * INDICE_FRAC * 0.72))
+    f_num = ident.fonte(tam_num)
+    col_num = round(medidor.textlength("00", font=f_num) + tam_num * 0.75)
+
+    util_max = largura_max - 2 * pad - col_num
+    # Uma fonte só para as três linhas: tamanhos diferentes entre itens leriam
+    # como hierarquia que não existe. Cai até a MAIS LONGA caber em uma linha.
+    tam = round(altura_quadro * INDICE_FRAC)
+    minimo = max(14, round(altura_quadro * 0.021))
+    while tam > minimo:
+        f = ident.fonte(tam)
+        if all(medidor.textlength(i.upper(), font=f) <= util_max for i in itens):
+            break
+        tam = int(tam * 0.94)
+    f_item = ident.fonte(tam)
+    # O que ainda não couber (título longo demais mesmo no menor corpo) é
+    # cortado com reticências: melhor um item truncado do que um painel que
+    # vaza do quadro.
+    linhas = [_encurtar(medidor, i.upper(), f_item, util_max) for i in itens]
+
+    alt_linha = round(f_item.size * ENTRELINHA_INDICE)
+    larg_texto = max(
+        (medidor.textlength(linha, font=f_item) for linha in linhas), default=0
+    )
+    largura = round(
+        max(larg_etiqueta, min(util_max, larg_texto) + col_num + 2 * pad)
+    )
+    alt_slab = round(2 * pad + alt_linha * len(linhas))
+    altura = alt_etiqueta + alt_slab
+
+    tela = Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
+    dr = ImageDraw.Draw(tela, "RGBA")
+    _fundo_slab(tela, alt_etiqueta, altura_quadro)
+    ident.etiqueta(
+        tela,
+        (0, 0, larg_etiqueta, alt_etiqueta),
+        cor,
+        passo_reticula=max(6, round(tam_kicker * 0.42)),
+    )
+    ident.escrever_espacado(
+        dr, (pad_et, pad_et), rubrica, f_kicker, ident.PRETO, tracking
+    )
+
+    y = alt_etiqueta + pad
+    for k, linha in enumerate(linhas, 1):
+        # A linha de base do número acompanha a do título, não o topo da caixa:
+        # o corpo do número é menor e alinhar pelo topo o deixaria flutuando.
+        dr.text(
+            (pad, y + (f_item.size - f_num.size) * 0.85),
+            f"{k:02d}",
+            font=f_num,
+            fill=cor,
         )
-        return 0.0, 0.0
-    inicio = _tempo_do_char(alinhamento, texto_video, pos, dur_total)
-    fim_char = min(pos + len(pauta), len(texto_video) - 1)
-    fim = _tempo_do_char(alinhamento, texto_video, fim_char, dur_total)
-    return inicio, min(fim, inicio + ABERTURA_MAX_S)
-
-
-def gerar_manchetes(
-    cfg: Config,
-    roteiro: dict,
-    texto_video: str,
-    alinhamento: dict,
-    dur_total: float,
-    pasta: Path,
-    tela: tuple[int, int],
-) -> list[dict]:
-    """Monta as manchetes do vídeo longo; devolve a lista para `montar_video`.
-
-    Retorno: [{"imagem": str, "inicio_s": float, "dur_s": float, "x": int,
-    "y": int}, ...] — a posição é o canto superior esquerdo do painel em
-    repouso; o deslize até lá é do ffmpeg. Lista vazia quando o formato não usa
-    manchetes, quando nenhum tópico tem âncora ou quando qualquer etapa falha.
-    """
-    if not cfg.manchetes or cfg.formato != "longo":
-        return []
-    if not ident.fonte_disponivel():
-        print("[manchetes] Fonte Archivo Black ausente; vídeo sem manchetes.")
-        return []
-
-    topicos = roteiro.get("topicos") or []
-    if not topicos:
-        print("[manchetes] Roteiro sem tópicos; vídeo sem manchetes.")
-        return []
-
-    try:
-        largura_quadro, altura_quadro = tela
-        margem_x = round(largura_quadro * MARGEM_X_FRAC)
-        largura_max = round(largura_quadro * LARGURA_MAX_FRAC)
-        base = round(altura_quadro * BASE_FRAC)
-        cor = ident.DESTAQUES[0]  # uma cor por canal, estável em todo o vídeo
-        rubrica = RUBRICAS.get(cfg.publico, RUBRICAS["brasil"])
-
-        marcos = _marcos_dos_topicos(topicos, texto_video, alinhamento, dur_total)
-
-        # Os painéis são montados em duas etapas: primeiro a LISTA do que vai
-        # entrar (com tempo e texto), e só depois o desenho — a altura de todos
-        # precisa ser a mesma, e ela só se conhece depois de medir o mais alto.
-        pedidos: list[dict] = []
-
-        def _acrescentar(
-            nome: str, titulo: str, kicker: str, inicio: float, dur: float,
-            contador: str = "",
-        ) -> None:
-            pedidos.append(
-                {
-                    "nome": nome, "titulo": titulo, "kicker": kicker,
-                    "contador": contador,
-                    "inicio_s": round(inicio, 3), "dur_s": round(dur, 3),
-                }
-            )
-
-        # --- 1. AINDA NESTE VÍDEO: o índice ACOMPANHA a pauta falada --------
-        inicio_indice, fim_indice = _janela_da_pauta_falada(
-            roteiro, texto_video, alinhamento, dur_total
+        ident.escrever_cromatico(
+            tela, (pad + col_num, y), linha, f_item, ident.BRANCO
         )
-        # O índice tem que ACABAR antes de a primeira pauta entrar: ele promete
-        # o que vem, e prometer por cima do primeiro tópico já entregue é ruído.
-        limite = marcos[0][0] - GAP if marcos else dur_total * 0.45
-        disponivel = min(fim_indice, limite) - inicio_indice
-        itens = [" ".join((t.get("titulo") or "").split()) for t in topicos]
-        itens = [i for i in itens if i]
-        cabem = int(disponivel // ABERTURA_ITEM_MIN_S) if disponivel > 0 else 0
-        if cabem >= 2 and itens:
-            itens = itens[: min(len(itens), cabem)]
-            passo = disponivel / len(itens)
-            for k, item in enumerate(itens):
-                _acrescentar(
-                    f"manchete_indice_{k + 1}.png", item, rubrica,
-                    inicio_indice + k * passo, passo,
-                    contador=f"{k + 1}/{len(itens)}",
-                )
-            print(
-                f"[manchetes] '{rubrica}' de {inicio_indice:.1f}s a "
-                f"{inicio_indice + disponivel:.1f}s, {len(itens)} tópico(s)."
-            )
-        else:
-            print(
-                "[manchetes] Sem janela para o índice de abertura "
-                f"({max(disponivel, 0):.1f}s até a primeira pauta); pulado."
-            )
+        y += alt_linha
 
-        # --- 2. Uma manchete por pauta --------------------------------------
-        # A manchete entra DENTRO da pausa de silêncio que o pipeline abriu
-        # logo antes da frase de virada (silencio.inserir_pausas): o espectador
-        # ouve o silêncio, lê o título novo, e só então a narração recomeça. Sem
-        # recuar pela pausa, o painel entraria junto com a primeira palavra e a
-        # separação temporal não teria contrapartida na tela.
-        pausa = max(0.0, float(getattr(cfg, "pausa_pauta_s", 0.0) or 0.0))
-        for k, (marco, titulo) in enumerate(marcos, 1):
-            inicio = max(0.0, marco - pausa)
-            proximo = marcos[k][0] - pausa if k < len(marcos) else dur_total
-            dur = min(DUR_MANCHETE, proximo - GAP - inicio, dur_total - 0.4 - inicio)
-            if dur < DUR_MINIMA:
-                print(
-                    f"[manchetes] '{titulo}' teria só {max(dur, 0):.1f}s na "
-                    "tela; descartada."
-                )
-                continue
-            _acrescentar(f"manchete_topico_{k}.png", titulo, f"{k:02d}", inicio, dur)
-            print(f"[manchetes] {k:02d} '{titulo}' @ {inicio:.1f}s por {dur:.1f}s")
-
-        if not pedidos:
-            return []
-
-        # Desenho: primeira passada mede, segunda iguala a altura de todos.
-        def _desenhar(altura_minima: int) -> list[tuple[Path, int, int]]:
-            return [
-                _painel(
-                    pedido["titulo"], pedido["kicker"], pasta / pedido["nome"],
-                    altura_quadro, largura_max, cor, pedido["contador"],
-                    altura_minima,
-                )
-                for pedido in pedidos
-            ]
-
-        desenhos = _desenhar(0)
-        alvo = max(alt for _, _, alt in desenhos)
-        if any(alt != alvo for _, _, alt in desenhos):
-            desenhos = _desenhar(alvo)
-
-        plano: list[dict] = []
-        registro: list[dict] = []
-        for pedido, (caminho, larg, alt) in zip(pedidos, desenhos):
-            item = {
-                "imagem": str(caminho),
-                "inicio_s": pedido["inicio_s"],
-                "dur_s": pedido["dur_s"],
-                "x": margem_x,
-                "y": max(0, base - alt),
-                "largura": larg,
-                "altura": alt,
-            }
-            plano.append(item)
-            registro.append(
-                dict(item, kicker=pedido["kicker"], titulo=pedido["titulo"])
-            )
-    except Exception as erro:  # noqa: BLE001 — manchete nunca derruba o vídeo
-        print(f"[aviso] Manchetes falharam ({erro}); seguindo sem elas.")
-        return []
-
-    if registro:
-        (pasta / "manchetes.json").write_text(
-            json.dumps(registro, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-    return plano
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tela.save(destino)
+    return destino, largura, altura
 
 
 def instantes_das_viradas(
-    roteiro: dict,
-    texto_video: str,
-    alinhamento: dict,
-    dur_total: float,
+    roteiro: dict, texto_video: str, alinhamento: dict, dur_total: float
 ) -> list[float]:
-    """Instantes em que uma pauta começa — onde o silêncio deve ser aberto.
+    """Instantes em que cada pauta começa — onde o silêncio deve ser aberto.
 
-    Roda ANTES de `gerar_manchetes` e antes de a pausa existir: os tempos saem
+    Roda ANTES de `planejar_partes` e antes de a pausa existir: os tempos saem
     do alinhamento do áudio já aparado, e é `silencio.inserir_pausas` que os
-    consome. Depois da inserção o alinhamento muda, e `gerar_manchetes`
-    recalcula tudo em cima do alinhamento novo — por isso as duas funções
-    partem da mesma citação em vez de trocarem números entre si.
+    consome, devolvendo em troca o começo REAL de cada silêncio no áudio novo.
+    São esses silêncios — não estes instantes — que viram as bordas das partes,
+    porque depois da inserção toda a linha do tempo andou.
+
+    As citações já foram conferidas no escritor (`_conferir_estrutura_longa`),
+    que roda ANTES da narração; aqui elas só são convertidas em segundos.
+    """
+    from .cortes import _tempo_do_char, localizar_citacao
+
+    instantes: list[float] = []
+    cursor = 0
+    for topico in roteiro.get("topicos") or []:
+        pos = localizar_citacao(texto_video, topico.get("citacao") or "", cursor)
+        if pos is None:
+            print(
+                "[partes] Tópico sem âncora na narração: "
+                f"{topico.get('titulo', '')}"
+            )
+            continue
+        cursor = pos + 1
+        instantes.append(_tempo_do_char(alinhamento, texto_video, pos, dur_total))
+    return instantes
+
+
+def planejar_partes(
+    cfg: Config,
+    roteiro: dict,
+    pausas: list[tuple[float, float]],
+    duracao: float,
+    pasta: Path,
+    tela: tuple[int, int],
+) -> list[dict]:
+    """As quatro partes do vídeo, com o painel de texto de cada uma.
+
+    `pausas` são os silêncios abertos por `silencio.inserir_pausas`, já em
+    coordenadas do áudio FINAL: (início, fim) de cada um. São eles que definem
+    as bordas — a parte nova começa quando o silêncio começa, de modo que o
+    painel troque DENTRO do silêncio e a narração da pauta nova seja a primeira
+    coisa que se ouve depois dele.
+
+    Devolve, na ordem: [{"indice", "rotulo", "titulo", "inicio_s", "fim_s",
+    "pausa_s", "painel", "painel_saindo"}], onde cada painel é
+    {"imagem", "x", "y", "largura", "altura"} — a posição é o canto superior
+    esquerdo em repouso; o deslize até lá é do ffmpeg (montagem_longa.py).
+
+    Levanta SystemExit se a divisão não fechar: sem as quatro partes não existe
+    o vídeo que o usuário desenhou, e o que sairia é o bloco corrido que ele
+    rejeitou.
     """
     topicos = roteiro.get("topicos") or []
-    if not topicos:
-        return []
-    return [
-        instante
-        for instante, _ in _marcos_dos_topicos(
-            topicos, texto_video, alinhamento, dur_total
+    # Uma pausa por VIRADA de pauta, e uma parte a mais que as pausas (a
+    # abertura): três tópicos são três pausas e quatro partes.
+    if len(pausas) != len(topicos):
+        raise SystemExit(
+            f"O roteiro tem {len(topicos)} tópico(s) e a narração recebeu "
+            f"{len(pausas)} pausa(s) de virada — a divisão do vídeo em "
+            f"{len(topicos) + 1} partes não fecha. Uma virada de pauta caiu "
+            "perto demais da outra (ou da borda do áudio) e o silêncio não pôde "
+            "ser aberto ali; abortando sem publicar."
         )
+    if not ident.fonte_disponivel():
+        raise SystemExit(
+            "Fonte Archivo Black ausente — o formato longo é montado em torno "
+            "do painel de texto de cada parte, e sem a fonte não há painel; "
+            "abortando sem publicar."
+        )
+
+    titulos = [" ".join((t.get("titulo") or "").split()) for t in topicos]
+    if not all(titulos):
+        raise SystemExit(
+            "Um dos tópicos do roteiro veio sem título, e ele é o texto do "
+            "painel daquela parte; abortando sem publicar."
+        )
+
+    largura_quadro, altura_quadro = tela
+    margem_x = round(largura_quadro * MARGEM_X_FRAC)
+    largura_max = round(largura_quadro * LARGURA_MAX_FRAC)
+    base = round(altura_quadro * BASE_FRAC)
+    cor = ident.DESTAQUES[0]  # uma cor por canal, estável em todo o vídeo
+    rubrica = RUBRICAS.get(cfg.publico, RUBRICAS["brasil"])
+
+    # Os três painéis de pauta são desenhados duas vezes: a primeira mede, a
+    # segunda iguala a altura de todos. Painel de altura variável faz a troca
+    # saltar, porque a âncora é a base.
+    def _desenhar_pautas(altura_minima: int) -> list[tuple[Path, int, int]]:
+        return [
+            _painel_pauta(
+                titulo,
+                f"{k:02d}",
+                pasta / f"painel_pauta_{k}.png",
+                altura_quadro,
+                largura_max,
+                cor,
+                altura_minima,
+            )
+            for k, titulo in enumerate(titulos, 1)
+        ]
+
+    desenhos = _desenhar_pautas(0)
+    alvo = max(alt for _, _, alt in desenhos)
+    if any(alt != alvo for _, _, alt in desenhos):
+        desenhos = _desenhar_pautas(alvo)
+    desenhos.insert(
+        0,
+        _painel_indice(
+            titulos,
+            rubrica,
+            pasta / "painel_indice.png",
+            altura_quadro,
+            largura_max,
+            cor,
+        ),
+    )
+
+    paineis = [
+        {
+            "imagem": str(caminho),
+            "x": margem_x,
+            "y": max(0, base - alt),
+            "largura": larg,
+            "altura": alt,
+        }
+        for caminho, larg, alt in desenhos
     ]
 
+    # Bordas: a parte nova começa no INÍCIO do silêncio.
+    bordas = [0.0, *(inicio for inicio, _ in pausas), duracao]
+    rotulos = ["abertura", *(f"pauta {k}" for k in range(1, len(titulos) + 1))]
+    nomes = [rubrica, *titulos]
 
-def janelas(manchetes: list[dict]) -> list[tuple[float, float]]:
-    """(início, fim) de cada manchete — o que as outras camadas devem evitar.
+    partes: list[dict] = []
+    for i in range(len(bordas) - 1):
+        inicio, fim = bordas[i], bordas[i + 1]
+        if fim - inicio <= 0:
+            raise SystemExit(
+                f"A parte '{rotulos[i]}' do vídeo longo ficaria com "
+                f"{fim - inicio:.2f}s — as viradas de pauta saíram fora de "
+                "ordem na narração; abortando sem publicar."
+            )
+        if fim - inicio < PARTE_CURTA_S:
+            print(
+                f"[partes] aviso: '{rotulos[i]}' tem só {fim - inicio:.1f}s "
+                f"(o esperado é acima de {PARTE_CURTA_S:.0f}s) — o roteiro "
+                "distribuiu mal o texto entre as pautas."
+            )
+        partes.append(
+            {
+                "indice": i,
+                "rotulo": rotulos[i],
+                "titulo": nomes[i],
+                "inicio_s": round(inicio, 3),
+                "fim_s": round(fim, 3),
+                # Silêncio no COMEÇO desta parte, onde a troca de painel
+                # acontece. A abertura não tem: ela começa com o painel
+                # entrando sobre a primeira palavra.
+                "pausa_s": (
+                    round(pausas[i - 1][1] - pausas[i - 1][0], 3) if i else 0.0
+                ),
+                "painel": paineis[i],
+                "painel_saindo": paineis[i - 1] if i else None,
+            }
+        )
 
-    A cartela toma o QUADRO INTEIRO no deslize: se ela entrar em
-    cima de uma manchete, ela cobre exatamente o texto que divide a pauta. As
-    manchetes vêm da estrutura do roteiro e por isso ganham a prioridade.
-    """
-    return [
-        (float(m["inicio_s"]), float(m["inicio_s"]) + float(m["dur_s"]))
-        for m in manchetes
-    ]
+    (pasta / "partes.json").write_text(
+        json.dumps(partes, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    for parte in partes:
+        print(
+            f"[partes] {parte['rotulo']}: {parte['inicio_s']:.1f}s -> "
+            f"{parte['fim_s']:.1f}s ({parte['fim_s'] - parte['inicio_s']:.1f}s)"
+            f" - {parte['titulo']}"
+        )
+    return partes

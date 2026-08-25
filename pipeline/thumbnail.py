@@ -265,8 +265,35 @@ def _quadro_do_video(video: Path, destino: Path, instante: float) -> Path | None
         return None
 
 
-def _candidatos(video: Path, pasta: Path) -> list[Path]:
-    """Os quadros que a visão vai comparar; lista vazia se nenhum sair."""
+def _candidatos(
+    video: Path, pasta: Path, fontes: list[Path] | None = None
+) -> list[Path]:
+    """Os quadros que a visão vai comparar; lista vazia se nenhum sair.
+
+    `fontes` troca o vídeo montado por uma lista de arquivos LIMPOS, um quadro
+    de cada. Existe por causa do formato longo (2026-08-25): lá o painel de
+    manchete ficou FIXO na tela do primeiro ao último quadro, então qualquer
+    frame do vídeo montado traz o painel — e a capa é uma montagem sobre esse
+    frame, com recorte e desfoque. Amostrar os clipes originais devolve o mesmo
+    material sem a camada de texto por cima (e em qualidade cheia, sem a
+    passada de x264).
+    """
+    if fontes:
+        quadros = []
+        for k, fonte in enumerate(fontes, 1):
+            dur = _duracao(fonte)
+            # Meio do clipe: o começo costuma ser a abertura do material e o
+            # fim, o corte. Clipe curto cai no que houver.
+            instante = max(0.5, dur * 0.5) if dur > 0 else 1.0
+            quadro = _quadro_do_video(
+                fonte, pasta / f"thumb_quadro_{k}.png", instante
+            )
+            if quadro:
+                quadros.append(quadro)
+        if quadros:
+            return quadros
+        print("[thumbnail] aviso: nenhum quadro saiu dos clipes; usando o vídeo.")
+
     dur = _duracao(video)
     if dur <= 0:
         quadro = _quadro_do_video(video, pasta / "thumb_quadro_1.png", 2.0)
@@ -612,18 +639,23 @@ def gerar_thumbnail(
     narracao: str,
     pasta: Path,
     titulos_do_dia: list[str] | None = None,
+    fontes: list[Path] | None = None,
 ) -> Path | None:
     """Monta a capa e devolve o caminho; None se não foi possível.
 
     `titulos_do_dia` é a concorrência real daquele assunto no YouTube de hoje
     (``seo.titulos_do_dia``), usada para a capa não repetir o recorte que todo
     mundo já ocupou.
+
+    `fontes` são arquivos de vídeo LIMPOS para amostrar em vez do vídeo montado
+    — no formato longo, os clipes de cada pauta, porque o vídeo montado tem o
+    painel de manchete fixo na tela e ele apareceria dentro da capa.
     """
     if not ident.fonte_disponivel():
         print(f"[thumbnail] aviso: fonte ausente ({ident.FONTE_TITULO}); sem capa.")
         return None
 
-    quadros = _candidatos(video, pasta)
+    quadros = _candidatos(video, pasta, fontes)
     if not quadros:
         return None
 

@@ -12,9 +12,15 @@ para o segundo errado.
    usuário): abre uma PAUSA de silêncio em cada troca de pauta. É a "separação
    temporal" que o usuário pediu junto com a visual — sem ela, quem está
    ouvindo o vídeo sem olhar para a tela não percebe que a pauta virou, e o
-   painel na tela vira enfeite. A manchete da nova pauta entra DENTRO dessa
-   pausa (ver manchetes.py), então o espectador ouve o silêncio, lê o título
-   novo e só então a narração recomeça.
+   painel na tela vira enfeite. Dentro dessa pausa o painel de manchete velho
+   sai e o novo entra: o espectador ouve o silêncio, lê o título novo e só
+   então a narração recomeça.
+
+   Desde 2026-08-25 essa pausa é MAIS que um respiro: ela é o ponto em que o
+   vídeo é CORTADO em quatro partes (montagem_longa.py). Por isso a função
+   passou a devolver ONDE cada silêncio ficou no áudio novo — a montagem corta
+   exatamente ali, em vez de recalcular a borda pela citação e errar por
+   frações de segundo.
 
 A ordem importa: as pausas são inseridas DEPOIS do corte de silêncios, senão o
 `silencedetect` comeria exatamente o silêncio que acabou de ser criado.
@@ -196,7 +202,7 @@ def _sanear_instantes(
 
 def inserir_pausas(
     audio: Path, alinhamento: dict, instantes: list[float], dur: float
-) -> tuple[Path, dict, float]:
+) -> tuple[Path, dict, list[tuple[float, float]]]:
     """Abre `dur` segundos de silêncio em cada instante; devolve tudo remapeado.
 
     `instantes` são os pontos da narração (no áudio ATUAL) em que uma pauta
@@ -204,14 +210,23 @@ def inserir_pausas(
     entra IMEDIATAMENTE ANTES desse ponto, de modo que a frase de virada seja a
     primeira coisa que se ouve depois da pausa.
 
-    Devolve (caminho, alinhamento, duracao). Falha aqui não derruba nada: o
-    vídeo sai sem as pausas, que é como ele saía antes.
+    Devolve (caminho, alinhamento, PAUSAS), onde `pausas` é [(início, fim), ...]
+    de cada silêncio JÁ EM COORDENADAS DO ÁUDIO NOVO. Devolver isso — e não a
+    duração, que quem chama recalcula — é o que deixa a montagem cortar o vídeo
+    exatamente onde o silêncio está (2026-08-25): a k-ésima pausa começa no
+    ponto k somado às k pausas que entraram antes dele. Recalcular a borda pela
+    citação daria quase o mesmo número, e "quase" é o que faria o painel trocar
+    meio segundo depois do silêncio.
+
+    Falha aqui devolve pausas VAZIAS — e no formato longo isso derruba a
+    montagem logo em seguida (manchetes.planejar_partes), porque as quatro
+    partes do vídeo são cortadas nesses silêncios.
     """
     duracao = duracao_audio(audio)
     pontos = _sanear_instantes(instantes, duracao)
     if not pontos or dur <= 0:
         print("[silencio] Nenhuma pausa de pauta a inserir.")
-        return audio, alinhamento, duracao
+        return audio, alinhamento, []
 
     # Segmentos da narração entre as pausas; o silêncio entra entre eles.
     bordas = [0.0, *pontos, duracao]
@@ -253,8 +268,14 @@ def inserir_pausas(
             "[aviso] Falha ao inserir as pausas de pauta; narração segue "
             f"corrida.\n{resultado.stderr[-500:]}"
         )
-        return audio, alinhamento, duracao
+        return audio, alinhamento, []
 
     nova_duracao = duracao_audio(destino)
-    print(f"[silencio] Narração com pausas: {nova_duracao:.1f}s")
-    return destino, _deslocar_alinhamento(alinhamento, pontos, dur), nova_duracao
+    # Onde cada silêncio ficou no áudio NOVO: o ponto k andou `dur` para a
+    # frente uma vez por pausa aberta ANTES dele.
+    pausas = [(t + k * dur, t + (k + 1) * dur) for k, t in enumerate(pontos)]
+    print(
+        f"[silencio] Narração com pausas: {nova_duracao:.1f}s "
+        f"(silêncios em {', '.join(f'{a:.1f}s' for a, _ in pausas)})"
+    )
+    return destino, _deslocar_alinhamento(alinhamento, pontos, dur), pausas

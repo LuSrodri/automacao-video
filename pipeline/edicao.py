@@ -39,12 +39,14 @@ atrás para tirar de foco. Os INFOGRÁFICOS ANIMADOS montados em ffmpeg
 gpt-image-2 (figuras.py) em 2026-08-24, por custo — a tela não tem mais "big
 number" nenhum; não reintroduzir nem um nem outro sem pedido explícito.
 
-MANCHETES (2026-08-23, só no formato longo). Sobre tudo isso entra o painel de
-texto do canto inferior esquerdo (manchetes.py): o índice "Ainda neste
-episódio" na abertura e uma manchete a cada troca de pauta. Ele NÃO é
-carrossel — não troca o conteúdo da tela, só desliza da borda esquerda até o
-seu canto e volta —, e por isso é a última camada de imagem da pilha, acima do
-clipe e do carrossel.
+ESTE MÓDULO É O DO SHORT desde 2026-08-25. O formato longo saiu daqui para
+montagem_longa.py, onde ele é montado em quatro partes separadas e coladas — a
+mudança que o desenho do usuário pediu. O que ficou para trás junto: a camada
+de MANCHETES, que só o longo usava, e o parâmetro `formato`, que agora só
+escolhe a tolerância de tempo de cada clipe na tela. As constantes de crédito,
+de representação visual e de desfoque continuam AQUI e são importadas de lá:
+são as mesmas nos dois formatos, e duplicá-las era garantir que um dia
+divergissem.
 
 Clipe marcado como REPRESENTAÇÃO VISUAL (material de telejornal, que só o
 formato longo admite — ver auditoria.py) entra dessaturado e com etiqueta no
@@ -92,16 +94,6 @@ LEITURA_MINIMA = 1.0
 # Janela mínima de uma imagem no carrossel: os dois deslizes mais a leitura.
 MIN_JANELA_CARROSSEL = 2 * T_ARRASTO + LEITURA_MINIMA
 
-# --- Manchetes (manchetes.py) ------------------------------------------------
-# Painel de texto no canto inferior esquerdo que nomeia a pauta em curso e, na
-# abertura, lista o que ainda vem. Diferente do carrossel, ele NÃO troca o
-# conteúdo da tela: é uma sobreposição fixa, que entra deslizando de fora da
-# borda esquerda e sai pelo mesmo caminho, com a mesma curva suave do carrossel
-# (`_suave`). Houve um fade de alfa por cima até 2026-08-24; ele saiu junto com
-# as manchetes que não desenharam no container, e o deslize sozinho já lê como
-# revelação — é o que o carrossel faz desde sempre.
-T_MANCHETE = 0.45  # tempo de entrada e de saída do painel
-
 # Crédito de reprodução no canto superior direito DO QUADRO, por clipe: linha 1
 # fixa ("Reprodução Imagem: X") e linha 2 com a conta do post de origem.
 # Estética editorial de rede social: Archivo Black branca sobre tarja preta
@@ -138,10 +130,11 @@ REPR_Y_FRAC = 0.912  # distância do topo como fração da altura
 def versao_ffmpeg() -> str:
     """Primeira linha do `ffmpeg -version`, para o log.
 
-    Existe por causa de 2026-08-24: as manchetes sumiram do vídeo publicado sem
-    erro nenhum, e a mesma montagem rendida aqui (ffmpeg 5.1.2 e 8.1.1)
-    desenhava os painéis. Sem saber qual ffmpeg roda no container, a diferença
-    entre o que se testa e o que se publica fica invisível.
+    Existe por causa de 2026-08-24: os painéis de manchete sumiram do vídeo
+    publicado sem erro nenhum, e a mesma montagem rendida aqui (ffmpeg 5.1.2 e
+    8.1.1) os desenhava. Sem saber qual ffmpeg roda no container, a diferença
+    entre o que se testa e o que se publica fica invisível. Usada pelos dois
+    formatos (montagem_longa.py importa daqui).
     """
     try:
         saida = subprocess.run(
@@ -150,73 +143,6 @@ def versao_ffmpeg() -> str:
         return (saida.stdout or "").splitlines()[0][:120]
     except (subprocess.CalledProcessError, OSError, IndexError):
         return "desconhecida"
-
-
-def conferir_manchetes(video: Path, manchetes: list[dict]) -> None:
-    """Confere no VÍDEO PRONTO se o painel da manchete foi mesmo desenhado.
-
-    Por que isto existe: em 2026-08-23 o pipeline montou seis manchetes, logou
-    as seis, o ffmpeg saiu com código 0 — e nenhuma apareceu no vídeo
-    publicado. Uma camada que falha em silêncio custa um vídeo inteiro e só é
-    descoberta quando alguém assiste. Esta conferência transforma esse defeito
-    mudo numa linha de log.
-
-    O teste é direto: extrai um quadro do meio da janela da primeira manchete e
-    conta, DENTRO da caixa onde o painel deveria estar, os pixels próximos da
-    cor de destaque da etiqueta. Nenhum pixel = o overlay não desenhou.
-
-    Só diagnostica: nunca aborta, nunca altera o vídeo.
-    """
-    if not manchetes:
-        return
-    from . import identidade as ident
-
-    m = manchetes[0]
-    instante = float(m["inicio_s"]) + float(m["dur_s"]) / 2
-    quadro = video.with_name("_conferencia_manchete.png")
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-ss", f"{instante:.2f}",
-             "-i", str(video), "-vframes", "1", str(quadro)],
-            check=True, capture_output=True,
-        )
-        from PIL import Image
-
-        with Image.open(quadro) as bruto:
-            img = bruto.convert("RGB")
-        x0, y0 = int(m["x"]), int(m["y"])
-        larg = int(m.get("largura") or 0)
-        alt = int(m.get("altura") or 0)
-        x1 = min(img.width, x0 + larg) if larg > 0 else img.width
-        y1 = min(img.height, y0 + alt) if alt > 0 else img.height
-        recorte = img.crop((x0, y0, x1, y1))
-        alvo = ident.DESTAQUES[0]
-        # Tolerância larga: o x264 desloca a cor, e o que importa é "tem um
-        # bloco da cor da etiqueta aqui?", não a fidelidade dela.
-        perto = sum(
-            1
-            for r, g, b in recorte.getdata()
-            if abs(r - alvo[0]) < 60 and abs(g - alvo[1]) < 60 and abs(b - alvo[2]) < 60
-        )
-    except Exception as erro:  # noqa: BLE001 — conferência nunca derruba nada
-        print(f"[edicao] aviso: não deu para conferir a manchete ({erro}).")
-        return
-    finally:
-        quadro.unlink(missing_ok=True)
-
-    if perto < 50:
-        print(
-            f"[edicao] ALERTA: a manchete de {instante:.1f}s NÃO aparece no "
-            f"vídeo montado (só {perto} pixels da cor da etiqueta na caixa "
-            f"{x0},{y0} {x1 - x0}x{y1 - y0}). O ffmpeg não acusou erro, então "
-            "o overlay foi montado e não desenhou — vídeo publicado sem a "
-            "divisão de pauta."
-        )
-    else:
-        print(
-            f"[edicao] Manchete conferida no vídeo montado ({perto} pixels da "
-            f"etiqueta em {instante:.1f}s)."
-        )
 
 
 def memoria_mb() -> float | None:
@@ -458,7 +384,6 @@ def montar_video(
     altura: int,
     legendas: Path | None = None,
     cartelas: list[dict] | None = None,
-    manchetes: list[dict] | None = None,
     publico: str = "brasil",
     formato: str = "curto",
 ) -> Path:
@@ -479,15 +404,6 @@ def montar_video(
     "inicio_s": float, "dur_s": float}, ...], cada uma um PNG do TAMANHO EXATO
     do quadro. Entram deslizando, ocupando a tela toda no lugar do clipe, e
     saem pelo deslize de volta.
-
-    `manchetes`: os painéis de texto do formato longo (manchetes.py) —
-    [{"imagem": str, "inicio_s": float, "dur_s": float, "x": int, "y": int},
-    ...]. NÃO fazem parte do carrossel: cada painel é uma sobreposição no canto
-    inferior esquerdo, que entra deslizando de fora da borda esquerda até (x,
-    y) e sai pelo mesmo caminho. Entram DEPOIS do carrossel na pilha de filtros
-    para ficarem por cima de tudo — mas quem chama já mantém as janelas
-    separadas (ver `manchetes.janelas`), porque uma cartela que tomasse o
-    quadro sob o painel taparia justamente o texto que divide a pauta.
 
     `publico`: "brasil" ou "usa" — define o idioma do crédito de reprodução.
 
@@ -691,56 +607,6 @@ def montar_video(
         )
         corrente = f"vcart{j}"
 
-    # Manchetes (manchetes.py): o painel que nomeia a pauta. Entra pela borda
-    # esquerda, PARA no seu canto e sai por onde veio — sem tocar no resto do
-    # quadro. Mesma economia de memória das cartelas: o PNG existe só na janela
-    # em que aparece, recolocado no instante certo pelo `tpad`.
-    for j, m in enumerate(manchetes or []):
-        ini = max(0.0, float(m["inicio_s"]))
-        fim = min(ini + float(m["dur_s"]), duracao)
-        if fim - ini < 2 * T_MANCHETE:
-            print(
-                f"[edicao] aviso: manchete de {fim - ini:.1f}s em {ini:.1f}s "
-                "não comporta o deslize; descartada."
-            )
-            continue
-        idx_man = prox_entrada
-        prox_entrada += 1
-        # O painel usa EXATAMENTE as mesmas construções da cartela, que é o
-        # caminho comprovado no container (2026-08-24: as cartelas
-        # apareceram no vídeo publicado; as manchetes, não). Saíram as duas
-        # coisas que só a manchete tinha:
-        #   - os dois `fade` de alfa, que dependiam do relógio INTERNO do PNG
-        #     depois do `tpad` — o carrossel nunca dependeu disso;
-        #   - o `w` (largura do overlay) dentro da expressão de x, trocado pela
-        #     largura literal, que o Python já conhece.
-        # O deslize sozinho já é a revelação: é o que o carrossel faz.
-        # A vida do PNG cobre a janela com folga dos dois lados, como a da
-        # cartela, para o overlay nunca encostar em EOF dentro do `enable`.
-        larg = int(m.get("largura") or 0) or largura
-        dur_janela = max(fim - ini + T_MANCHETE * 2, 0.1)
-        atraso = max(ini - T_MANCHETE, 0.0)
-        comando += [
-            "-loop", "1", "-framerate", str(FPS), "-t", f"{dur_janela:.2f}",
-            "-i", str(m["imagem"]),
-        ]
-        filtros.append(
-            f"[{idx_man}:v]format=rgba,setpts=PTS-STARTPTS,"
-            f"tpad=start_duration={atraso:.2f}:start_mode=add"
-            ":color=0x00000000[man{j}]".replace("{j}", str(j))
-        )
-        # x vai de fora do quadro (à esquerda) até o x de repouso, pela mesma
-        # curva com aceleração e desaceleração do carrossel.
-        x = int(m["x"])
-        avanco = _expr_progresso([(ini, fim)], T_MANCHETE, T_MANCHETE)
-        filtros.append(
-            f"[{corrente}][man{j}]"
-            f"overlay=x='{x}-{x + larg}*(1-({avanco}))':y={int(m['y'])}"
-            f":eof_action=repeat"
-            f":enable='between(t,{ini:.3f},{fim:.3f})'[vman{j}]"
-        )
-        corrente = f"vman{j}"
-
     if legendas is not None:
         fontes = RAIZ / "fonts"
         filtro_ass = f"ass='{_caminho_filtro(legendas)}'"
@@ -861,7 +727,6 @@ def montar_video(
     print(
         f"[edicao] Montando vídeo final com ffmpeg "
         f"({len(pares)} clipe(s), {len(cartelas)} cartela(s), "
-        f"{len(manchetes or [])} manchete(s), "
         f"{duracao:.0f}s em {largura}x{altura})..."
     )
     print(f"[edicao] ffmpeg: {versao_ffmpeg()}")
@@ -896,5 +761,4 @@ def montar_video(
         raise SystemExit(f"ffmpeg falhou:\n{(erro or '')[-2000:]}")
 
     print(f"[edicao] Vídeo final salvo em {destino}")
-    conferir_manchetes(destino, manchetes or [])
     return destino

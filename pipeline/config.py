@@ -158,8 +158,13 @@ LONGO_LARGURA = 1920
 LONGO_ALTURA = 1080
 LONGO_MAX_CLIPES = 8  # clipes do X por vídeo (3 seguram mal 2 minutos de tela)
 LONGO_MAX_POSTS_MIDIA = 16  # posts da trend consultados p/ achar esses clipes
-LONGO_MAX_CARTELAS = 4  # cartelas de imagem sobrepostas (dobro de tempo de tela)
-LONGO_MAX_FOTOS = 6  # fotos dos posts baixadas para alimentar as cartelas
+# CARTELAS FORA DO FORMATO LONGO (2026-08-25, desenho do usuário). A cartela é
+# uma FOTO que toma o quadro inteiro no meio de uma pauta — ou seja, um pedaço
+# da pauta em que o vídeo daquela pauta não está na tela. O desenho é explícito:
+# cada parte tem UM vídeo, do começo ao fim dela. O carrossel continua no Short,
+# onde as cartelas nunca foram o problema. Não reintroduzir no longo sem pedido.
+LONGO_MAX_CARTELAS = 0
+LONGO_MAX_FOTOS = 0  # fotos dos posts: só alimentavam as cartelas
 # Velocidade NORMAL: o formato longo é análise, e quem veio para entender uma
 # cadeia de causa e efeito não acompanha narração acelerada. O Short é o
 # contrário — ver Config.velocidade.
@@ -168,8 +173,10 @@ LONGO_VELOCIDADE = 1.0
 # faixa em que a pausa lê como respiro editorial: abaixo de ~0,5 ela some no
 # ritmo da fala, acima de ~1,0 o espectador acha que o vídeo travou.
 LONGO_PAUSA_PAUTA = 0.7
-# Piso de clipes APROVADOS na auditoria para o formato longo: 90-120s presos em
-# um ou dois clipes é insustentável, então abaixo disto o vídeo não sai.
+# Piso de clipes APROVADOS na auditoria para o formato longo: cada uma das três
+# pautas é obrigada a ter o SEU clipe, e nenhum pode servir a duas (desenho do
+# usuário, 2026-08-25) — então três é o piso ARITMÉTICO da montagem, não uma
+# preferência. Abaixo disso a candidata sai da disputa (fallback de tema).
 LONGO_MIN_CLIPES_APROVADOS = 3
 # Posts com vídeo que UMA candidata precisa ter para disputar o formato longo.
 #
@@ -519,11 +526,12 @@ class Config:
     # em imagem parada — o oposto do formato. É a ÚNICA camada de imagem que
     # sobrou: as figuras do gpt-image-2 saíram em 2026-08-24, por custo.
     max_cartelas: int = 1
-    # MANCHETES (manchetes.py, 2026-08-23): o índice "Ainda neste episódio" na
-    # abertura e o painel que nomeia cada pauta quando ela vira. Só o formato
-    # LONGO usa — no Short a legenda queimada já ocupa a tela e 25 segundos não
-    # comportam índice. Desligar (LONG_MANCHETES=0) devolve o vídeo corrido de
-    # antes; é a chave para comparar retenção com e sem a divisão de pauta.
+    # PAINÉIS DE MANCHETE (manchetes.py): o índice "Ainda neste vídeo" na
+    # abertura e o painel que nomeia cada pauta. Só o formato LONGO usa — no
+    # Short a legenda queimada já ocupa a tela e 25 segundos não comportam
+    # índice. Desde 2026-08-25 é sempre True no longo e não tem chave para
+    # desligar: o painel deixou de ser uma sobreposição opcional e virou o
+    # rótulo de cada uma das quatro partes em que o vídeo é montado.
     manchetes: bool = False
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
@@ -703,18 +711,23 @@ def ativar_formato_longo(cfg: Config) -> Config:
     cfg.x_max_posts_busca = int(os.getenv("X_MAX_POSTS_BUSCA", "30"))
     cfg.max_cartelas = int(os.getenv("LONG_MAX_CARTELAS", str(LONGO_MAX_CARTELAS)))
     cfg.max_fotos = int(os.getenv("LONG_MAX_FOTOS", str(LONGO_MAX_FOTOS)))
-    # Manchetes: ligadas por padrão no longo (é o formato que sofria de vídeo
-    # corrido, sem marca de troca de pauta).
-    cfg.manchetes = os.getenv("LONG_MANCHETES", "1").strip().lower() not in (
-        "0", "false", "nao", "não", "off",
-    )
+    # Painéis de manchete: DEIXARAM DE SER OPCIONAIS em 2026-08-25. Eles não são
+    # mais uma sobreposição sobre um vídeo corrido — são o que nomeia cada uma
+    # das quatro partes em que o vídeo é montado (montagem_longa.py). A env var
+    # LONG_MANCHETES que desligava a camada foi REMOVIDA: desligá-la não deixaria
+    # o vídeo "sem manchete", deixaria o vídeo sem montagem.
+    cfg.manchetes = True
     cfg.pausa_pauta_s = float(
         os.getenv("LONG_PAUSA_PAUTA", str(LONGO_PAUSA_PAUTA))
     )
-    if not 0.0 <= cfg.pausa_pauta_s <= 2.0:
+    # O piso deixou de ser 0 pelo mesmo motivo: a pausa é o ponto em que o vídeo
+    # é CORTADO em partes, e sem silêncio nenhum não há onde cortar. 0,3s é o
+    # mínimo em que a troca de painel ainda cabe dentro do silêncio.
+    if not 0.3 <= cfg.pausa_pauta_s <= 2.0:
         raise SystemExit(
-            "LONG_PAUSA_PAUTA deve estar entre 0 e 2 segundos (0 desliga a "
-            f"pausa entre pautas; recebido: {cfg.pausa_pauta_s})."
+            "LONG_PAUSA_PAUTA deve estar entre 0.3 e 2 segundos — é nela que o "
+            "vídeo longo é cortado em partes e o painel de manchete troca; "
+            f"recebido: {cfg.pausa_pauta_s}."
         )
     cfg.velocidade = float(os.getenv("LONG_VELOCIDADE", str(LONGO_VELOCIDADE)))
 

@@ -14,8 +14,8 @@ Pipeline em Python que transforma as trends mais quentes do X (Twitter) em um v�
 6. **X API** baixa um **pool de clipes de vídeo** dos posts originais da trend (o MP4 de **maior bitrate que cabe no teto de 60 MB**: o X serve o mesmo clipe em várias resoluções, e a de cima às vezes é um 4K de 2,9 GB — descartá-la descartava o clipe inteiro, então o download **desce a lista de variantes** até uma caber) — mais do que os 3 que entram na montagem, como folga para a auditoria — junto com a **conta de origem** de cada clipe e as **fotos dos posts**, que alimentam as cartelas. **Imagem estática nunca ocupa a tela**, então não há busca de imagens na web.
 7. **Auditoria do material visual** (`pipeline/auditoria.py`): o **GPT com visão** descreve e **classifica** cada clipe do pool (cena real, reportagem de TV, gravação de tela, cartela, logo…) e diz se há **selo de emissora ou veículo de imprensa** na imagem. Em cima disso: **veto duro em código** — material de telejornal, vinheta de logotipo e qualquer mídia com selo de emissora saem da disputa, assim como mídia que não recebeu laudo — e uma **nota de pertinência de 1 a 5** dada pelo GPT, que mede só uma coisa: o quanto aquilo que a mídia **mostra** é o que a narração **diz** (abaixo de 3 sai; material que mostra a manchete de um veículo em vez do fato tem teto 2). Desde 2026-08-07 há também o **veto por texto na tela**: clipe **tomado por texto** — e, mais ainda, por texto **parado** (slide, cartaz, print) — sai da montagem, **a não ser** que aquele texto seja o assunto que a narração descreve. **Zero clipe aprovado aborta a execução** (o formato longo exige um piso de 3). Roda **antes do ElevenLabs**, para a reprovação não custar créditos de narração, e deixa o rastro em `auditoria_clipe.json`.
 8. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere), o pipeline **acelera a narração** conforme o formato (`VIDEO_VELOCIDADE`, 1.25x no Short; **1.0x, velocidade normal, no `--long-take`**) e **corta os silêncios**, deixando o áudio sem trechos parados. Os timestamps do alinhamento são reescalados nas duas etapas, então cortes, legendas e cartelas seguem sincronizados. O orçamento de palavras do roteiro é multiplicado pela velocidade — narração mais rápida cabe mais palavras nos mesmos segundos de tela. **Piso duro de duração, conferido aqui** (2026-08-04): Short abaixo de **21s** e vídeo longo abaixo de **120s** **abortam a execução sem publicar**. (O alvo do Short caiu de 60 para **25 segundos** em 2026-08-09, e o piso desceu junto — mantê-lo em 50 com alvo de 25 faria toda execução abortar depois de pagar a narração. A folga entre piso e alvo no orçamento de palavras virou **proporcional** na mesma mudança: era um valor absoluto de 7s, calibrado contra o alvo de 60, e sobre 25 segundos ele empurraria o piso de palavras para cima do teto.) A conferência é depois da narração, e não só na faixa de palavras do roteiro, porque **palavra não é segundo** — o ritmo real do TTS varia ~25% de narração para narração, e só depois de narrar e cortar os silêncios se sabe a duração de verdade. O roteirista já teve **3 tentativas** de acertar o tamanho antes disso; o que sobra aqui é um vídeo que não deveria ir ao ar. O teto **não** aborta (vídeo comprido é defeito de retenção, não de formato).
-9. **Cartelas de imagem nos momentos-chave** (`pipeline/cartelas.py`): a **foto do post da trend** (que o pipeline já lia e descartava) **toma a tela inteira** por ~3,6s, no instante em que a narração **nomeia** o que ela mostra — a pessoa citada, o lugar atingido, o documento assinado. A imagem entra inteira sobre um fundo feito dela mesma, ampliada e borrada, com o **crédito próprio** numa faixa na base (`Reprodução: X / @conta` ou o domínio do veículo; `Image Credit` no `-usa`). Ela não é um cartão sobreposto: entra e sai pelo **deslize do carrossel** (ver "Como funciona a tela cheia e o carrossel"). As imagens passam pela **mesma auditoria dos clipes** (visão + veto duro + nota) e o gancho fica limpo (nada entra nos 3 primeiros segundos).
-10. **ffmpeg** monta o vídeo em **tela cheia** (ver "Como funciona a tela cheia e o carrossel"): o **fundo de cada momento é o próprio clipe daquele trecho, ampliado para cobrir o quadro e borrado**; por cima entra o **clipe nítido no maior tamanho que cabe nele, centrado** (clipe mais curto que a janela repete em loop). Os clipes **cobrem 100% da narração** (nunca há um instante sem imagem) com **crossfade curto e limpo** entre si. **Legendas** sincronizadas palavra a palavra — grandes, em **Archivo Black** branca com contorno preto, com entrada de "carimbo" editorial — são queimadas no vídeo, e o **crédito de reprodução** ("Reprodução Imagem: X" + "Conta `@usuario`" do post de origem; "Image Credit"/"Account" no modo `-usa`) fica no **canto superior direito do quadro** sobre uma tarja preta translúcida, trocando junto com o clipe e sumindo enquanto uma imagem ocupa a tela (ela traz o crédito dela). O vídeo **não tem música de fundo** (a trilha foi removida em 2026-07-30, junto com o arquivo `assets/trilha.mp3`): sobram a narração e os wooshes das transições — o formato virou análise, e música disputa atenção com a informação falada. A cauda após a narração é de **0,15s** — curta de propósito, para a CONCLUSÃO emendar na pergunta de abertura quando o Short reinicia (loop).
+9. **Cartelas de imagem nos momentos-chave** (`pipeline/cartelas.py`, **só no Short** desde 2026-08-25): a **foto do post da trend** (que o pipeline já lia e descartava) **toma a tela inteira** por ~3,6s, no instante em que a narração **nomeia** o que ela mostra — a pessoa citada, o lugar atingido, o documento assinado. A imagem entra inteira sobre um fundo feito dela mesma, ampliada e borrada, com o **crédito próprio** numa faixa na base (`Reprodução: X / @conta` ou o domínio do veículo; `Image Credit` no `-usa`). Ela não é um cartão sobreposto: entra e sai pelo **deslize do carrossel** (ver "Como funciona a tela cheia e o carrossel"). As imagens passam pela **mesma auditoria dos clipes** (visão + veto duro + nota) e o gancho fica limpo (nada entra nos 3 primeiros segundos).
+10. **ffmpeg** monta o vídeo em **tela cheia** (ver "Como funciona a tela cheia e o carrossel"). **No `--long-take` este passo é outro desde 2026-08-25**: o vídeo é montado em **quatro partes separadas e coladas** (ver "Como funciona a montagem em quatro partes"); o que segue aqui é o caminho do Short. O **fundo de cada momento é o próprio clipe daquele trecho, ampliado para cobrir o quadro e borrado**; por cima entra o **clipe nítido no maior tamanho que cabe nele, centrado** (clipe mais curto que a janela repete em loop). Os clipes **cobrem 100% da narração** (nunca há um instante sem imagem) com **crossfade curto e limpo** entre si. **Legendas** sincronizadas palavra a palavra — grandes, em **Archivo Black** branca com contorno preto, com entrada de "carimbo" editorial — são queimadas no vídeo, e o **crédito de reprodução** ("Reprodução Imagem: X" + "Conta `@usuario`" do post de origem; "Image Credit"/"Account" no modo `-usa`) fica no **canto superior direito do quadro** sobre uma tarja preta translúcida, trocando junto com o clipe e sumindo enquanto uma imagem ocupa a tela (ela traz o crédito dela). O vídeo **não tem música de fundo** (a trilha foi removida em 2026-07-30, junto com o arquivo `assets/trilha.mp3`): sobram a narração e os wooshes das transições — o formato virou análise, e música disputa atenção com a informação falada. A cauda após a narração é de **0,15s** — curta de propósito, para a CONCLUSÃO emendar na pergunta de abertura quando o Short reinicia (loop).
 11. O `.mp4` final vai para `output/`, é registrado em `videos.txt` e publicado automaticamente no **YouTube** (Data API v3), com as **tags de busca** e com a **descrição montada** em `pipeline/seo.py` — parágrafo do payload, par `P:`/`R:`, capítulos (formato longo), fontes reais e as hashtags por último. Roda sempre, independente da flag `-usa` (o horário de publicação é o do cronjob que dispara a execução).
 
 ## Pré-requisitos
@@ -76,24 +76,34 @@ segundos, sem legendas**, para os **dois canais** (combina com `-usa`). É o
 mesmo pipeline — mesma coleta do X, mesma tela cheia, mesmo crédito de
 reprodução no canto superior direito — com outra direção editorial:
 
-- **Enquadramento**: explica um acontecimento contemporâneo cobrindo **de 3 a 5
-  tópicos** — recortes diferentes do mesmo fato, costurados por causa e efeito,
-  nunca como lista de bullets falados. As quatro óticas do canal
-  (**tecnologia/IA, negócios, mercado de trabalho e mercado financeiro**) são a
-  fonte natural desses tópicos, mas **deixaram de ser uma cota em 2026-08-04**:
-  quando o fato não tem leitura financeira real, o roteiro cobre outro recorte
-  (regulação, concorrente, usuário, precedente) em vez de inventar uma — forçar
-  a ótica ausente produzia exatamente a frase de analista vazia que a auditoria
-  reprova. (Guerra e geopolítica militar saíram do canal em 2026-07-30.)
-- **Espectador**: o adulto que está **procurando emprego ou em transição de
-  carreira**. O payload obrigatório do vídeo é o que aquele acontecimento muda
-  na prática para ele (setor que contrata ou corta, função na linha de tiro,
-  habilidade que passa a valer, prazo) — conselho de coach e futurologia sem
-  base reprovam na auditoria.
-- **Estrutura**: a mesma do Short — PERGUNTA ESQUISITA → CONTEXTUALIZAÇÃO →
-  DESENVOLVIMENTO (os 3 a 5 tópicos) → CONSEQUÊNCIA PARA QUEM TRABALHA →
-  CONCLUSÃO (a resposta à pergunta + o próximo marco concreto a observar). Sem
-  CTA e **sem loop** — aqui o vídeo fecha entregando.
+- **Enquadramento**: explica um acontecimento contemporâneo cobrindo
+  **exatamente 3 tópicos** — recortes diferentes do mesmo fato, costurados por
+  causa e efeito, nunca como lista de bullets falados. Era uma faixa de 3 a 5
+  até **2026-08-25**, quando o vídeo passou a ser montado em **quatro partes**
+  (abertura + uma por pauta): três tópicos são três partes, três manchetes e
+  três clipes distintos, e nada disso admite número variável. As quatro óticas
+  do canal (**tecnologia/IA, negócios, mercado de trabalho e mercado
+  financeiro**) são a fonte natural dos tópicos, mas **deixaram de ser uma cota
+  em 2026-08-04**: quando o fato não tem aquela leitura, o roteiro cobre outro
+  recorte (regulação, concorrente, usuário, precedente) em vez de inventar uma
+  — forçar a ótica ausente produzia exatamente a frase de analista vazia que a
+  auditoria reprova. (Guerra e geopolítica militar saíram do canal em
+  2026-07-30.)
+- **Espectador**: o adulto que quer entender para onde as coisas estão indo. O
+  payload obrigatório de cada pauta é a **análise** — o que aquele fato muda,
+  quem ganha, quem perde, que precedente abre. **Economia micro saiu do roteiro
+  em 2026-08-25**, a pedido do usuário: preço, salário, imposto, tarifa e "o
+  seu bolso" viraram proibições. Conselho de coach e futurologia sem base
+  reprovam na auditoria, como sempre reprovaram.
+- **Estrutura**: PAUTA FALADA (a narração diz, em até 18 palavras, os três
+  assuntos na ordem) → CONTEXTUALIZAÇÃO GERAL — as duas cabem em ~10 segundos,
+  que é a primeira parte do vídeo — → AS TRÊS PAUTAS, cada uma com
+  contextualização + acontecimento factual + análise, separadas por uma FRASE
+  DE VIRADA autossuficiente → FECHO (a síntese que costura as três + o próximo
+  marco concreto a observar). A **pergunta esquisita** do Short saiu da
+  narração em 2026-08-24; ela continua existindo como campo, mas só alimenta o
+  par P:/R: da descrição. Sem CTA e **sem loop** — aqui o vídeo fecha
+  entregando.
 - **Velocidade normal** (`LONG_VELOCIDADE=1.0`): análise não se acompanha em
   fala apressada. O Short é o contrário e roda acelerado.
 - **Fontes**: pelo menos duas citações nominais na narração (veículo ou conta
@@ -101,8 +111,9 @@ reprodução no canto superior direito — com outra direção editorial:
 - **Sem legendas queimadas**: a narração se sustenta sozinha (nenhuma frase
   pode depender de texto na tela — as manchetes abaixo só repetem o que ela já
   disse).
-- **Manchetes na tela** (`pipeline/manchetes.py`, 2026-08-23) — ver "Como
-  funcionam as manchetes" mais abaixo.
+- **Montado em quatro partes** (`pipeline/montagem_longa.py`, 2026-08-25):
+  abertura + uma parte por pauta, cada uma com o seu clipe e a sua manchete
+  fixa na tela — ver "Como funciona a montagem em quatro partes" mais abaixo.
 - **Capa customizada** (`pipeline/thumbnail.py`): uma **montagem** sobre um
   quadro real do vídeo — fundo desfocado, recorte nítido do assunto com borda
   branca, círculo feito à mão, seta e o texto com fantasma ciano/magenta (ver
@@ -127,10 +138,12 @@ reprodução no canto superior direito — com outra direção editorial:
   2026-07-27 e 2026-08-09 — e a moldura de celular que o substituiu — saíram
   em 2026-08-16 (ver "Como funciona a tela cheia e o carrossel").
 - **Material**: até **8 clipes** de vídeo do X (consultando até 16 posts da
-  trend, e baixando 11 para a auditoria escolher 8), trocando a cada 8-20s;
-  clipe vertical aparece como faixa central sobre o próprio clipe borrado. Até
-  **4 cartelas** de imagem espalhadas pela narração. A auditoria exige um **piso de 3 clipes aprovados** — 120 a 150
-  segundos presos em um ou dois clipes é insustentável, então abaixo disso o
+  trend, e baixando 11 para a auditoria escolher 8), dos quais **3 entram na
+  montagem** — um por pauta, e nenhum serve a duas; clipe vertical aparece como
+  faixa central sobre o próprio clipe borrado. **Sem cartelas** desde
+  2026-08-25 (foto tomando o quadro no meio de uma pauta é a pauta sem o vídeo
+  dela). O piso de **3 clipes aprovados** na auditoria virou o piso
+  **aritmético** do formato: abaixo disso uma pauta ficaria sem vídeo, e o
   vídeo não sai.
 - **Regras duras próprias**: candidata precisa de **4 posts com clipe** para
   disputar (`LONGO_MIN_POSTS_VIDEO`, derivado do piso de 3 da auditoria mais
@@ -188,12 +201,11 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | `LONG_LARGURA` / `LONG_ALTURA` | `1920` / `1080` | Só com `--long-take`: resolução 16:9 |
 | `LONG_MAX_CLIPES` | `8` | Só com `--long-take`: clipes do X usados na montagem |
 | `LONG_MAX_POSTS_MIDIA` | `16` | Só com `--long-take`: posts da trend consultados para achar os clipes |
-| `LONG_MAX_CARTELAS` | `4` | Só com `--long-take`: cartelas de imagem sobrepostas |
-| `LONG_MAX_FOTOS` | `6` | Só com `--long-take`: fotos dos posts baixadas para as cartelas |
+| `LONG_MAX_CARTELAS` | `0` | Cartelas saíram do `--long-take` em 2026-08-25 (cada pauta mostra o vídeo dela do começo ao fim). Deixe em `0` |
+| `LONG_MAX_FOTOS` | `0` | Idem: as fotos só alimentavam as cartelas |
 | `LONG_VELOCIDADE` | `1.0` | Só com `--long-take`: velocidade **normal** da narração (análise não se acompanha em fala apressada) |
-| `LONG_MANCHETES` | `1` | Só com `--long-take`: manchetes na tela (índice "Ainda neste vídeo" + uma por pauta). Custo zero; `0` devolve o vídeo corrido de antes |
 | `DIAS_REFERENCIA` | `90` | Janela da régua de audiência: só entram os vídeos **publicados** nos últimos N dias (campeões e últimos publicados) |
-| `LONG_PAUSA_PAUTA` | `0.7` | Só com `--long-take`: silêncio aberto em cada troca de pauta, em segundos (0 a 2). `0` desliga a separação temporal |
+| `LONG_PAUSA_PAUTA` | `0.7` | Só com `--long-take`: silêncio aberto em cada troca de pauta, em segundos (**0.3 a 2**). É onde o vídeo é cortado em partes e o painel de manchete troca, então `0` não é mais aceito. `LONG_MANCHETES` foi removida pelo mesmo motivo: o painel deixou de ser opcional |
 | `YOUTUBE_CLIENT_ID` | — | Client ID OAuth (Google Cloud, tipo "Desktop app") |
 | `YOUTUBE_CLIENT_SECRET` | — | Client secret OAuth |
 | `YOUTUBE_REFRESH_TOKEN` | — | Canal português; preenchido por `--auth-youtube` |
@@ -287,7 +299,7 @@ Fontes (formato longo)      <- posts do X e veículos que a narração citou
 
 As hashtags vão para o fim **em código**: o modelo as escreve grudadas no parágrafo, e ali elas empurrariam o resto para fora dos primeiros caracteres.
 
-**5. Capítulos (só no `--long-take`).** Cada tópico do roteiro passa a trazer uma **citação literal** do ponto da narração em que ele começa — o mesmo mecanismo das cartelas —, e o alinhamento do ElevenLabs a converte em carimbo de tempo. Capítulo com carimbo chutado seria **pior** que capítulo nenhum: ele promete um ponto do vídeo que não existe. Por isso o bloco só sai quando é **válido** pelas regras do YouTube (primeiro carimbo em `0:00`, no mínimo 3 capítulos, trechos de pelo menos 10s); citação que não bate no texto é descartada com aviso, e bloco incompleto simplesmente não é publicado.
+**5. Capítulos (só no `--long-take`).** Cada tópico do roteiro traz uma **citação literal** do ponto da narração em que ele começa — a mesma que corta o vídeo em partes —, e o alinhamento do ElevenLabs a converte em carimbo de tempo. Capítulo com carimbo chutado seria **pior** que capítulo nenhum: ele promete um ponto do vídeo que não existe. Por isso o bloco só sai quando é **válido** pelas regras do YouTube (primeiro carimbo em `0:00`, no mínimo 3 capítulos, trechos de pelo menos 10s); citação que não bate no texto é descartada com aviso, e bloco incompleto simplesmente não é publicado.
 
 ## Infográficos animados (removidos em 2026-08-04)
 
@@ -297,7 +309,12 @@ Com eles saiu também a regra que **escondia o crédito de reprodução** enquan
 
 ## Como funcionam os clipes e os cortes
 
-O pipeline baixa um **pool** de clipes de vídeo dos posts originais da trend (X API, MP4 de maior bitrate): **3 + `POOL_EXTRA_CLIPES`** entram na disputa por 3 vagas na montagem (**8 vagas no `--long-take`**). O **GPT com visão** descreve e classifica cada um a partir de frames extraídos pelo ffmpeg, a **auditoria** derruba o que não presta (veja abaixo) e um "editor de cortes" (GPT) decide **quando cada clipe aprovado entra**, ancorando cada corte numa **citação exata da narração** (convertida em tempo pelos timestamps do ElevenLabs) — o primeiro clipe abre o gancho, e clipe mais curto que a janela repete em **loop**. Na tela, cada clipe carrega o próprio **crédito de reprodução** no canto superior direito ("Reprodução Imagem: X" + "Conta `@usuario`" do post de onde ele veio). O plano fica em `cortes.json`; se ele falhar, os clipes aprovados são distribuídos uniformemente pela narração, **na ordem da nota da auditoria** (o melhor abre o vídeo).
+O pipeline baixa um **pool** de clipes de vídeo dos posts originais da trend (X API, MP4 de maior bitrate): **3 + `POOL_EXTRA_CLIPES`** entram na disputa por 3 vagas na montagem (**8 vagas no `--long-take`**). O **GPT com visão** descreve e classifica cada um a partir de frames extraídos pelo ffmpeg e a **auditoria** derruba o que não presta (veja abaixo). Na tela, cada clipe carrega o próprio **crédito de reprodução** no canto superior direito ("Reprodução Imagem: X" + "Conta `@usuario`" do post de onde ele veio), e clipe mais curto que a janela repete em **loop**.
+
+**Daqui para baixo os dois formatos divergem** (2026-08-25):
+
+- **No Short**, um "editor de cortes" (GPT) decide **quando cada clipe aprovado entra**, ancorando cada corte numa **citação exata da narração** (convertida em tempo pelos timestamps do ElevenLabs) — o primeiro clipe abre o gancho. O plano fica em `cortes.json`; se ele falhar, os clipes aprovados são distribuídos uniformemente pela narração, **na ordem da nota da auditoria** (o melhor abre o vídeo).
+- **No `--long-take`**, a pergunta deixou de ser "em que segundo cada clipe entra" e virou **"qual clipe é o da pauta 1, qual é o da 2 e qual é o da 3"**: `cortes.atribuir_clipes` resolve o pareamento inteiro de uma vez, **um clipe por pauta e nenhum servindo a duas**, e a montagem aborta se um repetir. Ver "Como funciona a montagem em quatro partes".
 
 ## Como funciona a auditoria do material visual
 
@@ -343,12 +360,12 @@ O laço fecha **antes do TTS** de propósito. Cada tentativa extra custa notíci
 
 ## Como funcionam as cartelas de imagem
 
-A **única** camada de imagem do vídeo desde 2026-08-24 (as figuras geradas saíram por custo): nos **momentos-chave** — quando a narração **nomeia** a pessoa, o lugar, o documento ou o produto — uma imagem **toma a tela do celular** por ~3,6s, entrando pelo deslize do carrossel. O corpo do vídeo continua sendo só clipe de vídeo do X.
+**Só no Short** desde 2026-08-25 — no `--long-take` elas saíram, porque a cartela é uma foto que toma o quadro no meio de uma pauta, e cada pauta agora mostra o vídeo dela do começo ao fim (ver "Como funciona a montagem em quatro partes"). A **única** camada de imagem do Short desde 2026-08-24 (as figuras geradas saíram por custo): nos **momentos-chave** — quando a narração **nomeia** a pessoa, o lugar, o documento ou o produto — uma imagem **toma a tela do celular** por ~3,6s, entrando pelo deslize do carrossel. O corpo do vídeo continua sendo só clipe de vídeo do X.
 
 - **De onde vêm** — as **fotos dos posts da trend**, que o pipeline já lia da X API e descartava no filtro de tipo: são o material mais barato (vêm no mesmo lookup) e estão no assunto por construção. Nenhuma chamada nova de API, e nada de busca de imagem em banco. Até 2026-08-16 a **og:image das notícias** do Firecrawl completava o pool; com a busca de notícias removida, sobraram só as fotos do X.
 - **Como aparecem** — renderizadas no **tamanho exato do quadro**: a imagem entra inteira (nada de recorte que corte rosto ou número) sobre um fundo feito dela mesma, ampliado, borrado e escurecido — o mesmo tratamento que o clipe já recebe —, com o **crédito próprio numa faixa na base** (`Reprodução: X / @conta` ou `Reprodução: reuters.com`; `Image Credit` no `-usa`). O movimento é o **deslize** (ver "Como funciona a tela cheia e o carrossel"); este módulo só desenha o quadro parado. Substituiu em 2026-08-09 o cartão branco com sombra que subia de baixo do quadro — com a imagem ocupando a tela inteira, o problema de "cartão pequeno perde a disputa pela atenção", que em 2026-08-04 tinha sido tratado aumentando o cartão, deixou de existir.
-- **Onde não aparecem** — nos **3 primeiros segundos** (o gancho fica com o clipe limpo) e, desde 2026-08-23, em cima de uma **manchete** (as janelas nunca coincidem: a manchete sai da estrutura do roteiro e tem a prioridade).
-- **Quantas** — até `MAX_CARTELAS` (1; 4 no `--long-take`), escolhidas pelo GPT entre as imagens aprovadas na auditoria, com o momento ancorado numa **citação exata da narração**. O plano fica em `cartelas.json`. `MAX_CARTELAS=0` desliga a feature; qualquer falha só deixa o vídeo sem cartelas.
+- **Onde não aparecem** — nos **3 primeiros segundos** (o gancho fica com o clipe limpo) e, desde 2026-08-25, no formato longo inteiro.
+- **Quantas** — até `MAX_CARTELAS` (1; **0** no `--long-take`), escolhidas pelo GPT entre as imagens aprovadas na auditoria, com o momento ancorado numa **citação exata da narração**. O plano fica em `cartelas.json`. `MAX_CARTELAS=0` desliga a feature; qualquer falha só deixa o vídeo sem cartelas.
 
 ## Figuras geradas por IA (removidas em 2026-08-24)
 
@@ -360,27 +377,50 @@ Até **2026-08-24** o `pipeline/figuras.py` desenhava, com o **gpt-image-2**, to
 
 A única imagem que o pipeline ainda pede à OpenAI é **visão**, não geração: descrever frames para a auditoria dos clipes e escolher o recorte da capa. A **capa** segue sendo montagem em Pillow, e as **cartelas** (foto real do post) são agora a única camada de imagem do vídeo.
 
-## Como funcionam as manchetes
+## Como funciona a montagem em quatro partes (formato longo)
 
-`pipeline/manchetes.py`, **só no formato longo**. Diagnóstico do usuário em **2026-08-23**: o vídeo longo era **monótono e sem vida** — 135 segundos de narração corrida, sem nenhuma marca de que a pauta mudou. A primeira versão pôs painéis na tela, e em **2026-08-24** o veredito foi que **o roteiro e a montagem continuavam confusos**: o índice subia depois da pergunta de abertura e listava tópicos que a narração não mencionava, então **a tela dizia uma coisa e o áudio dizia outra**. O que resolveu não foi o painel — foi casar as três camadas (roteiro, áudio e tela) na mesma troca de pauta.
+`pipeline/montagem_longa.py` + `pipeline/manchetes.py`, **só no `--long-take`**.
 
-**Na abertura, a narração DIZ a pauta.** Os primeiros ~6 segundos do vídeo são o campo `pauta_falada` do roteiro (no máximo 18 palavras), nomeando os assuntos na ordem em que virão: *"drones a 1.900 quilômetros, um navio sem tripulação que atirou, e o gás que o Irã achou"*. Enquanto ela é falada, o painel **AINDA NESTE VÍDEO** (`COMING UP` no `-usa`) mostra os títulos um a um, sincronizado com a fala — a janela do índice é medida no alinhamento do próprio trecho, não num tempo fixo. Se o modelo não copiar o campo literalmente, o índice **não sai**: índice fora de sincronia com a fala é pior que índice nenhum. A **pergunta esquisita** saiu da narração nessa mesma mudança; ela continua existindo como campo, mas só alimenta o par P:/R: da descrição.
+**O histórico importa aqui**, porque a solução veio da terceira tentativa. Em **2026-08-23** o diagnóstico foi que o vídeo longo era **monótono**: 135 segundos de narração corrida, sem nenhuma marca de que a pauta mudou. Entraram painéis de manchete. Em **2026-08-24** o veredito foi que **roteiro e montagem continuavam confusos** — o índice listava tópicos que a narração não mencionava. O roteiro passou a **falar a pauta**, e a pausa de silêncio entrou. Em **2026-08-25**, vendo o vídeo publicado, o usuário foi direto: *"ainda ficou uma merda... acho melhor você produzir as 4 partes separadas, e juntar no ffmpeg. Se não vai continuar uma bosta, e não vai seguir o que eu quero."*
 
-**A cada troca de pauta, a separação é dupla.** No áudio, `silencio.inserir_pausas` abre **0,7s de silêncio** (`LONG_PAUSA_PAUTA`) imediatamente antes da frase de virada. Na tela, a manchete daquela pauta entra **dentro desse silêncio**: o espectador ouve o corte, lê o título novo, e só então a narração recomeça. Quem está ouvindo sem olhar percebe a troca; quem está olhando sem ouvir também. Inserir silêncio obriga a **deslocar todo o alinhamento** a jusante — é o que mantém cortes, cartelas, manchetes e capítulos apontando para o segundo certo —, e por isso a inserção acontece **depois** do corte de silêncios (senão o `silencedetect` comeria o silêncio recém-criado) e **depois** da conferência de piso de duração (o piso mede fala; somar respiro deixaria um roteiro curto demais passar).
+Ele estava certo, e o motivo é estrutural. Nas duas primeiras tentativas o vídeo continuava sendo **um** grafo de filtros do ffmpeg sobre uma linha do tempo de 135s, com cada camada ligando e desligando por `enable`. Nada ali **garantia** a estrutura: a manchete era uma janela de 4,2s que sumia, e o planejador de cortes distribuía clipes por citação, então o mesmo clipe atravessava duas pautas. Quando a regra é *"cada pauta tem o seu clipe e a sua manchete, do começo ao fim dela"*, a forma de garantir a regra é a parte ser **um arquivo** — não um intervalo dentro de um arquivo.
 
-**Cada pauta tem três batidas** (`escritor.py`): contextualização → acontecimento factual com número e fonte → **análise na economia micro do espectador** (campo `bolso`), que é a batida que não pode faltar — sem ela a pauta é notícia, não análise. O bloco único de payload de carreira que fechava o vídeo virou **síntese** (campo `sintese`): ele costura as leituras de bolso das pautas em vez de repetir uma delas. A auditoria pró-leigo cobra as três batidas (regra 8c), a virada autossuficiente (8b) e a abertura pela pauta falada (10).
+```
++--------------+ +----------+ +----------+ +----------+
+|   3 clipes   | | clipe 1  | | clipe 2  | | clipe 3  |
+| [AINDA NESTE | | [MANCHETE| | [MANCHETE| | [MANCHETE|
+|    VÍDEO]    | |    1]    | |    2]    | |    3]    |
++--------------+ +----------+ +----------+ +----------+
+     ~10s       ^           ^            ^         fade
+              pausa       pausa        pausa       out 3s
+              0,7s        0,7s         0,7s
+```
 
-**O estilo é o da capa** (`pipeline/identidade.py`), a pedido do usuário depois de a capa ficar boa: **etiqueta de cor chapada com retícula Ben-Day** no topo, título em Archivo Black com o **fantasma ciano/magenta** e um **grifo à mão** por baixo. A tarja fininha lateral da primeira versão saiu — lia como enfeite de template, não como a marca do canal. O painel fica **acima da etiqueta de representação visual**, que é marcação obrigatória e não pode ser coberta.
+**As quatro partes.** A **abertura** (~10s) mostra os **três clipes do vídeo em sequência** — é o "ainda neste vídeo" em imagem: o espectador vê o que está sendo prometido — com o painel **AINDA NESTE VÍDEO** (`COMING UP` no `-usa`) listando **os três títulos de uma vez**. Depois vem **uma parte por pauta**, cada uma com **um único clipe** e a manchete daquela pauta. O vídeo fecha com **3 segundos de fade** para o preto, vídeo e áudio juntos.
 
-**O movimento** é do ffmpeg (`edicao.py`): o painel entra deslizando de fora da borda esquerda com a curva de aceleração do carrossel mais um fade, e sai pelo mesmo caminho — 0,45s de cada lado. Ele **não troca o conteúdo da tela**; é a última camada de imagem da pilha.
+**O painel nunca sai da tela.** É a mudança mais visível. Antes cada manchete durava 4,2s e sumia, deixando 40 segundos sem marca nenhuma — exatamente o problema que a camada existia para resolver. Agora o painel da parte fica de ponta a ponta dela, e o que acontece na virada é uma **troca**: o painel velho sai deslizando pela esquerda (0,30s) e o novo entra pelo mesmo caminho (0,40s), os dois **dentro da pausa de silêncio**. São **três trocas** no vídeo inteiro. O índice da abertura também virou **um painel só** com os três itens listados — antes eram três painéis piscando um de cada vez dentro de ~6 segundos, tempo de ver que algo piscou, não de ler.
 
-**Custo: zero.** Pillow desenha, o ffmpeg anima. Cada PNG tem o tamanho **exato do seu conteúdo** (não a largura do quadro) e existe **só na janela em que aparece**, pelo mesmo `tpad` das cartelas — num formato que já estourou o container de 8 GB, uma faixa de 1920px loopada por 135 segundos seria caro por nada. Todos os painéis têm a **mesma altura**: como são ancorados pela base, altura variável fazia a lista da abertura subir e descer a cada item.
+**Cada pauta tem o seu clipe, e nenhum serve a duas.** Quem casa clipe e pauta é `cortes.atribuir_clipes`, que resolve o **pareamento inteiro de uma vez** (e não pauta por pauta), prefere o clipe mais **longo** entre dois igualmente pertinentes — ele vai ficar dezenas de segundos na tela — e nunca repete. Se a chamada falhar, a reserva pareia por duração. O resultado é **conferido em código** na montagem: clipe repetido entre duas pautas **aborta**. Por isso o piso de clipes aprovados na auditoria (3) deixou de ser preferência e virou o **piso aritmético** do formato.
 
-`LONG_MANCHETES=0` desliga os painéis e `LONG_PAUSA_PAUTA=0` desliga as pausas — as duas chaves existem para comparar retenção com e sem a divisão de pauta. Qualquer falha (fonte ausente, citação que não bate, ffmpeg) só deixa o vídeo sem a camada. O plano fica em `manchetes.json`.
+**Onde o vídeo é cortado.** Nos **silêncios**. `silencio.inserir_pausas` abre 0,7s (`LONG_PAUSA_PAUTA`) imediatamente antes de cada frase de virada e agora **devolve onde cada silêncio ficou** no áudio novo; a montagem corta exatamente ali. Recalcular a borda pela citação daria quase o mesmo número, e "quase" é o que faria o painel trocar meio segundo depois do silêncio. `LONG_PAUSA_PAUTA` não aceita mais `0`: sem silêncio não há onde cortar.
+
+**A narração nunca é cortada.** As quatro partes são renderizadas **sem áudio**, coladas pelo *concat demuxer* com `-c copy` (as quatro saem do mesmo encoder, com o mesmo tamanho, fps e pix_fmt — colar é copiar), e só então a narração **inteira** entra por cima, com o woosh em cada virada. Cortar o áudio em quatro e recolar traria o *priming* do AAC em cada emenda. As durações são arredondadas para o **quadro** (`_quadro`), senão o erro de arredondamento se acumula a cada emenda e o vídeo desliza contra a fala.
+
+**A estrutura é conferida antes da narração.** `escritor._conferir_estrutura_longa` exige **exatamente 3 tópicos** e a `citacao` de cada um existindo **literalmente** no `texto_video` — a busca (`cortes.localizar_citacao`) tolera audio tag no meio da frase e espaço colapsado, que era como as citações se perdiam. Falha aqui pede reescrita duas vezes e depois **aborta**, de propósito e **antes** do ElevenLabs: sem os três pontos de corte não existe vídeo de quatro partes, e o que sairia é o bloco corrido que foi rejeitado.
+
+**Cada pauta tem três batidas** (`escritor.py`): contextualização → acontecimento factual com número e fonte → **análise** (campo `analise`), que é a batida que não pode faltar — sem ela a pauta é notícia, não análise. Em **2026-08-25** a **economia micro saiu do roteiro** a pedido do usuário: o campo `bolso` ("o que isso faz no seu dinheiro") virou `analise`, que fala do que o **fato** muda — quem ganha, quem perde, que precedente abre. Preço, salário, imposto, tarifa e "o seu bolso" viraram **proibições** no prompt e na auditoria pró-leigo. O fecho é a **síntese** (campo `sintese`), costurando as três análises.
+
+**O estilo é o da capa** (`pipeline/identidade.py`): **etiqueta de cor chapada com retícula Ben-Day** no topo, título em Archivo Black com o **fantasma ciano/magenta** e um **grifo à mão** por baixo. O painel fica **acima da etiqueta de representação visual**, que é marcação obrigatória e não pode ser coberta. Os três painéis de pauta têm a **mesma altura** — como são ancorados pela base, altura variável faria a troca saltar.
+
+**Cartelas saíram do formato longo** nesta mesma mudança. A cartela é uma foto que toma o quadro inteiro no meio de uma pauta — ou seja, um pedaço da pauta em que o vídeo daquela pauta **não** está na tela. O carrossel continua vivo no Short.
+
+**Conferência no vídeo pronto.** `conferir_paineis` extrai um quadro do meio de **cada parte** e conta os pixels da cor da etiqueta dentro da caixa onde o painel deveria estar. Existe porque em 2026-08-23 o pipeline montou seis manchetes, logou as seis, o ffmpeg saiu com código 0 — e nenhuma apareceu no vídeo publicado. Só diagnostica; nunca aborta. O plano fica em `partes.json` e `montagem.json`.
 
 ## Como funciona a capa
 
 `pipeline/thumbnail.py`, só no formato longo (no Short o feed mostra o vídeo rodando). Até **2026-08-23** a capa era um quadro do vídeo escurecido por inteiro, com uma tarja preta e uma frase branca na base. Lia bem e **não chamava ninguém**: nenhuma cor, nenhum ponto de foco, nada que separasse o vídeo dos outros vinte da mesma linha de resultados.
+
+**Os quadros candidatos saem dos clipes, não do vídeo montado** (2026-08-25). Desde que o painel de manchete passou a ficar **fixo na tela** do primeiro ao último quadro, qualquer frame do vídeo montado traz o painel dentro dele — e a capa é uma montagem **em cima** desse frame, com recorte e desfoque, então o painel apareceria dentro da capa. Amostrar o **meio de cada um dos três clipes das pautas** devolve o mesmo material sem a camada de texto e sem a passada de x264. Se nenhum quadro sair dos clipes, a reserva volta a amostrar o vídeo montado.
 
 Agora ela é uma **montagem**, na mesma identidade das manchetes:
 
