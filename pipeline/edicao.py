@@ -16,10 +16,26 @@ INTEIRO, com o preenchimento de fundo em desfoque do próprio clipe. Saíram os
 CENÁRIOS que embrulhavam o vídeo: a moldura de smartphone sobre uma cama
 (2026-08-09 a 2026-08-16) e, antes dela, a sala de estar com TV do formato
 longo. O módulo `cenario.py` e a foto `fundo-cama.png` foram apagados junto, e
-com eles a orientação do aparelho medida pelos clipes — sem moldura, não há o
-que orientar: o clipe horizontal simplesmente ganha barras borradas em cima e
-embaixo do quadro vertical, como sempre foi antes das molduras. Não
-reintroduzir cenário nenhum sem pedido explícito.
+com eles a orientação do aparelho medida pelos clipes. Não reintroduzir cenário
+nenhum sem pedido explícito.
+
+RECORTE QUE ACOMPANHA O SUJEITO (2026-08-25, pedido do usuário). Até aqui o
+clipe horizontal simplesmente ganhava a barra borrada em cima e embaixo do
+quadro vertical: com fonte 1280x720 a faixa nítida era 1080x608 num quadro de
+1920 de altura, 32% da tela, e os outros 68% eram desfoque. Agora o clipe é
+RECORTADO numa janela mais estreita que ANDA pelo quadro atrás de quem está em
+cena, e a faixa nítida passa a ~60% da tela de uma fonte 720p e a ~90% de uma
+1080p. Quem decide o recorte e a trajetória é `enquadramento.py`; aqui só entra
+o filtro `crop` na frente do `scale` da camada nítida.
+
+Isto NÃO é volta de cenário: o que está na tela continua sendo só o clipe, e a
+camada borrada de fundo é a mesma de antes — o que mudou é quanto do quadro o
+clipe nítido ocupa. E o recorte NÃO vai até 9:16 cheio de propósito: isso
+exigiria ampliar uma janela de 404 px até os 1080 do quadro (2,67x) e a imagem
+ficaria visivelmente mole. O teto de ampliação é `enquadramento.UPSCALE_MAX`, e
+a proporção que sobra continua sendo preenchida pela camada borrada. Clipe sem
+folga horizontal, sem sujeito detectável ou em ambiente sem OpenCV segue pelo
+caminho antigo, inteiro: `planejar` devolve None e nada muda.
 
 CARROSSEL. As cartelas de imagem (cartelas.py) não são cartões sobrepostos ao
 clipe: elas ocupam o quadro inteiro
@@ -60,6 +76,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import enquadramento
 from .config import RAIZ
 
 FPS = 30
@@ -194,6 +211,32 @@ def duracao_audio(audio: Path) -> float:
         check=True,
     )
     return float(saida.stdout.strip())
+
+
+def dimensoes_video(video: Path) -> tuple[int, int] | None:
+    """(largura, altura) do vídeo, ou None se o ffprobe não souber dizer.
+
+    O arquivo local é a fonte de verdade da resolução, não a API do X: ela
+    anuncia `width`/`height` do original, e `midia_x` baixa a maior VARIANTE
+    MP4 que cabe no teto de bytes — que costuma ser menor.
+    """
+    try:
+        saida = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=p=0",
+                str(video),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        larg, alt = saida.stdout.strip().split(",")[:2]
+        return int(larg), int(alt)
+    except (subprocess.CalledProcessError, OSError, ValueError):
+        return None
 
 
 # Extensões aceitas nas sobreposições (clipes dos posts do X baixados pelo
@@ -547,8 +590,38 @@ def montar_video(
         # (no vertical isso é a largura total; no 16:9, a altura). Sem zoom nem
         # deslize — o clipe já tem movimento próprio; a transição editorial é um
         # crossfade curto e limpo.
+        #
+        # RECORTE QUE ACOMPANHA (2026-08-25): antes de escalar, o clipe
+        # horizontal é RECORTADO numa janela mais estreita que anda pelo quadro
+        # atrás de quem está em cena (enquadramento.py). É o que tira a faixa
+        # nítida de 32% da tela e leva para ~60% sem borrar. Só o `x` do crop
+        # varia — a largura é fixa por clipe, senão o `w` que o overlay abaixo
+        # usa para centralizar mudaria a cada quadro e o clipe tremeria. Sem
+        # plano (clipe já vertical, sem folga, sem sujeito, OpenCV ausente) o
+        # recorte é vazio e a cadeia é a de sempre.
+        dimensoes = dimensoes_video(s["caminho"])
+        plano = (
+            enquadramento.planejar(
+                s["caminho"], float(inicio_util or 0.0), dur_render,
+                *dimensoes, tela_l, tela_a,
+            )
+            if dimensoes
+            else None
+        )
+        recorte = ""
+        if plano:
+            recorte = (
+                f"crop={plano['crop_l']}:{plano['crop_a']}"
+                f":x='{plano['expr_x']}':y=0,"
+            )
+            print(
+                f"[edicao] Clipe {i + 1}: recorte {plano['crop_l']}x"
+                f"{plano['crop_a']} de {dimensoes[0]}x{dimensoes[1]}, "
+                f"{plano['movimentos']} movimento(s) de câmera."
+            )
         filtros.append(
-            f"[in_fg{i}]scale={tela_l}:{tela_a}:force_original_aspect_ratio=decrease,"
+            f"[in_fg{i}]{recorte}"
+            f"scale={tela_l}:{tela_a}:force_original_aspect_ratio=decrease,"
             f"format=rgba,{dessat}{fade_in}{fade_out}"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
         )

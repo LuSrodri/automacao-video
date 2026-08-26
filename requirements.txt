@@ -2,3 +2,8 @@ openai>=2.0.0
 requests>=2.32.0
 python-dotenv>=1.0.0
 pillow>=10.0.0
+# Enquadramento inteligente do clipe (pipeline/enquadramento.py): deteccao do
+# sujeito e camera virtual. headless = sem as libs de GUI, que o container nao
+# tem e nao precisa.
+opencv-python-headless>=4.9.0
+numpy>=1.26.0
