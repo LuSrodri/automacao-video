@@ -641,7 +641,14 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "type": "string",
                 "description": (
                     "Título do vídeo, no idioma definido nas instruções, até 90 "
-                    "caracteres. Direto e factual: ator + ação concreta, com "
+                    "caracteres. ABRE PELO TÓPICO 1: é ele que a CAPA do vídeo "
+                    "mostra e é ele que o espectador ouve nos primeiros "
+                    "segundos, então o título tem que prometer a MESMA coisa "
+                    "que a capa — capa anunciando um assunto e título "
+                    "anunciando outro entrega um vídeo diferente do que a "
+                    "pessoa clicou. Os outros dois tópicos entram depois, na "
+                    "ordem, se couberem. Direto e factual: ator + ação "
+                    "concreta, com "
                     "pelo menos uma coisa palpável (número, pessoa, dinheiro, "
                     "lugar) e, quando couber sem ficar artificial, o ângulo de "
                     "trabalho/carreira. TESTE DO LEIGO: entendível por quem "
@@ -910,6 +917,10 @@ NARRAÇÃO:
 11. Fechamento: síntese que costura as análises das pautas + próximo
    marco a observar. REPROVAM: CTA falado, pedido de inscrição, despedida, e
    fecho que só repete a análise de uma das pautas.
+12. O TÍTULO ABRE PELO TÓPICO 1. A capa do vídeo é montada a partir da pauta 1
+   e do clipe dela, então um título que abre por outro tópico promete uma coisa
+   e a capa promete outra. REPROVA o título que começa pelo tópico 2 ou 3, ou
+   que não nomeia o tópico 1 em lugar nenhum.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
 problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\

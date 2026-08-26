@@ -171,7 +171,7 @@ from pipeline.config import (
     ativar_formato_longo,
     carregar_config,
 )
-from pipeline.cortes import atribuir_clipes, planejar_cortes
+from pipeline.cortes import atribuir_clipes, planejar_cortes, texto_da_pauta
 from pipeline.edicao import (
     RESPIRO_FINAL,
     duracao_audio,
@@ -693,16 +693,25 @@ def main() -> None:
     # desde que o painel de manchete ficou fixo na tela, todo frame do vídeo
     # montado traz o painel — e a capa é uma montagem em cima desse frame, com
     # recorte e desfoque, então o painel entraria dentro da capa.
+    #
+    # A CAPA ANUNCIA A PAUTA 1, e não uma das três (2026-08-26, pedido do
+    # usuário). O vídeo longo cobre três assuntos sem relação entre si; dando
+    # ao modelo da capa a narração inteira e os três clipes, ele escolhia o
+    # material mais forte, que não é o que o título anuncia. Em 26/08 saiu a
+    # capa "NEPAL LANDSLIDE KILLS 7" sobre o título "Flávio Bolsonaro Calls
+    # Rally as Video Access Opens and Nepal Reports Deaths". Agora ele recebe
+    # SÓ a fala da pauta 1 e SÓ o clipe dela: a coerência vem da construção, e
+    # não de uma regra no prompt pedindo que ele se comporte.
     capa = None
     if cfg.formato == "longo":
         capa = gerar_thumbnail(
             cfg,
             video_final,
             roteiro["titulo"],
-            roteiro["texto_video"],
+            texto_da_pauta(roteiro, 1),
             pasta,
             titulos_do_dia=titulos_do_dia(panorama),
-            fontes=[Path(m["caminho"]) for m in sobreposicoes],
+            fontes=[Path(sobreposicoes[0]["caminho"])],
         )
 
     url_youtube = publicar_youtube(

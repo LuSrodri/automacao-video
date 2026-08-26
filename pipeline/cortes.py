@@ -13,6 +13,16 @@ alinhamento do ElevenLabs (já remapeados após o corte de silêncios).
 
 Qualquer falha (resposta inválida, citações não encontradas, poucos cortes)
 devolve None e o main.py cai no posicionamento automático de sempre.
+
+ISSO VALE PARA `planejar_cortes`, do SHORT. O FORMATO LONGO tem outra pergunta
+e outra política, em `atribuir_clipes`: lá não é "em que segundo este clipe
+entra", é "qual clipe é o da pauta 1, qual é o da 2, qual é o da 3", e o
+resultado é obrigatório — cada pauta mostra o SEU clipe do começo ao fim dela.
+Por isso ali nada degrada: faltou clipe, o clipe não tem a ver com a pauta ou a
+chamada não fecha, a execução ABORTA. O fallback que parcava por duração saiu
+em 2026-08-26 junto com o piso de pertinência (PERTINENCIA_MINIMA): ele era o
+caminho que entregava justamente o pareamento cego que o piso existe para
+barrar.
 """
 
 import json
@@ -220,6 +230,42 @@ def localizar_citacao(texto: str, citacao: str, inicio: int = 0) -> int | None:
     return mapa[indices[pos]]
 
 
+def texto_da_pauta(roteiro: dict, k: int) -> str:
+    """O trecho da narração que pertence à pauta `k` (1-based), ou tudo.
+
+    Recorta entre a `citacao` do tópico k e a do tópico k+1, com a mesma busca
+    que define os CORTES do vídeo (`localizar_citacao`) — então o trecho aqui é
+    exatamente a fala que roda dentro daquela parte do vídeo.
+
+    Existe para a CAPA (2026-08-26, pedido do usuário). Um vídeo longo cobre
+    três assuntos sem relação entre si, e dar a narração inteira ao modelo da
+    capa é convidá-lo a anunciar um assunto enquanto o título anuncia outro:
+    em 26/08 o canal US publicou uma capa "NEPAL LANDSLIDE KILLS 7" sobre um
+    título que abre no comício do Flávio Bolsonaro. Recebendo só a fala da
+    pauta 1, ele não tem como escolher outra — a coerência sai da CONSTRUÇÃO,
+    não de uma regra no prompt pedindo que ele se comporte.
+
+    Devolve o texto inteiro quando a estrutura não permite o recorte; a capa é
+    acabamento e nunca aborta publicação (o que garante a citação é
+    `escritor._conferir_estrutura_longa`, que roda antes da narração).
+    """
+    texto = roteiro.get("texto_video") or ""
+    topicos = roteiro.get("topicos") or []
+    if not (1 <= k <= len(topicos)):
+        return texto
+    inicio = localizar_citacao(texto, topicos[k - 1].get("citacao") or "")
+    if inicio is None:
+        return texto
+    fim = len(texto)
+    if k < len(topicos):
+        seguinte = localizar_citacao(
+            texto, topicos[k].get("citacao") or "", inicio + 1
+        )
+        if seguinte is not None and seguinte > inicio:
+            fim = seguinte
+    return texto[inicio:fim].strip() or texto
+
+
 def _tempo_do_char(alinhamento: dict, texto: str, pos: int, dur_total: float) -> float:
     """Instante (s) em que o caractere `pos` do texto é falado.
 
@@ -385,14 +431,50 @@ ESQUEMA_ATRIBUICAO = {
                                 "tem a ver com esta pauta"
                             ),
                         },
+                        "pertinencia": {
+                            "type": "integer",
+                            "description": (
+                                "1 a 5: o quanto este clipe mostra A COISA "
+                                "DESTA pauta. 5 = mostra o próprio "
+                                "acontecimento dela; 4 = mostra o lugar, a "
+                                "pessoa ou a empresa dela, em outro momento; "
+                                "3 = mostra o MESMO TIPO de cena que ela "
+                                "descreve, sem ser o caso dela; 2 = só tem a "
+                                "ver por tema geral; 1 = não tem relação "
+                                "nenhuma com esta pauta. A nota é HONESTA — "
+                                "ver a regra 6."
+                            ),
+                        },
                     },
-                    "required": ["pauta", "midia", "porque"],
+                    "required": ["pauta", "midia", "porque", "pertinencia"],
                 },
             },
         },
         "required": ["pautas"],
     },
 }
+
+# PISO DE PERTINÊNCIA DO CLIPE DE CADA PAUTA (2026-08-26, pedido do usuário).
+#
+# Mesma escala de 1 a 5 de auditoria.NOTA_MINIMA, mas a pergunta é OUTRA: lá é
+# "este clipe serve a este VÍDEO", aqui é "este clipe é o desta PAUTA". Um
+# clipe pode passar lá e não ter nada a ver com a pauta em que caiu, e foi
+# exatamente isso que saiu publicado no canal US em 26/08: o veto de live
+# footage aprovou 6 clipes, TODOS da enchente no Nepal, e o pareamento pôs um
+# deles no comício do Flávio e outro na API da Higgsfield — com o próprio
+# modelo escrevendo no log "embora não mostre diretamente o software citado".
+# Não havia piso: o pareamento abortava se FALTASSE clipe, nunca se o clipe não
+# tivesse relação. Duas das três pautas ficaram dezenas de segundos mostrando
+# outra coisa.
+#
+# 3 é o mesmo ponto de corte da auditoria: "mostra o mesmo TIPO de cena" ainda
+# ilustra a pauta, "só tem a ver por tema geral" não. O custo é conhecido e
+# aceito pelo usuário: dia sem imagem da pauta é dia sem vídeo longo.
+PERTINENCIA_MINIMA = 3
+# Uma segunda chance, com a lista das pautas reprovadas de volta no pedido: às
+# vezes existe um pareamento melhor entre os mesmos clipes. Se o material não
+# tem a imagem, a segunda também reprova — e aí é para abortar mesmo.
+TENTATIVAS_ATRIBUICAO = 2
 
 INSTRUCOES_ATRIBUICAO = """\
 Você é o EDITOR de um vídeo de ANÁLISE em 16:9 dividido em partes fechadas.
@@ -414,41 +496,81 @@ REGRAS DURAS:
    pauta 3 também serviria para a pauta 1, dê-o à pauta 3 e resolva a 1 com
    outro. É melhor um pareamento razoável em todas do que um perfeito e dois
    ruins.
+6. A NOTA DE PERTINÊNCIA É HONESTA, e é a regra que mais importa aqui. Ela não
+   avalia o seu trabalho: ela decide se este vídeo pode existir. Nota abaixo de
+   {piso} ABORTA a publicação — e abortar é o resultado CERTO quando o material
+   coletado não tem imagem da pauta, porque o dia simplesmente não deu esse
+   vídeo. Inflar a nota não conserta nada: publica um vídeo em que a pauta fala
+   de uma coisa e a tela mostra outra por dezenas de segundos, que é pior do
+   que não publicar. Se o melhor clipe que sobrou para uma pauta não mostra a
+   coisa dela, dê a nota baixa e diga isso em `porque`. NÃO invente ligação
+   ("é um vídeo dinâmico", "combina com o tom", "ilustra o clima", "dá ritmo"):
+   isso é nota 1 ou 2 escrita como se fosse 4.
 
 Responda somente com o JSON pedido.\
-"""
+""".format(piso=PERTINENCIA_MINIMA)
 
 
-def _atribuicao_de_reserva(topicos: list[dict], midias: list[dict]) -> list[int]:
-    """Pareamento sem o modelo: o clipe mais longo para a pauta mais longa.
+def _ler_atribuicao(
+    bruto: str, topicos: list[dict], midias: list[dict]
+) -> dict[int, dict] | None:
+    """{índice da pauta: {"midia", "porque", "pertinencia"}}, ou None.
 
-    Reserva para quando a chamada falha ou volta inútil. Não sabe nada sobre o
-    ASSUNTO — mas cumpre as duas regras duras (toda pauta tem clipe, nenhum
-    repete), que é o que a montagem exige para existir. Ordem por duração
-    porque é o único sinal de qualidade disponível aqui: clipe de dois segundos
-    em loop numa pauta de quarenta é o pior resultado possível.
+    None quando a resposta não cobre TODAS as pautas com clipes diferentes —
+    entrada repetida, fora de faixa ou ilegível é descartada em vez de aceita,
+    porque a montagem exige um clipe por pauta e nenhum servindo a duas.
     """
-    ordem = sorted(
-        range(len(midias)),
-        key=lambda k: (midias[k].get("dur_s") or 0.0),
-        reverse=True,
-    )
-    return ordem[: len(topicos)]
+    try:
+        dados = json.loads(bruto)["pautas"]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+    pareamento: dict[int, dict] = {}
+    vistos: set[int] = set()
+    for item in dados:
+        try:
+            pauta = int(item.get("pauta", 0)) - 1
+            indice = int(str(item.get("midia", "")).strip().lstrip("m")) - 1
+            nota = int(item.get("pertinencia", 0))
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= pauta < len(topicos) and 0 <= indice < len(midias)):
+            continue
+        if pauta in pareamento or indice in vistos:
+            continue
+        pareamento[pauta] = {
+            "midia": indice,
+            "porque": str(item.get("porque", "")).strip(),
+            "pertinencia": nota,
+        }
+        vistos.add(indice)
+    return pareamento if len(pareamento) == len(topicos) else None
 
 
 def atribuir_clipes(
     cfg: Config, roteiro: dict, midias: list[dict]
 ) -> list[dict]:
-    """Devolve UM clipe por pauta do roteiro, sem repetir nenhum.
+    """Devolve UM clipe por pauta do roteiro, sem repetir, e PERTINENTE.
 
     `midias`: [{"caminho": Path, "descricao": str, "dur_s": float|None,
     "conta": str, ...}, ...] — os clipes já aprovados pela auditoria. O retorno
     é a lista de mídias na ordem das pautas, com os campos originais
     preservados.
 
-    Levanta SystemExit se não houver clipe para todas as pautas: é a regra que
-    o usuário pediu, e um vídeo em que duas pautas mostram o mesmo material é
-    exatamente o que ele rejeitou.
+    Levanta SystemExit em três situações, todas por decisão do usuário e todas
+    preferíveis a publicar:
+
+      1. clipes aprovados em número menor que o de pautas — cada pauta é
+         obrigada a ter o seu, e um mesmo clipe não pode servir a duas;
+      2. o clipe de alguma pauta com pertinência abaixo de PERTINENCIA_MINIMA
+         (2026-08-26): pauta cujo clipe não mostra a coisa dela é a tela
+         contando outra história por dezenas de segundos;
+      3. a chamada de pareamento falhando nas duas tentativas.
+
+    A terceira era um FALLBACK até 2026-08-26: `_atribuicao_de_reserva` parear
+    por duração, sem saber nada do assunto. Com o piso, ela virou um buraco —
+    o caminho que entrega justamente o pareamento cego que o piso existe para
+    barrar. Saiu.
     """
     topicos = roteiro.get("topicos") or []
     if len(midias) < len(topicos):
@@ -470,55 +592,87 @@ def atribuir_clipes(
         f"CLIPES DISPONÍVEIS:\n{listagem}"
     )
 
-    escolhas: list[int] = []
     print(f"[cortes] Casando {len(midias)} clipe(s) com {len(topicos)} pauta(s)...")
-    try:
-        cliente = OpenAI(api_key=cfg.openai_api_key)
-        resposta = cliente.chat.completions.create(
-            model=cfg.text_model,
-            messages=[
-                {"role": "system", "content": INSTRUCOES_ATRIBUICAO},
-                {"role": "user", "content": conteudo},
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": ESQUEMA_ATRIBUICAO,
-            },
-        )
-        dados = json.loads(resposta.choices[0].message.content)["pautas"]
-        por_pauta: dict[int, int] = {}
-        vistos: set[int] = set()
-        for item in dados:
-            try:
-                pauta = int(item.get("pauta", 0)) - 1
-                indice = int(str(item.get("midia", "")).strip().lstrip("m")) - 1
-            except ValueError:
-                continue
-            # Repetição é descartada em vez de aceita: a regra é do usuário, e
-            # deixar passar aqui derrubaria a montagem lá na frente.
-            if not (0 <= pauta < len(topicos) and 0 <= indice < len(midias)):
-                continue
-            if pauta in por_pauta or indice in vistos:
-                continue
-            por_pauta[pauta] = indice
-            vistos.add(indice)
-            print(
-                f"[cortes] pauta {pauta + 1} -> "
-                f"{Path(midias[indice]['caminho']).name}: "
-                f"{item.get('porque', '')}"
-            )
-        if len(por_pauta) == len(topicos):
-            escolhas = [por_pauta[k] for k in range(len(topicos))]
-    except Exception as erro:  # noqa: BLE001 — há reserva para tudo aqui
-        print(f"[aviso] Atribuição de clipes falhou ({erro}); usando a reserva.")
+    cliente = OpenAI(api_key=cfg.openai_api_key)
+    mensagens: list[dict] = [
+        {"role": "system", "content": INSTRUCOES_ATRIBUICAO},
+        {"role": "user", "content": conteudo},
+    ]
 
-    if not escolhas:
-        escolhas = _atribuicao_de_reserva(topicos, midias)
-        print(
-            "[cortes] Pareamento de reserva (por duração): "
-            + ", ".join(
-                f"pauta {k + 1} -> {Path(midias[i]['caminho']).name}"
-                for k, i in enumerate(escolhas)
+    problema = ""
+    for tentativa in range(1, TENTATIVAS_ATRIBUICAO + 1):
+        try:
+            resposta = cliente.chat.completions.create(
+                model=cfg.text_model,
+                messages=mensagens,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": ESQUEMA_ATRIBUICAO,
+                },
             )
+            bruto = resposta.choices[0].message.content
+        except Exception as erro:  # noqa: BLE001 — vira SystemExit logo abaixo
+            print(f"[aviso] Atribuição de clipes falhou ({erro}).")
+            bruto, problema = "", f"a chamada falhou ({erro})"
+            pareamento = None
+        else:
+            pareamento = _ler_atribuicao(bruto, topicos, midias)
+
+        if pareamento is None:
+            problema = problema or (
+                "a resposta não trouxe um clipe DIFERENTE para cada pauta"
+            )
+        else:
+            for k in range(len(topicos)):
+                escolha = pareamento[k]
+                print(
+                    f"[cortes] pauta {k + 1} -> "
+                    f"{Path(midias[escolha['midia']]['caminho']).name}: "
+                    f"pertinência {escolha['pertinencia']} — {escolha['porque']}"
+                )
+            fracas = [
+                k
+                for k in range(len(topicos))
+                if pareamento[k]["pertinencia"] < PERTINENCIA_MINIMA
+            ]
+            if not fracas:
+                return [midias[pareamento[k]["midia"]] for k in range(len(topicos))]
+            problema = "; ".join(
+                f"pauta {k + 1} ('{topicos[k].get('titulo', '')}') ficou com "
+                f"{Path(midias[pareamento[k]['midia']]['caminho']).name}, "
+                f"pertinência {pareamento[k]['pertinencia']} "
+                f"({pareamento[k]['porque']})"
+                for k in fracas
+            )
+
+        if tentativa >= TENTATIVAS_ATRIBUICAO:
+            break
+        print(
+            f"[cortes] Pareamento reprovado ({tentativa}/"
+            f"{TENTATIVAS_ATRIBUICAO}): {problema}"
         )
-    return [midias[i] for i in escolhas]
+        mensagens = mensagens + [
+            {"role": "assistant", "content": bruto or "{}"},
+            {
+                "role": "user",
+                "content": (
+                    "Este pareamento não pode ser publicado: "
+                    + problema
+                    + f". O piso é {PERTINENCIA_MINIMA}. Refaça o pareamento "
+                    "inteiro tentando outros clipes para essas pautas — e se "
+                    "nenhum clipe disponível mostrar a coisa de alguma delas, "
+                    "mantenha a nota baixa em vez de subi-la: abortar é o "
+                    "resultado certo quando o material não tem a imagem."
+                ),
+            },
+        ]
+
+    raise SystemExit(
+        "Nenhum pareamento de clipes serve às pautas depois de "
+        f"{TENTATIVAS_ATRIBUICAO} tentativas: {problema}.\n"
+        f"O piso de pertinência é {PERTINENCIA_MINIMA} (escala 1-5), e uma "
+        "pauta cujo clipe não mostra a coisa dela passa dezenas de segundos "
+        "com a tela contando outra história. Quando isso acontece, o material "
+        "coletado hoje não tem imagem de alguma das pautas — o dia não deu "
+        "este vídeo. Abortando sem publicar."
+    )

@@ -171,9 +171,15 @@ ESQUEMA = {
 }
 
 INSTRUCOES = """\
-Você monta a CAPA (thumbnail) de um vídeo de notícias. Recebe o título, a
-narração e TRÊS QUADROS do vídeo já montado, na ordem, e devolve o texto da
-capa mais as decisões visuais dela.
+Você monta a CAPA (thumbnail) de um vídeo de notícias. Recebe o título do
+vídeo, a NARRAÇÃO DA PRIMEIRA PAUTA dele e quadros tirados do CLIPE dessa
+mesma pauta, na ordem, e devolve o texto da capa mais as decisões visuais dela.
+
+A CAPA ANUNCIA A PAUTA QUE VOCÊ RECEBEU, e nenhuma outra. O vídeo cobre mais
+de um assunto, mas o título dele ABRE por este, e é este que o espectador vê
+nos primeiros segundos: capa falando de um assunto e título falando de outro
+entrega ao espectador um vídeo diferente do que ele clicou. O fato da capa sai
+da narração acima — se ele não estiver nela, não vai para a capa.
 
 IDIOMA — A REGRA QUE MANDA EM TODAS AS OUTRAS: o canal deste vídeo publica em
 {idioma}. {regra}
@@ -215,8 +221,9 @@ este mesmo assunto, eles são o que vai aparecer na mesma linha de resultados
 que o nosso. A capa é o que diferencia: NÃO repita o recorte que todos já
 usaram. Se os títulos deles giram todos em torno do anúncio, a capa traz o
 NÚMERO; se todos trazem o número, a capa traz quem ganha ou quem paga. O fato
-continua sendo obrigatório — diferenciar é escolher OUTRO fato verdadeiro do
-vídeo, nunca inventar um.
+continua sendo obrigatório — diferenciar é escolher OUTRO fato verdadeiro DA
+NARRAÇÃO ACIMA, nunca inventar um e nunca sair para outro assunto do vídeo:
+diferenciar do concorrente jamais vale trocar a pauta que a capa anuncia.
 
 Responda somente com o JSON pedido, com o texto em {idioma}.\
 """
@@ -270,8 +277,8 @@ def _candidatos(
 ) -> list[Path]:
     """Os quadros que a visão vai comparar; lista vazia se nenhum sair.
 
-    `fontes` troca o vídeo montado por uma lista de arquivos LIMPOS, um quadro
-    de cada. Existe por causa do formato longo (2026-08-25): lá o painel de
+    `fontes` troca o vídeo montado por arquivos LIMPOS. UMA fonte rende três
+    instantes dela; várias rendem o meio de cada uma. Existe por causa do formato longo (2026-08-25): lá o painel de
     manchete ficou FIXO na tela do primeiro ao último quadro, então qualquer
     frame do vídeo montado traz o painel — e a capa é uma montagem sobre esse
     frame, com recorte e desfoque. Amostrar os clipes originais devolve o mesmo
@@ -280,6 +287,26 @@ def _candidatos(
     """
     if fontes:
         quadros = []
+        # UMA fonte rende três instantes DELA; várias rendem o meio de cada uma.
+        # O caso de uma fonte é o formato longo desde 2026-08-26: a capa passou
+        # a sair do clipe da PAUTA 1, e não dos três clipes do vídeo, senão ela
+        # ilustra um assunto e o título anuncia outro. Três instantes do mesmo
+        # clipe mantêm a escolha de quadro que o modelo já fazia.
+        if len(fontes) == 1:
+            dur = _duracao(fontes[0])
+            instantes = (
+                [max(0.5, dur * f) for f in INSTANTES_FRAC]
+                if dur > 0
+                else [1.0]
+            )
+            for k, instante in enumerate(instantes, 1):
+                quadro = _quadro_do_video(
+                    fontes[0], pasta / f"thumb_quadro_{k}.png", instante
+                )
+                if quadro:
+                    quadros.append(quadro)
+            if quadros:
+                return quadros
         for k, fonte in enumerate(fontes, 1):
             dur = _duracao(fonte)
             # Meio do clipe: o começo costuma ser a abertura do material e o
@@ -647,9 +674,12 @@ def gerar_thumbnail(
     (``seo.titulos_do_dia``), usada para a capa não repetir o recorte que todo
     mundo já ocupou.
 
-    `fontes` são arquivos de vídeo LIMPOS para amostrar em vez do vídeo montado
-    — no formato longo, os clipes de cada pauta, porque o vídeo montado tem o
-    painel de manchete fixo na tela e ele apareceria dentro da capa.
+    `fontes` são arquivos de vídeo LIMPOS para amostrar em vez do vídeo montado,
+    porque o vídeo montado tem o painel de manchete fixo na tela e ele
+    apareceria dentro da capa. No formato longo é UM arquivo: o clipe da
+    PAUTA 1 (2026-08-26). `narracao`, no mesmo caminho, é só a fala dessa pauta
+    (`cortes.texto_da_pauta`) — a capa anuncia a pauta por onde o título abre,
+    e recebendo só ela o modelo não tem como anunciar outra.
     """
     if not ident.fonte_disponivel():
         print(f"[thumbnail] aviso: fonte ausente ({ident.FONTE_TITULO}); sem capa.")
