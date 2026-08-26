@@ -75,8 +75,8 @@ conteúdos diferentes.
 
 O ROTEIRO LONGO É O DESENHO DA MONTAGEM (2026-08-25). O vídeo passou a ser
 montado em QUATRO PARTES separadas, coladas no ffmpeg (montagem_longa.py):
-abertura + uma parte por pauta. Isso torna DURAS duas coisas que antes eram
-preferências do prompt, e as duas são conferidas em código antes de a narração
+abertura + uma parte por pauta. Isso torna DURAS três coisas que antes eram
+preferências do prompt, e as três são conferidas em código antes de a narração
 ser paga (`_conferir_estrutura_longa`):
 
   - EXATAMENTE três tópicos. Não é mais uma faixa: três tópicos são três
@@ -84,6 +84,12 @@ ser paga (`_conferir_estrutura_longa`):
   - a `citacao` de CADA tópico existe LITERALMENTE em `texto_video`. Ela deixou
     de ser só o carimbo do capítulo: é o ponto em que o vídeo é PARTIDO. Sem
     ela não há onde cortar, e o roteiro volta para reescrita.
+  - a `citacao` do PRIMEIRO tópico chega até ABERTURA_MAX_PALAVRAS palavras do
+    começo (2026-08-26). A abertura não tem duração própria — ela é o que vier
+    ANTES dessa citação —, então essa citação é o tamanho dela. Sem esta regra
+    a citação podia ser copiada do meio do bloco do tópico 1, e a abertura
+    engolia a pauta: foi o vídeo publicado no canal US em 26/08, com 45,4s de
+    abertura contra os ~10s do desenho.
 
 A ESTRUTURA DO LONGO DEIXOU DE SER A DO SHORT em 2026-08-24, a pedido do
 usuário, que descreveu o resultado anterior como "roteiro e montagem confusos".
@@ -92,9 +98,10 @@ só para o par P:/R: da descrição — ela não é mais falada) e saiu o bloco 
 de payload de carreira no fim. Entraram: (1) a PAUTA FALADA, no máximo 18
 palavras, dizendo em voz alta o que o vídeo vai tratar, na ordem — junto da
 contextualização geral ela forma a ABERTURA, a primeira parte do vídeo, que
-tem que caber em ~10 segundos; (2) TRÊS BATIDAS por pauta — contextualização,
-acontecimento factual e ANÁLISE (campo `analise`), que é a batida que não pode
-faltar; (3) o FECHO como SÍNTESE (campo `sintese`), costurando as três análises
+tem que caber em ~10 segundos — MEDIDOS desde 26/08, aqui em palavras e em
+`manchetes.planejar_partes` em segundos do áudio final; (2) TRÊS BATIDAS por
+pauta — contextualização, acontecimento factual e ANÁLISE (campo `analise`),
+que é a batida que não pode faltar; (3) o FECHO como SÍNTESE (campo `sintese`), costurando as três análises
 em vez de repetir uma delas. A frase de VIRADA entre pautas ganhou peso:
 o pipeline abre uma PAUSA de silêncio antes dela (ver silencio.py), corta o
 vídeo ali e troca manchete e clipe, então ela precisa ser autossuficiente.
@@ -126,6 +133,8 @@ from .config import (
     CURTO_MARGEM_FRAC,
     CURTO_MARGEM_MIN_S,
     CURTO_MIN_S,
+    LONGO_ABERTURA_MAX_S,
+    LONGO_ABERTURA_S,
     LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
     LONGO_NUM_TRENDS,
@@ -158,6 +167,18 @@ PALAVRAS_POR_SEGUNDO = 2.76
 # Piso de palavras como fração do teto: o teto sozinho deixava o modelo
 # entregar metade das palavras e o vídeo sair com metade da duração-alvo.
 FRACAO_MINIMA = 0.85
+# Ritmo mais LENTO já medido numa narração real do formato longo: 2,4
+# palavras/s, no vídeo do canal US de 26/08 (361 palavras faladas em 147,9s de
+# fala). Fica abaixo da faixa registrada em PALAVRAS_POR_SEGUNDO, que é uma
+# MÉDIA — e média não serve para converter um TETO. Aqui o erro barato é
+# reprovar um roteiro que ainda não custou nada, e o caro é deixar passar um
+# texto que, falado devagar, estoura o teto depois da narração já paga.
+RITMO_LENTO_MEDIDO = 2.4
+# Teto de palavras da ABERTURA (pauta falada + contextualização geral), usado na
+# conferência que roda ANTES da narração. É o teto em segundos convertido pelo
+# ritmo lento: passar aqui garante passar na conferência do áudio final
+# (manchetes.planejar_partes), que é a que vale.
+ABERTURA_MAX_PALAVRAS = int(LONGO_ABERTURA_MAX_S * RITMO_LENTO_MEDIDO)
 # Tolerância sobre o teto de palavras antes de pedir ao modelo para encurtar.
 FOLGA_PALAVRAS = 1.15
 # Tentativas de ajuste da faixa de palavras (2026-08-04). Era UMA só, e uma só
@@ -574,8 +595,16 @@ ESQUEMA_ROTEIRO_LONGO = {
                                 "Trecho LITERAL de texto_video (5 a 12 "
                                 "palavras, copiado caractere por caractere, "
                                 "sem audio tags) onde este tópico COMEÇA na "
-                                "narração — a FRASE DE VIRADA que fecha o "
-                                "tópico anterior e nomeia este. É o CORTE do "
+                                "narração. Do SEGUNDO tópico em diante é a "
+                                "FRASE DE VIRADA que fecha o anterior e nomeia "
+                                "este. NO PRIMEIRO TÓPICO NÃO HÁ VIRADA (não "
+                                "existe tópico anterior): copie as PRIMEIRAS "
+                                "palavras do bloco dele, a frase logo depois "
+                                "da contextualização geral da abertura — e "
+                                "nunca uma frase do meio ou do fim do bloco, "
+                                "porque tudo que ficar antes dela vira a "
+                                "ABERTURA do vídeo e ela tem um teto de "
+                                "segundos. É o CORTE do "
                                 "vídeo: o pipeline parte o vídeo em quatro "
                                 "partes exatamente aqui, abre a pausa de "
                                 "silêncio, troca a manchete na tela e troca o "
@@ -872,17 +901,23 @@ NARRAÇÃO:
 10. A ABERTURA é a PAUTA FALADA: as primeiras palavras da narração dizem, em
    no máximo 18 palavras, o que o vídeo vai tratar, nomeando os assuntos na
    mesma ordem em que eles aparecem depois. Somada à contextualização geral,
-   ela tem que caber em cerca de 10 segundos de fala — é a primeira das quatro
-   partes do vídeo. REPROVAM: abrir por outra coisa; preâmbulo de youtuber
+   ela tem que caber em {abertura_palavras} palavras faladas (~{abertura_s:.0f}
+   segundos) — é a primeira das quatro partes do vídeo, e o que vem depois dela
+   já é a primeira pauta. CONTE as palavras da abertura antes de julgar.
+   REPROVAM: abrir por outra coisa; preâmbulo de youtuber
    ("neste vídeo você vai ver", "vamos falar sobre", "fica até o final"); ordem
-   que não bate com a das pautas; e abertura longa demais para 10 segundos.
+   que não bate com a das pautas; e abertura acima do teto de palavras.
 11. Fechamento: síntese que costura as análises das pautas + próximo
    marco a observar. REPROVAM: CTA falado, pedido de inscrição, despedida, e
    fecho que só repete a análise de uma das pautas.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
 problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\
-""".format(topicos_max=TOPICOS_MAX)
+""".format(
+    topicos_max=TOPICOS_MAX,
+    abertura_palavras=ABERTURA_MAX_PALAVRAS,
+    abertura_s=LONGO_ABERTURA_S,
+)
 
 ESQUEMA_MACROTEMAS_RECENTES = {
     "name": "macrotemas_videos_recentes",
@@ -1377,8 +1412,13 @@ ESTRUTURA OBRIGATÓRIA — a PAUTA FALADA e depois UMA PAUTA DE CADA VEZ:
    sobre", "fica até o final") — comece pela coisa. Enquanto você fala isso, os
    títulos dos tópicos aparecem na tela, um a um; por isso a ordem tem que
    bater com a de `topicos`.
-2. CONTEXTUALIZAÇÃO GERAL (~10s): a frase que amarra os três — o que eles têm
-   a ver entre si e por que valem juntos hoje. É a sua TESE dita em voz alta.
+2. CONTEXTUALIZAÇÃO GERAL (UMA frase): a frase que amarra os três — o que eles
+   têm a ver entre si e por que valem juntos hoje. É a sua TESE dita em voz
+   alta. Ela FECHA a abertura: a pauta falada mais esta frase são a primeira
+   das quatro partes do vídeo, e juntas não passam de {abertura_palavras}
+   palavras faladas (~{abertura_s:.0f} segundos de fala) — o pipeline MEDE isso
+   e devolve o roteiro para reescrita se estourar. A frase seguinte já é o
+   tópico 1, e é ela que você copia na `citacao` dele.
 3. AS PAUTAS (o corpo do vídeo): cubra EXATAMENTE {topicos_max} TÓPICOS, os
    mesmos que você listou no campo `topicos` e na mesma ordem. Três, nem mais
    nem menos: o vídeo é montado em QUATRO PARTES separadas (esta abertura mais
@@ -2402,7 +2442,7 @@ TENTATIVAS_ESTRUTURA_LONGA = 2
 def _falhas_de_estrutura(roteiro: dict) -> list[str]:
     """O que impede o roteiro longo de virar as quatro partes da montagem.
 
-    Duas conferências, e as duas são DURAS porque a montagem depende delas
+    TRÊS conferências, e as três são DURAS porque a montagem depende delas
     (montagem_longa.py): o vídeo é partido em quatro (abertura + uma parte por
     pauta), e o ponto de corte de cada parte é o primeiro caractere da
     `citacao` do tópico, localizada por busca LITERAL no texto narrado.
@@ -2412,7 +2452,21 @@ def _falhas_de_estrutura(roteiro: dict) -> list[str]:
       2. a `citacao` de cada tópico existe no `texto_video`, ignorando as audio
          tags entre colchetes (que a narração não fala e o alinhamento não
          traz) e em ordem CRESCENTE — citação que aparece antes da do tópico
-         anterior faria a parte ter duração negativa.
+         anterior faria a parte ter duração negativa;
+      3. a `citacao` do PRIMEIRO tópico chega até ABERTURA_MAX_PALAVRAS
+         palavras faladas do começo (2026-08-26).
+
+    A terceira é nova e é a que faltava. A abertura não tem duração própria: ela
+    é "tudo que vem antes da citação do tópico 1", então a citação do tópico 1
+    NÃO é só o carimbo do capítulo dele — é o tamanho da abertura. Com as duas
+    regras antigas, uma citação copiada do MEIO do bloco do tópico 1 passava
+    limpa, e a abertura engolia a pauta: no canal US em 26/08 saiu um vídeo com
+    45,4s de abertura e 10,2s de pauta 1, contra os ~10s e ~45s do desenho.
+    Nada aqui reprovou aquilo, porque as duas regras antigas estavam satisfeitas.
+
+    Esta conferência mede em PALAVRAS porque roda antes da narração existir; a
+    medição em segundos, no áudio final, é `manchetes.planejar_partes`. As duas
+    existem: esta reprova de graça e com reescrita, a de lá é a rede de baixo.
 
     Devolve a lista de problemas em linguagem de pedido, pronta para voltar ao
     modelo. Vazia = o roteiro monta.
@@ -2453,6 +2507,23 @@ def _falhas_de_estrutura(roteiro: dict) -> list[str]:
                 "seguir a ordem dos tópicos na narração"
             )
             continue
+        # A citação do PRIMEIRO tópico é a borda da ABERTURA: o que vier antes
+        # dela é a primeira parte do vídeo, e o desenho dá ~10s a ela.
+        if k == 1:
+            abertura = _contar_palavras(texto[:pos])
+            if abertura > ABERTURA_MAX_PALAVRAS:
+                problemas.append(
+                    f"a abertura ficou com {abertura} palavras faladas e o "
+                    f"teto é {ABERTURA_MAX_PALAVRAS} (~{LONGO_ABERTURA_S:.0f} "
+                    "segundos de fala): a abertura é TUDO que vem antes da "
+                    f"`citacao` do tópico 1 ('{titulo}'), que hoje é "
+                    f'"{citacao}". Ou a `citacao` do tópico 1 não são as '
+                    "PRIMEIRAS palavras dele — copie a primeira frase do bloco "
+                    "desse tópico, não uma do meio dele —, ou a pauta falada "
+                    "mais a contextualização geral estão longas demais; corte "
+                    "para caber e devolva o texto que sobrar para dentro das "
+                    "pautas, mantendo o total de palavras do roteiro"
+                )
         cursor = pos + 1
     return problemas
 
@@ -2488,7 +2559,11 @@ def _conferir_estrutura_longa(
             "O roteiro não pode ser montado. O vídeo é cortado em QUATRO "
             "PARTES — a abertura e uma parte por tópico —, e o ponto de corte "
             "de cada parte é a `citacao` do tópico, localizada por busca "
-            "LITERAL dentro de texto_video. Reescreva o JSON completo "
+            "LITERAL dentro de texto_video. Repare no que isso significa para "
+            "o tópico 1: a ABERTURA é tudo que vem ANTES da citação dele, "
+            "então essa citação decide o tamanho dela (teto: "
+            f"{ABERTURA_MAX_PALAVRAS} palavras faladas, ~"
+            f"{LONGO_ABERTURA_S:.0f} segundos). Reescreva o JSON completo "
             "corrigindo TODOS os problemas abaixo, mantendo o assunto, o "
             "título, a descrição e o tamanho do texto:\nProblemas:\n- "
             + "\n- ".join(problemas)
@@ -2621,6 +2696,8 @@ def gerar_roteiro(
         formatacao["topicos_max"] = TOPICOS_MAX
         formatacao["minimo_s"] = LONGO_MIN_S
         formatacao["maximo_s"] = LONGO_MAX_S
+        formatacao["abertura_palavras"] = ABERTURA_MAX_PALAVRAS
+        formatacao["abertura_s"] = LONGO_ABERTURA_S
     instrucoes = modelo_instrucoes.format(**formatacao)
 
     resposta = cliente.chat.completions.create(

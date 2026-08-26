@@ -173,6 +173,33 @@ LONGO_VELOCIDADE = 1.0
 # faixa em que a pausa lê como respiro editorial: abaixo de ~0,5 ela some no
 # ritmo da fala, acima de ~1,0 o espectador acha que o vídeo travou.
 LONGO_PAUSA_PAUTA = 0.7
+# ABERTURA E PAUTAS: FAIXA DURA DE DURAÇÃO (2026-08-26).
+#
+# A primeira das quatro partes é a PAUTA FALADA mais a contextualização geral, e
+# o desenho do usuário lhe dá ~10 segundos. Só que ela não tem duração PRÓPRIA:
+# a borda dela é a `citacao` do tópico 1, e TUDO que estiver antes dessa citação
+# vira abertura. Enquanto o único requisito da citação foi "existir literalmente
+# e em ordem crescente", ela podia pousar no meio do bloco do próprio tópico 1 —
+# e aí a abertura engole a pauta.
+#
+# Foi o que saiu no canal US em 26/08 (youtu.be/fciBd532yZY): abertura de 45,4s
+# e pauta 1 de 10,2s, contra ~10s e ~45s do desenho. O painel "COMING UP" ficou
+# 30% do vídeo na tela enquanto a narração já contava a primeira história, e a
+# manchete da pauta 1 entrou quando ela tinha acabado. A regra dos ~10s existia
+# só como texto de prompt e juiz LLM: a auditoria pró-leigo APONTOU o estouro
+# ("excedendo o limite de aproximadamente 10 segundos da regra 10") e o vídeo
+# subiu assim mesmo, porque nada no código media isso.
+#
+# Daqui em diante mede. O teto tem 60% de folga sobre o alvo para absorver a
+# variação de ritmo do TTS sem reprovar roteiro bom; o que ele barra é a ordem
+# de grandeza errada, não o segundo a mais.
+LONGO_ABERTURA_S = 10.0  # alvo do desenho
+LONGO_ABERTURA_MAX_S = 16.0  # teto DURO, medido no áudio final
+# Piso de cada PAUTA no áudio final. Não é estética: uma pauta de 10s é o painel
+# dela aparecendo depois de a história já ter sido contada debaixo do painel da
+# parte anterior. Menos da metade dos ~45s do desenho, porque o roteiro tem
+# liberdade real para dar mais espaço a uma pauta do que a outra.
+LONGO_PAUTA_MIN_S = 20.0
 # Piso de clipes APROVADOS na auditoria para o formato longo: cada uma das três
 # pautas é obrigada a ter o SEU clipe, e nenhum pode servir a duas (desenho do
 # usuário, 2026-08-25) — então três é o piso ARITMÉTICO da montagem, não uma

@@ -36,6 +36,16 @@ devolver lista vazia. O que protege a execução é a conferência de estrutura 
 escritor (`_conferir_estrutura_longa`), que roda ANTES da narração e garante os
 três tópicos com citação literal.
 
+AS DURAÇÕES DO DESENHO SÃO CONFERIDAS AQUI (2026-08-26). O ~10s da abertura e o
+tamanho das pautas eram texto de prompt e nada mais: as bordas das partes saem
+das citações dos tópicos, e enquanto a única regra da citação foi "existir e
+estar em ordem", a do tópico 1 podia pousar no meio do bloco dele. O vídeo do
+canal US de 26/08 saiu com abertura de 45,4s e pauta 1 de 10,2s — o índice
+"ainda neste vídeo" ficou 30% do vídeo na tela enquanto a narração já contava a
+primeira história. `planejar_partes` agora ABORTA fora da faixa
+(config.LONGO_ABERTURA_MAX_S e config.LONGO_PAUTA_MIN_S). É a rede de baixo: a
+de cima é o teto em palavras no escritor, que reprova de graça e com reescrita.
+
 ESTILO — o MESMO da capa (identidade.py): etiqueta de cor chapada com retícula
 Ben-Day, título em grotesca pesada com a desregistragem ciano/magenta e um
 grifo à mão por baixo. O MOVIMENTO é do ffmpeg (montagem_longa.py): o painel
@@ -52,7 +62,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from . import identidade as ident
-from .config import Config
+from .config import (
+    LONGO_ABERTURA_MAX_S,
+    LONGO_ABERTURA_S,
+    LONGO_PAUTA_MIN_S,
+    Config,
+)
 
 # --- Rótulos por canal -------------------------------------------------------
 # Idioma é regra de CANAL (config.IDIOMA_CANAL), nunca inferido: texto na tela é
@@ -80,10 +95,11 @@ ENTRELINHA = 1.14
 ENTRELINHA_INDICE = 1.42  # respiro maior: três linhas coladas viram parágrafo
 TRACKING_FRAC = 0.34  # espaçamento do kicker, fração do tamanho da fonte
 
-# Duração mínima de uma parte para ela ainda ler como parte. Abaixo disso o
-# painel entra e já sai, e o clipe não chega a se estabelecer. Só AVISA — a
-# execução não morre por um roteiro desequilibrado que já foi narrado e pago.
-PARTE_CURTA_S = 6.0
+# A duração mínima de uma parte era PARTE_CURTA_S = 6.0 e só imprimia aviso.
+# Saiu em 2026-08-26: a faixa agora é dura e mora em config.py
+# (LONGO_ABERTURA_MAX_S e LONGO_PAUTA_MIN_S), com os dois lados medidos —
+# o piso não pegava nada com 6s, e não havia TETO nenhum para a abertura,
+# que é o lado por onde o vídeo saiu errado.
 
 
 def _medidor() -> ImageDraw.ImageDraw:
@@ -366,7 +382,10 @@ def planejar_partes(
 
     Levanta SystemExit se a divisão não fechar: sem as quatro partes não existe
     o vídeo que o usuário desenhou, e o que sairia é o bloco corrido que ele
-    rejeitou.
+    rejeitou. Também levanta se as partes existirem mas com as DURAÇÕES
+    erradas — abertura acima de LONGO_ABERTURA_MAX_S ou pauta abaixo de
+    LONGO_PAUTA_MIN_S —, porque quatro partes na proporção errada são o mesmo
+    vídeo errado com outra aparência.
     """
     topicos = roteiro.get("topicos") or []
     # Uma pausa por VIRADA de pauta, e uma parte a mais que as pausas (a
@@ -458,11 +477,35 @@ def planejar_partes(
                 f"{fim - inicio:.2f}s — as viradas de pauta saíram fora de "
                 "ordem na narração; abortando sem publicar."
             )
-        if fim - inicio < PARTE_CURTA_S:
-            print(
-                f"[partes] aviso: '{rotulos[i]}' tem só {fim - inicio:.1f}s "
-                f"(o esperado é acima de {PARTE_CURTA_S:.0f}s) — o roteiro "
-                "distribuiu mal o texto entre as pautas."
+        # FAIXA DE DURAÇÃO DAS PARTES (2026-08-26). Antes daqui só saía um
+        # aviso no log, com piso de 6s, e ele nem chegou a disparar no vídeo
+        # que motivou esta conferência (pauta 1 de 10,2s debaixo de uma
+        # abertura de 45,4s). Aviso em log não segura nada: o cron roda
+        # sozinho, ninguém lê, e o vídeo sobe. Agora aborta.
+        #
+        # É a rede de BAIXO. Quem deveria pegar isto é
+        # `escritor._falhas_de_estrutura`, que mede em palavras antes da
+        # narração e ainda tem reescrita; se chegou aqui, o texto passou no
+        # orçamento de palavras e mesmo assim o áudio saiu fora da faixa —
+        # ritmo do TTS. Cair aqui custa a narração já paga, e é o preço de não
+        # publicar o vídeo errado.
+        if i == 0 and fim - inicio > LONGO_ABERTURA_MAX_S:
+            raise SystemExit(
+                f"A abertura ficou com {fim - inicio:.1f}s e o teto é "
+                f"{LONGO_ABERTURA_MAX_S:.0f}s (o desenho pede ~"
+                f"{LONGO_ABERTURA_S:.0f}s). A abertura é TUDO que vem antes da "
+                "citação do tópico 1, então uma citação copiada do meio do "
+                "bloco dele faz o índice 'ainda neste vídeo' ficar na tela "
+                "enquanto a narração já conta a primeira pauta, e a manchete "
+                "dela entrar quando a história acabou; abortando sem publicar."
+            )
+        if i and fim - inicio < LONGO_PAUTA_MIN_S:
+            raise SystemExit(
+                f"A parte '{rotulos[i]}' ficou com {fim - inicio:.1f}s e o "
+                f"piso é {LONGO_PAUTA_MIN_S:.0f}s — o roteiro distribuiu mal o "
+                "texto entre as pautas, e uma pauta curta demais é a manchete "
+                "dela aparecendo depois de a história já ter sido contada "
+                "debaixo do painel da parte anterior; abortando sem publicar."
             )
         partes.append(
             {
