@@ -115,30 +115,31 @@ def idioma_plausivel(texto: str, publico: str) -> bool:
 # dele não sai. O motivo está nos vídeos publicados — com VIDEO_DURACAO=60 o
 # canal americano vinha entregando Shorts de 17 a 35 segundos, porque o
 # orçamento de palavras só existia como pedido no prompt e o modelo entregava
-# metade dele. O piso é conferido em DOIS lugares, e é a segunda conferência
-# que vale: na faixa de palavras do roteiro (escritor.py, barato, antes de
-# gastar TTS) e na duração REAL da narração (main.py, depois do corte de
-# silêncios) — a primeira orienta, a segunda proíbe.
+# PISO DURO DO SHORT: REMOVIDO em 2026-08-28, a pedido do usuário.
 #
-# 21s guarda a mesma proporção que 50 guardava para 60 (~85% do alvo): é a
-# folga que a variação de ritmo do TTS consome sem que o vídeo deixe de ser o
-# Short de 25 segundos que foi pedido.
-CURTO_MIN_S = 21
-# Folga sobre o piso na hora de calcular o piso de PALAVRAS: o ritmo real do
-# TTS varia de narração para narração, então mirar exatamente em CURTO_MIN_S
-# faz metade das execuções cair logo abaixo dele e abortar depois de já ter
-# pago a narração.
+# Era CURTO_MIN_S = 21 (2026-08-04): Short mais curto que isso não era
+# publicado, a execução abortava depois de a narração já ter sido paga. Ele
+# fazia sentido quando o alvo de duração era FIXO e o material se esticava para
+# cobri-lo — ali um vídeo curto era defeito de ROTEIRO, e o piso o pegava.
 #
-# Era um valor ABSOLUTO (7 segundos, calibrado em 2026-08-05 contra o alvo de
-# 60s) e virou FRAÇÃO da duração-alvo em 2026-08-09, quando o alvo caiu para 25:
-# 7 segundos de folga sobre um vídeo de 25 empurrariam o piso de palavras para
-# CIMA do teto e o roteiro sairia com 29 segundos, não com os 25 pedidos. O que
-# a margem cobre é proporcional por natureza — nas 8 narrações reais dos crons
-# o ritmo final variou ±11% em torno da média (3,09 a 3,84 palavras/s) —, então
-# a fração é a forma certa da constante; 0,12 é aquele ±11% com um resto de
-# cushion, e reproduz a folga antiga (7,2s) no alvo antigo de 60s.
-CURTO_MARGEM_FRAC = 0.12
-CURTO_MARGEM_MIN_S = 2.0  # piso absoluto da folga, para alvos muito curtos
+# O que o revogou foi a virada do mesmo dia: sem loop, o material passou a
+# ditar o tamanho do vídeo (ver `alvo_pelo_material`). Com isso o piso deixou
+# de medir defeito e passou a medir a PAUTA — e mediu mal. A medição em 50
+# curtidas reais mostrou clipe mediano de 17s e só 27% delas chegando aos ~24s
+# que o piso exigia: as outras 73% seriam descartadas não por serem pauta ruim,
+# mas por terem clipe curto. O piso estava, na prática, escolhendo a pauta pelo
+# comprimento do vídeo — critério que ninguém quis.
+#
+# Agora o Short dura o que a pauta dá. O que ainda limita por baixo não é uma
+# regra de formato, é material de verdade: a auditoria descarta clipe com menos
+# de PISO_DUR_UTIL_S (5s) de trecho útil, então o piso efetivo é o que sobrar
+# disso — e ele é consequência, não decreto.
+#
+# CURTO_MARGEM_FRAC e CURTO_MARGEM_MIN_S saíram junto. Eram a folga que o
+# orçamento de palavras somava ao piso ABSOLUTO para o roteiro não cair logo
+# abaixo dele depois de a narração já ter sido paga. Sem piso absoluto não há
+# folga a calcular: o que restou no orçamento é FRACAO_MINIMA (escritor.py),
+# uma fração do alvo daquela pauta — proporcional por construção.
 
 # --- O MATERIAL DIMENSIONA O ROTEIRO (2026-08-28) ---------------------------
 # Pedido do usuário, na mesma frase que tirou o loop do Short: "não coloque o
@@ -161,34 +162,43 @@ CURTO_MARGEM_MIN_S = 2.0  # piso absoluto da folga, para alvos muito curtos
 # montagem.
 MATERIAL_MARGEM = 1.15
 
+# Limite TÉCNICO de duração, em segundos — não é um piso editorial (esse foi
+# removido; ver acima). É só o ponto abaixo do qual o orçamento de palavras não
+# forma nem uma frase e a montagem não teria o que cortar. Coincide de
+# propósito com PISO_DUR_UTIL_S da auditoria, que é o menor clipe que ela
+# aprova: abaixo dele não existe material, então não existe vídeo.
+DUR_MINIMA_TECNICA_S = 5
 
-def alvo_pelo_material(cfg: "Config", segundos_video: float | None) -> int | None:
-    """Duração-alvo do roteiro dada a metragem da pauta; None se ela não serve.
 
-    None quer dizer "esta pauta não sustenta nem o piso do formato": nem com o
-    roteiro no mínimo o material cobriria a tela. Quem chama tira a candidata
-    da disputa (`selecionar_trend`) em vez de escrever um roteiro que a
-    montagem não conseguiria vestir.
+def alvo_pelo_material(cfg: "Config", segundos_video: float | None) -> int:
+    """Duração-alvo do roteiro dada a metragem da pauta, em segundos.
+
+    NUNCA RECUSA uma pauta desde 2026-08-28, quando o piso duro do Short foi
+    removido a pedido do usuário. Antes esta função devolvia None para a pauta
+    que não sustentava 21 segundos, e a candidata saía da disputa — o que, na
+    prática, escolhia a pauta pelo comprimento do clipe (ver o bloco do piso
+    removido, acima). Agora o Short simplesmente dura o que a pauta dá: 9
+    segundos de clipe rendem um Short de 8.
 
     Só o SHORT é dimensionado assim. O formato longo mantém a faixa dura de
     LONGO_MIN_S a LONGO_MAX_S e continua repetindo clipe em loop: lá cada pauta
     ocupa uma parte inteira do vídeo e o material nunca daria conta de 120s sem
     repetição — o pedido do usuário foi explícito sobre o Short.
 
-    Metragem desconhecida (0 ou None) devolve o alvo cheio, que é o
-    comportamento anterior a esta mudança. É o caso do GIF animado, cuja
-    duração o X não informa: sem medida não há o que dimensionar, e chutar
-    veta pauta boa.
+    Metragem desconhecida (0 ou None) devolve o alvo cheio. É o caso do GIF
+    animado, cuja duração o X não informa: sem medida não há o que dimensionar,
+    e chutar encolheria o vídeo à toa.
+
+    O piso de 1 segundo é aritmético, não editorial: ele existe só para o
+    orçamento de palavras não virar zero. Quem de fato limita por baixo é a
+    auditoria, que descarta clipe com menos de 5s de trecho útil.
     """
     if cfg.formato != "curto":
         return cfg.video_duracao
     segundos = float(segundos_video or 0)
     if segundos <= 0:
         return cfg.video_duracao
-    cabe = int(segundos / MATERIAL_MARGEM)
-    if cabe < CURTO_MIN_S:
-        return None
-    return min(cfg.video_duracao, cabe)
+    return max(1, min(cfg.video_duracao, int(segundos / MATERIAL_MARGEM)))
 
 
 def segundos_uteis(clipe: dict) -> float:
@@ -809,30 +819,27 @@ def carregar_config(exige_lista: bool = True) -> Config:
             "pelas contas seguidas não existe mais)."
         )
 
-    # A duração final segue o áudio da narração; este valor orienta o
-    # tamanho do roteiro gerado. O piso é CURTO_MIN_S porque Short abaixo
-    # disso está proibido — deixar VIDEO_DURACAO abaixo do piso só produziria
-    # execuções que abortam depois de pagar a narração.
-    if not CURTO_MIN_S <= cfg.video_duracao <= 180:
+    # A duração final segue o áudio da narração; este valor é o TETO do
+    # roteiro, não a meta (o material da pauta é que dimensiona — ver
+    # `alvo_pelo_material`). O limite de baixo é técnico: abaixo de
+    # DUR_MINIMA_TECNICA_S o orçamento de palavras não forma nem uma frase.
+    if not DUR_MINIMA_TECNICA_S <= cfg.video_duracao <= 180:
         raise SystemExit(
-            f"VIDEO_DURACAO deve estar entre {CURTO_MIN_S} e 180 segundos "
-            f"(o Short tem piso duro de {CURTO_MIN_S}s; recebido: "
-            f"{cfg.video_duracao})."
+            f"VIDEO_DURACAO deve estar entre {DUR_MINIMA_TECNICA_S} e 180 "
+            f"segundos (recebido: {cfg.video_duracao})."
         )
     if not 0.5 <= cfg.velocidade <= 2.0:
         raise SystemExit(
             "VIDEO_VELOCIDADE deve estar entre 0.5 e 2.0 (1.0 = velocidade "
             f"normal; recebido: {cfg.velocidade})."
         )
-    # O teto de clipe do Short precisa caber o vídeo inteiro em UM clipe: com
-    # o loop fora, um teto abaixo do piso duro obrigaria toda pauta a ter dois
-    # clipes aprovados, e o piso da auditoria no curto é de UM.
-    if not CURTO_MIN_S <= cfg.curto_max_dur_clipe_s <= 600:
+    # Teto de clipe do Short. O limite de baixo deixou de ser o piso duro do
+    # formato (removido em 2026-08-28) e passou a ser o mesmo limite técnico do
+    # alvo: um teto abaixo disso descartaria todo clipe aproveitável.
+    if not DUR_MINIMA_TECNICA_S <= cfg.curto_max_dur_clipe_s <= 600:
         raise SystemExit(
-            f"CURTO_MAX_DUR_CLIPE deve estar entre {CURTO_MIN_S} e 600 "
-            f"segundos — abaixo do piso duro do Short ({CURTO_MIN_S}s) nenhum "
-            "clipe sozinho cobriria o vídeo, e a montagem não repete mais "
-            f"clipe em loop; recebido: {cfg.curto_max_dur_clipe_s}."
+            f"CURTO_MAX_DUR_CLIPE deve estar entre {DUR_MINIMA_TECNICA_S} e "
+            f"600 segundos (recebido: {cfg.curto_max_dur_clipe_s})."
         )
     if not 1 <= cfg.x_curtidos_dias <= 90:
         raise SystemExit(

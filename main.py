@@ -112,18 +112,22 @@ Fluxo:
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - padrão: Short vertical 1080x1920 de ATÉ ~25s (era 60 até 2026-08-09), com
-  legendas queimadas e narração ACELERADA (VIDEO_VELOCIDADE). PISO DURO de 21
-  segundos: Short mais curto que isso não é publicado, a execução aborta. Os
-  Shorts INTERCALAM temas — o macrotema do Short anterior sai da disputa da
-  seleção.
+  legendas queimadas e narração ACELERADA (VIDEO_VELOCIDADE). Os Shorts
+  INTERCALAM temas — o macrotema do Short anterior sai da disputa da seleção.
   O MATERIAL DIMENSIONA O ROTEIRO desde 2026-08-28 (pedido do usuário): o
   Short não repete mais clipe em loop, então os ~25s viraram um TETO e não uma
   meta — o roteiro é escrito para os segundos de clipe que a pauta tem
   (`alvo_pelo_material`, config.py), a auditoria confere se o material aprovado
   cobre a narração e a montagem encaixa as janelas no que existe
-  (`_encaixar_no_material`, edicao.py). Pauta sem clipe para o piso de 21s sai
-  da disputa antes de custar roteiro. O ZOOM INTELIGENTE que transforma clipe
+  (`_encaixar_no_material`, edicao.py). O ZOOM INTELIGENTE que transforma clipe
   horizontal em vertical (enquadramento.py) continua valendo.
+  SEM PISO DE DURAÇÃO desde 2026-08-28 (pedido do usuário): o piso duro de 21s
+  que valia desde 2026-08-04 foi REMOVIDO. Ele fazia sentido quando o alvo era
+  fixo e vídeo curto era defeito de ROTEIRO; depois que o material passou a
+  ditar o tamanho, ele passou a descartar a PAUTA de clipe curto — medido em 50
+  curtidas reais, 73% delas. O Short agora dura o que a pauta dá, e o que
+  limita por baixo é a auditoria (clipe com menos de 5s de trecho útil sai),
+  não uma regra de formato. No formato LONGO o piso continua (LONGO_MIN_S).
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 120 a 150 segundos
   (o piso de 120s é duro: abaixo dele a execução aborta), SEM legendas e em
   velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
@@ -176,7 +180,6 @@ from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
 from pipeline.classificacao import classificar_trends, filtrar_por_macrotema
 from pipeline.config import (
-    CURTO_MIN_S,
     LONGO_MAX_S,
     LONGO_MIN_CLIPES_APROVADOS,
     LONGO_MIN_S,
@@ -556,34 +559,32 @@ def main() -> None:
     largura, altura = cfg.video_largura, cfg.video_altura
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
-    # PISO DURO DE DURAÇÃO (2026-08-04, pedido do usuário): Short abaixo de
-    # CURTO_MIN_S e vídeo longo abaixo de LONGO_MIN_S estão PROIBIDOS — não
-    # saem, em vez de sair curtos como vinha acontecendo (o canal americano
-    # publicou Shorts de 17 a 35 segundos com duração-alvo de 60).
+    # PISO DURO DE DURAÇÃO: vale SÓ NO FORMATO LONGO desde 2026-08-28.
     #
-    # A conferência é aqui, e não só na faixa de palavras do roteiro, porque
-    # palavra não é segundo: o ritmo real do TTS varia ~25% de narração para
-    # narração, e só depois de narrar e cortar os silêncios se sabe a duração
-    # de verdade. Custa a narração já paga — e é o preço certo, porque o
-    # roteirista já teve TENTATIVAS_FAIXA_PALAVRAS chances de acertar o
-    # tamanho, e o que sobra aqui é um vídeo que não deveria ir ao ar.
+    # No Short ele foi REMOVIDO a pedido do usuário. Existia desde 2026-08-04,
+    # quando um vídeo curto era defeito de ROTEIRO — o alvo era fixo e o
+    # material se esticava para cobri-lo. Depois que o loop saiu e o material
+    # passou a ditar o tamanho, o mesmo piso deixou de medir defeito e passou a
+    # medir a PAUTA: descartava a candidata de clipe curto, que é critério que
+    # ninguém escolheu. Agora o Short dura o que a pauta dá.
+    #
+    # No LONGO nada muda: lá o alvo continua fixo (120-150s), o clipe ainda
+    # repete em loop e narração curta segue sendo defeito de roteiro. A
+    # conferência é aqui, e não só na faixa de palavras, porque palavra não é
+    # segundo: o ritmo do TTS varia ~25%, e só depois de narrar e cortar os
+    # silêncios se sabe a duração de verdade.
     #
     # O teto NÃO aborta: vídeo comprido demais é um defeito de retenção, não de
     # formato, e jogar fora uma execução inteira por 3 segundos de fala a mais
     # seria caro sem ninguém ganhar nada.
-    piso_duracao = LONGO_MIN_S if cfg.formato == "longo" else CURTO_MIN_S
-    if duracao < piso_duracao:
+    if cfg.formato == "longo" and duracao < LONGO_MIN_S:
         raise SystemExit(
-            f"Narração de {duracao:.1f}s abaixo do piso de {piso_duracao}s do "
-            f"formato {cfg.formato} — vídeo mais curto que isso está proibido; "
+            f"Narração de {duracao:.1f}s abaixo do piso de {LONGO_MIN_S}s do "
+            "formato longo — vídeo mais curto que isso está proibido; "
             "abortando sem publicar. O roteiro saiu curto demais mesmo depois "
-            "das tentativas de ajuste: as alavancas são subir "
-            + (
-                "LONG_DURACAO (alvo dentro da faixa) "
-                if cfg.formato == "longo"
-                else "VIDEO_DURACAO "
-            )
-            + "ou usar um TEXT_MODEL que respeite melhor o piso de palavras."
+            "das tentativas de ajuste: as alavancas são subir LONG_DURACAO "
+            "(alvo dentro da faixa) ou usar um TEXT_MODEL que respeite melhor "
+            "o piso de palavras."
         )
     if cfg.formato == "longo" and duracao > LONGO_MAX_S:
         print(

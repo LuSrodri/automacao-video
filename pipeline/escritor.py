@@ -130,9 +130,6 @@ from openai import OpenAI
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import (
     AVISO_DADOS_EXTERNOS,
-    CURTO_MARGEM_FRAC,
-    CURTO_MARGEM_MIN_S,
-    CURTO_MIN_S,
     LONGO_ABERTURA_MAX_S,
     LONGO_ABERTURA_S,
     LONGO_MAX_S,
@@ -142,7 +139,6 @@ from .config import (
     ENGAJAMENTO_MINIMO,
     RETENCAO_MINIMA,
     Config,
-    alvo_pelo_material,
 )
 from .cortes import localizar_citacao
 from .seo import limpar_tags, resumo_para_prompt
@@ -2199,38 +2195,13 @@ def selecionar_trend(
             )
         candidatas = com_material
 
-    # PORTÃO DE METRAGEM DO SHORT (2026-08-28). Companheiro do fim do loop na
-    # montagem: sem repetir clipe, uma pauta com 12 segundos de material não
-    # rende um Short de 21 (o piso duro do formato) — ela renderia 12 segundos
-    # de vídeo e 9 de tela vazia. `alvo_pelo_material` devolve None nesse caso,
-    # e a candidata sai aqui, antes de custar roteiro, notícias e visão.
-    #
-    # Note que este portão não existe para as candidatas SEM medida: clipe cuja
-    # duração o X não informou (GIF animado) devolve o alvo cheio e passa, que
-    # é o comportamento anterior. O portão barra quem foi medido e não coube.
-    if not longo:
-        com_metragem = [
-            t for t in candidatas
-            if alvo_pelo_material(cfg, t.get("segundos_video")) is not None
-        ]
-        if len(com_metragem) < len(candidatas):
-            print(
-                f"[veto] {len(candidatas) - len(com_metragem)} candidata(s) "
-                f"com menos de ~{CURTO_MIN_S}s de clipe fora da disputa (o "
-                "Short não repete mais clipe em loop, então o material é o "
-                f"teto do vídeo; {len(com_metragem)} seguem)."
-            )
-        if not com_metragem:
-            raise SystemExit(
-                "Nenhuma candidata de hoje tem clipe suficiente para o piso de "
-                f"{CURTO_MIN_S}s do Short — a montagem não repete mais clipe em "
-                "loop, então o vídeo não teria imagem para o tempo inteiro. "
-                "As alavancas, nesta ordem: curtir no X posts com clipe mais "
-                "longo (a pauta sai das curtidas), subir CURTO_MAX_DUR_CLIPE se "
-                "o teto de clipe estiver cortando material bom, ou pôr na lista "
-                "contas que publiquem vídeo."
-            )
-        candidatas = com_metragem
+    # PORTÃO DE METRAGEM DO SHORT: existiu por algumas horas em 2026-08-28 e
+    # foi removido no mesmo dia, junto com o piso duro que lhe dava sentido.
+    # Ele tirava da disputa a candidata com menos de ~24s de clipe; medido
+    # contra 50 curtidas reais, isso descartava 73% delas — não por serem pauta
+    # ruim, mas por terem clipe curto. Era o comprimento do vídeo escolhendo a
+    # pauta. Agora o Short dura o que a pauta dá e nenhuma candidata é barrada
+    # por tamanho de material.
 
     # Não há portão de QUANTIDADE no curto: a exigência de 2 posts com clipe,
     # testada em 2026-08-17, estreitou a disputa (7 de 8 candidatas fora numa
@@ -2449,17 +2420,17 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
             int((LONGO_MAX_S - MARGEM_LONGO_MAX_S) * ritmo),
         )
     limite = int(cfg.video_duracao * ritmo)
-    # A folga sobre o piso duro é PROPORCIONAL à duração-alvo (ver
-    # CURTO_MARGEM_FRAC): o que ela cobre é a variação de RITMO do TTS, que é
-    # percentual, e uma folga absoluta calibrada para 60s estouraria o teto de
-    # um alvo de 25.
-    margem = max(CURTO_MARGEM_MIN_S, cfg.video_duracao * CURTO_MARGEM_FRAC)
-    piso = max(
-        int(limite * FRACAO_MINIMA),
-        int((CURTO_MIN_S + margem) * ritmo),
-    )
-    # Alvo baixo demais (VIDEO_DURACAO perto do piso) deixaria o piso passar do
-    # teto e a faixa vazia; nesse caso o teto cede, porque o piso é a regra.
+    # O TERMO ABSOLUTO SAIU em 2026-08-28, com o piso duro do formato. Ele era
+    # `(CURTO_MIN_S + margem) * ritmo`, e existia para o roteiro nunca sair
+    # abaixo dos 21 segundos proibidos. Sem piso não há o que proteger: o alvo
+    # já é o tamanho que a pauta comporta, e exigir um mínimo absoluto em cima
+    # dele mandaria o roteirista escrever mais texto do que cabe em imagem —
+    # exatamente o loop que esta mudança tirou.
+    #
+    # O que fica é o piso PROPORCIONAL (FRACAO_MINIMA): o roteiro não pode sair
+    # muito abaixo do alvo DAQUELA pauta. Isso continua sendo defeito de
+    # roteiro, e continua valendo.
+    piso = int(limite * FRACAO_MINIMA)
     return piso, max(limite, piso)
 
 
