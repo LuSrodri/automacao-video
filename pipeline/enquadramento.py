@@ -24,13 +24,19 @@ ou sem OpenCV instalado, `planejar` devolve None e a montagem segue pelo
 caminho de sempre. Isto é acabamento, não credencial: falha aqui degrada, não
 aborta (ao contrário da diretriz de fail-fast que vale para API e chave).
 
-COMO A TRAJETÓRIA CHEGA NO FFMPEG. Não por `sendcmd`: os clipes entram com
-`-stream_loop -1` (edicao.py) e comando de sendcmd dispara uma vez só, morrendo
-no primeiro reinício do clipe. Em vez disso a trajetória vira EXPRESSÃO no `x`
-do filtro `crop`, que o ffmpeg reavalia a cada quadro, no mesmo idioma piecewise
-que `edicao._expr_progresso` já usa. Quando o clipe é mais curto que a janela em
-que fica no ar, o tempo entra como `mod(t,span)` para a trajetória dar a volta
-junto com a imagem.
+COMO A TRAJETÓRIA CHEGA NO FFMPEG. Não por `sendcmd`: no formato longo os
+clipes entram com `-stream_loop -1` (edicao.py) e comando de sendcmd dispara uma
+vez só, morrendo no primeiro reinício do clipe. Em vez disso a trajetória vira
+EXPRESSÃO no `x` do filtro `crop`, que o ffmpeg reavalia a cada quadro, no mesmo
+idioma piecewise que `edicao._expr_progresso` já usa. Quando o clipe é mais
+curto que a janela em que fica no ar, o tempo entra como `mod(t,span)` para a
+trajetória dar a volta junto com a imagem.
+
+O `mod` ficou inerte NO SHORT desde 2026-08-28, e de propósito: o loop saiu do
+formato curto e as janelas passam a ser encaixadas no material
+(`edicao._encaixar_no_material`), então lá a janela nunca é mais longa que o
+clipe e o tempo entra como `t` puro. O ramo continua vivo para o formato longo,
+que segue repetindo clipe.
 
 POR QUE A EXPRESSÃO É CURTA. Ela só cabe porque a suavização não é um filtro
 contínuo (savgol, média móvel) e sim um AJUSTE POR PATAMARES: a série de alvos é

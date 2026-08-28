@@ -321,6 +321,124 @@ def _calcular_janelas(
     return janelas
 
 
+def _material_util(sobreposicao: dict) -> float | None:
+    """Segundos que a montagem consegue tirar de um clipe; None se não der para medir.
+
+    Conta do `inicio_util_s` (por onde a montagem entra) até o fim do arquivo.
+    Falha de ffprobe devolve None, e quem chama trata isso como "não sei" — o
+    ajuste de janelas é acabamento e não pode derrubar a montagem.
+    """
+    try:
+        dur = duracao_audio(Path(sobreposicao["caminho"]))
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        return None
+    inicio = float(sobreposicao.get("inicio_util_s") or 0.0)
+    return max(0.0, float(dur) - inicio)
+
+
+def _tetos_do_material(
+    sobreposicoes: list[dict], duracao: float
+) -> list[float]:
+    """Quanto tempo de tela cada clipe aguenta sem se repetir, em segundos.
+
+    Desconta o CROSSFADE, que a montagem renderiza ALÉM do fim da janela (ver
+    `dur_render`). Clipe que não deu para medir recebe a narração inteira como
+    teto — sem medida ele não limita nada, que é o comportamento seguro aqui.
+    """
+    tetos = []
+    for s in sobreposicoes:
+        util = _material_util(s)
+        tetos.append(duracao if util is None else max(0.0, util - CROSSFADE))
+    return tetos
+
+
+def _encaixar_no_material(
+    sobreposicoes: list[dict],
+    janelas: list[tuple[float, float]],
+    duracao: float,
+    tetos: list[float],
+) -> list[tuple[float, float]]:
+    """Reparte a narração de modo que nenhum clipe fique mais tempo do que tem.
+
+    SÓ O SHORT passa por aqui, e só desde 2026-08-28 — é a metade de montagem
+    do pedido "não coloque o vídeo em loop várias vezes, em vez disso, adeque o
+    roteiro dentro do que cabe naquele vídeo selecionado da pauta". A outra
+    metade (o roteiro nascer do tamanho do material) está em main.py e
+    config.py; esta aqui é a garantia de que, mesmo assim, nenhuma janela
+    ultrapasse o clipe que a preenche.
+
+    As duas camadas são necessárias porque o planejador de cortes (cortes.py) é
+    um LLM lendo a narração: ele decide ONDE cada clipe entra pelo sentido do
+    texto, não pela metragem, e nada o impede de dar 18 segundos ao clipe de 9.
+    Antes isso era invisível — `-stream_loop -1` repetia o clipe e o espectador
+    via o mesmo pedaço duas vezes. Sem o loop, seria tela congelada no último
+    quadro, que é pior. Então a janela cede.
+
+    O ajuste é uma REPARTIÇÃO COM TETO, não um corte: o que sobra de uma janela
+    estourada é redistribuído proporcionalmente entre as que ainda têm folga, e
+    a soma continua sendo a narração inteira. Ele só roda quando alguma janela
+    de fato estoura; no caso normal (clipe mais longo que a janela) devolve as
+    janelas como vieram, e a decisão do planejador fica de pé.
+
+    Quando o material não dá para a narração inteira nem redistribuindo, as
+    janelas voltam como vieram, o aviso sai no log e a montagem RELIGA O LOOP
+    nos clipes que estouram — não por preferência, mas porque os overlays usam
+    `eof_action=pass` e clipe que acaba vira tela PRETA, não quadro congelado.
+    Quem deveria ter evitado esse desfecho é a conferência de metragem em
+    main.py, ANTES do TTS; aqui é fim de linha, e derrubar a execução com a
+    narração já paga seria pior que repetir um clipe.
+    """
+    n = len(sobreposicoes)
+    if n < 1:
+        return janelas
+
+    larguras = [fim - ini for ini, fim in janelas]
+    if all(larg <= teto + 0.01 for larg, teto in zip(larguras, tetos)):
+        return janelas
+
+    if sum(tetos) < duracao - 0.01:
+        print(
+            f"[edicao] aviso: os {n} clipe(s) somam {sum(tetos):.1f}s de "
+            f"material para {duracao:.1f}s de narração — a tela não fecha sem "
+            "repetir clipe. As janelas ficam como vieram; a conferência de "
+            "metragem (main.py) é que deveria ter barrado esta pauta."
+        )
+        return janelas
+
+    # Repartição com teto: quem estourou é fixado no seu teto e o excedente vai
+    # para quem tem folga, na proporção da janela que o planejador desenhou.
+    # Repete porque redistribuir pode estourar um segundo clipe.
+    alocado = list(larguras)
+    for _ in range(n):
+        excedente = sum(
+            max(0.0, larg - teto) for larg, teto in zip(alocado, tetos)
+        )
+        if excedente <= 0.01:
+            break
+        alocado = [min(larg, teto) for larg, teto in zip(alocado, tetos)]
+        folgas = [max(0.0, teto - larg) for larg, teto in zip(alocado, tetos)]
+        total_folga = sum(folgas)
+        if total_folga <= 0.01:
+            break
+        for i, folga in enumerate(folgas):
+            alocado[i] += excedente * (folga / total_folga)
+
+    ajustadas: list[tuple[float, float]] = []
+    t = 0.0
+    for i, larg in enumerate(alocado):
+        fim = duracao if i == n - 1 else min(t + larg, duracao)
+        ajustadas.append((t, fim))
+        t = fim
+    mudou = [
+        f"{Path(s['caminho']).name}: {b - a:.1f}s -> {d - c:.1f}s"
+        for s, (a, b), (c, d) in zip(sobreposicoes, janelas, ajustadas)
+        if abs((b - a) - (d - c)) > 0.2
+    ]
+    if mudou:
+        print("[edicao] janelas encaixadas no material — " + "; ".join(mudou))
+    return ajustadas
+
+
 def intervalos_imagens(
     sobreposicoes: list[dict], duracao: float
 ) -> list[tuple[float, float]]:
@@ -483,6 +601,16 @@ def montar_video(
             + ", ".join(Path(s["caminho"]).name for s in estaticas)
         )
     janelas = _calcular_janelas(sobreposicoes, duracao)
+    # O SHORT NÃO REPETE MAIS CLIPE (2026-08-28, pedido do usuário): as janelas
+    # são encaixadas no material antes de virar comando de ffmpeg. O formato
+    # longo segue como estava — lá cada pauta ocupa uma parte inteira do vídeo
+    # e o loop é o que permite um clipe de 12s sustentar 30 segundos de análise.
+    tetos_material: list[float] = []
+    if formato != "longo":
+        tetos_material = _tetos_do_material(sobreposicoes, duracao)
+        janelas = _encaixar_no_material(
+            sobreposicoes, janelas, duracao, tetos_material
+        )
     pares = list(zip(sobreposicoes, janelas))
     n = len(pares)
     max_exibicao = MAX_EXIBICAO_LONGO if formato == "longo" else MAX_EXIBICAO
@@ -552,7 +680,33 @@ def montar_video(
             if inicio_util is not None and float(inicio_util) > 0
             else []
         )
-        comando += ["-stream_loop", "-1", *seek, "-t", f"{dur_render:.2f}",
+        # LOOP SÓ NO FORMATO LONGO (2026-08-28). No Short ele foi removido a
+        # pedido: repetir o clipe era o que deixava o mesmo pedaço de 4s passar
+        # seis vezes na tela. Agora o material manda — o roteiro é escrito para
+        # o tempo de clipe que a pauta tem (main.py), a auditoria confere se
+        # sobrou material para a narração inteira, e `_encaixar_no_material`
+        # reparte as janelas dentro do que existe.
+        #
+        # SOBRA UMA REDE, e ela precisa ser o loop mesmo: os overlays deste
+        # grafo usam `eof_action=pass`, então clipe que ACABA no meio da janela
+        # não congela o último quadro — ele some, e o que aparece embaixo é a
+        # base PRETA. Tela preta é pior que repetição. Por isso o loop volta
+        # CLIPE A CLIPE, e só naquele cuja janela o material não cobre — o caso
+        # que `_encaixar_no_material` já denunciou no log por não ter conseguido
+        # encaixar. No caminho normal nenhum clipe se repete, que é o pedido.
+        estoura = (
+            formato != "longo"
+            and i < len(tetos_material)
+            and dur_render > tetos_material[i] + CROSSFADE + 0.01
+        )
+        laco = ["-stream_loop", "-1"] if formato == "longo" or estoura else []
+        if estoura:
+            print(
+                f"[edicao] aviso: {Path(s['caminho']).name} tem material para "
+                f"{tetos_material[i]:.1f}s e a janela pede {dur_render:.1f}s; "
+                "ele volta a repetir em loop para a tela não ficar preta."
+            )
+        comando += [*laco, *seek, "-t", f"{dur_render:.2f}",
                     "-i", str(s["caminho"])]
 
         idx = i + 2

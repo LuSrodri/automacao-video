@@ -141,12 +141,21 @@ TIPOS_VETADOS_CLIPE: set[str] = {"cartela_ou_manchete", "gravacao_de_tela"}
 LIMITE_FALANDO = 0.5
 
 # PISO DE TRECHO ÚTIL (2026-08-23), em segundos: clipe mais curto que isto não
-# sustenta a tela. A montagem repete o clipe em loop para cobrir a janela
-# (`-stream_loop -1` em edicao.py), então um clipe curto não some do vídeo — ele
-# se REPETE, e o espectador vê o mesmo pedacinho três, cinco, sete vezes. No
-# Short da Linux Foundation o trecho útil media 4s e ficou 27,9s na tela: seis
-# voltas do mesmo material. O aviso que existia lá ("clipe fica 27.9s na tela,
-# acima do alvo de 15s") é só um print, e print não barra nada.
+# sustenta a tela. No formato LONGO a montagem repete o clipe em loop para
+# cobrir a janela (`-stream_loop -1` em edicao.py), então um clipe curto não
+# some do vídeo — ele se REPETE, e o espectador vê o mesmo pedacinho três,
+# cinco, sete vezes. No Short da Linux Foundation o trecho útil media 4s e ficou
+# 27,9s na tela: seis voltas do mesmo material. O aviso que existia lá ("clipe
+# fica 27.9s na tela, acima do alvo de 15s") é só um print, e print não barra
+# nada.
+#
+# NO SHORT o loop foi removido em 2026-08-28 (pedido do usuário), e este piso
+# passou a ter outro papel lá: sem repetição, o clipe curto não vira material
+# repetido, vira material que ACABA — e quem trata isso é a conferência de
+# metragem em main.py, que soma o trecho útil dos aprovados contra a duração do
+# roteiro. O piso continua valendo nos dois formatos porque a razão original
+# dele sobrevive à mudança: 4 segundos de imagem não seguram uma pauta, com ou
+# sem loop.
 #
 # O piso mora aqui, e não em edicao.py, por causa do custo: a montagem é o fim
 # da linha — barrar ali jogaria fora a execução inteira, com a narração já paga.

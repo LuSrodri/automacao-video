@@ -201,3 +201,47 @@ def classificar_trends(cfg: Config, trends: list[dict]) -> list[dict]:
         )
         anotadas.append(dict(trend, imagem_mental=imagem, macrotema=macrotema))
     return anotadas
+
+
+# Macrotema que NÃO é macrotema: "outro" é o balde do que não coube em nenhum
+# rótulo da lista, e a instrução manda usá-lo com parcimônia justamente por
+# isso. Ver `filtrar_por_macrotema`.
+MACROTEMA_DESCARTE = "outro"
+
+
+def filtrar_por_macrotema(trends: list[dict]) -> list[dict]:
+    """Deixa passar só as candidatas de um macrotema DEFINIDO; muta nada.
+
+    Pedido do usuário em 2026-08-28, junto com a virada das curtidas: a pauta
+    tem de estar "dentro nos macrotemas que a gente definiu". Como a lista
+    cobre todos os assuntos desde 2026-08-16 (o canal não tem recorte
+    temático), o que este filtro faz de fato é derrubar o BALDE: a candidata
+    que o classificador não conseguiu pôr em nenhum dos dezesseis rótulos.
+
+    O corte tem consequência prática além da editorial, e é ela que o
+    justifica: "outro" não entra no RODÍZIO de temas dos Shorts (escritor.py) —
+    um Short de "outro" seguido de outro Short de "outro" não é barrado por
+    nada. Enquanto ele era só um rótulo de contexto isso passava; com as
+    curtidas na fonte da pauta o volume de assunto atípico sobe, e o rodízio
+    deixaria de funcionar exatamente onde mais precisa.
+
+    O filtro CEDE quando zeraria a disputa, como o rodízio cede: o dia em que
+    todas as candidatas caíram no balde é um dia de classificação ruim, não de
+    pauta ruim, e trocar um vídeo por nenhum vídeo é caro demais para um rótulo.
+    """
+    dentro = [t for t in trends if t.get("macrotema") != MACROTEMA_DESCARTE]
+    fora = len(trends) - len(dentro)
+    if not fora:
+        return trends
+    if not dentro:
+        print(
+            f"[classificacao] TODAS as {len(trends)} candidatas caíram em "
+            f"'{MACROTEMA_DESCARTE}'; o filtro de macrotema cede (o rodízio de "
+            "temas do Short fica sem efeito nesta execução)."
+        )
+        return trends
+    print(
+        f"[classificacao] {fora} candidata(s) fora dos macrotemas definidos "
+        f"('{MACROTEMA_DESCARTE}') saem da disputa; {len(dentro)} seguem."
+    )
+    return dentro

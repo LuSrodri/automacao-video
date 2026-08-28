@@ -8,17 +8,21 @@ nem tema obrigatório; o que decide a pauta é o valor da informação e, entre 
 candidatas, o que a audiência do canal assiste até o fim.
 
 Fluxo:
-1. X API coleta os posts da janela DA LISTA DO X (X_LIST_ID) —
-   `/2/lists/{id}/tweets`, paginado e em ordem cronológica — e o GPT os
-   sumariza nas 10 trends mais quentes, ordenadas pelo VALOR DA INFORMAÇÃO
-   (vazamento, exclusivo, urgência, número inédito) antes do engajamento.
-   Pôr ou tirar alguém da lista muda a pauta da próxima execução, sem commit
-   nem deploy. É o CAMINHO ÚNICO desde 2026-08-22: o fallback pelas contas
-   seguidas (busca por relevância em lotes de `from:` mais as timelines) foi
-   removido, e falha de leitura agora aborta a execução em vez de deixar o
-   vídeo sair de uma pauta pior sem ninguém ver.
-2. GPT classifica cada candidata (macrotema + imagem mental) — sem filtro
-   nem score: todas as candidatas seguem vivas para a seleção.
+1. X API coleta os posts que viram pauta, de DUAS FONTES em ordem (2026-08-28):
+   as CURTIDAS do usuário nos últimos X_CURTIDOS_DIAS
+   (`/2/users/:id/liked_tweets`) e, quando elas não rendem X_CURTIDOS_MIN posts
+   aproveitáveis, a LISTA DO X (X_LIST_ID, `/2/lists/{id}/tweets`). Curtir um
+   post no X é a forma mais barata de mexer na pauta; pôr ou tirar alguém da
+   lista continua sendo a segunda. Só sobe post com clipe de vídeo nativo, e no
+   Short só clipe de até CURTO_MAX_DUR_CLIPE segundos. O GPT sumariza os posts
+   nas 10 trends mais quentes, ordenadas pelo VALOR DA INFORMAÇÃO (vazamento,
+   exclusivo, urgência, número inédito) antes do engajamento. Falhar nas DUAS
+   fontes aborta a execução, em vez de deixar o vídeo sair de uma pauta pior
+   sem ninguém ver.
+2. GPT classifica cada candidata (macrotema + imagem mental). Desde 2026-08-28
+   a candidata do balde "outro" — a que não coube em nenhum macrotema
+   definido — sai da disputa; as demais seguem vivas para a seleção, sem score
+   nem peso.
 3. GPT escolhe a trend: primeiro corte pelo VALOR DA INFORMAÇÃO (vazamento,
    exclusivo, urgência, número inédito), e entre as elegíveis decide pela
    audiência — recebe os últimos vídeos publicados do canal com as métricas
@@ -107,10 +111,19 @@ Fluxo:
     pedido explícito.
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
-- padrão: Short vertical 1080x1920 de ~25s (era 60 até 2026-08-09), com
+- padrão: Short vertical 1080x1920 de ATÉ ~25s (era 60 até 2026-08-09), com
   legendas queimadas e narração ACELERADA (VIDEO_VELOCIDADE). PISO DURO de 21
-  segundos: Short mais curto que isso não é publicado, a execução aborta. Os Shorts INTERCALAM temas — o
-  macrotema do Short anterior sai da disputa da seleção.
+  segundos: Short mais curto que isso não é publicado, a execução aborta. Os
+  Shorts INTERCALAM temas — o macrotema do Short anterior sai da disputa da
+  seleção.
+  O MATERIAL DIMENSIONA O ROTEIRO desde 2026-08-28 (pedido do usuário): o
+  Short não repete mais clipe em loop, então os ~25s viraram um TETO e não uma
+  meta — o roteiro é escrito para os segundos de clipe que a pauta tem
+  (`alvo_pelo_material`, config.py), a auditoria confere se o material aprovado
+  cobre a narração e a montagem encaixa as janelas no que existe
+  (`_encaixar_no_material`, edicao.py). Pauta sem clipe para o piso de 21s sai
+  da disputa antes de custar roteiro. O ZOOM INTELIGENTE que transforma clipe
+  horizontal em vertical (enquadramento.py) continua valendo.
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 120 a 150 segundos
   (o piso de 120s é duro: abaixo dele a execução aborta), SEM legendas e em
   velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
@@ -161,15 +174,18 @@ from pathlib import Path
 from pipeline.audio import gerar_narracao
 from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
-from pipeline.classificacao import classificar_trends
+from pipeline.classificacao import classificar_trends, filtrar_por_macrotema
 from pipeline.config import (
     CURTO_MIN_S,
     LONGO_MAX_S,
     LONGO_MIN_CLIPES_APROVADOS,
     LONGO_MIN_S,
+    MATERIAL_MARGEM,
     TENTATIVAS_TREND,
+    alvo_pelo_material,
     ativar_formato_longo,
     carregar_config,
+    segundos_uteis,
 )
 from pipeline.cortes import atribuir_clipes, planejar_cortes, texto_da_pauta
 from pipeline.edicao import (
@@ -199,6 +215,7 @@ from pipeline.silencio import aparar_silencios, inserir_pausas
 from pipeline.thumbnail import gerar_thumbnail
 from pipeline.triagem import triar_material
 from pipeline.x_client import (
+    autorizar_x,
     buscar_posts_com_video,
     coletar_trends,
     renovar_token_do_x,
@@ -241,6 +258,15 @@ def main() -> None:
         help="Autoriza o canal inglês e salva YOUTUBE_REFRESH_TOKEN_USA no .env",
     )
     parser.add_argument(
+        "--auth-x",
+        action="store_true",
+        help=(
+            "NÃO gera vídeo: autoriza o app do X no navegador (PKCE) com os "
+            "escopos que o pipeline usa — inclusive `like.read`, sem o qual a "
+            "pauta não sai das curtidas — e distribui os tokens aos crons"
+        ),
+    )
+    parser.add_argument(
         "--renovar-x-token",
         action="store_true",
         help=(
@@ -254,10 +280,22 @@ def main() -> None:
     # YouTube) não precisam de X_LIST_ID — e o serviço do cron renovador não
     # tem essa env var. Exigir a lista deles derrubaria o cron que mantém o
     # token vivo para os outros quatro.
-    coleta = not (args.renovar_x_token or args.auth_youtube or args.auth_youtube_usa)
+    coleta = not (
+        args.renovar_x_token
+        or args.auth_youtube
+        or args.auth_youtube_usa
+        or args.auth_x
+    )
     cfg = carregar_config(exige_lista=coleta)
     if args.auth_youtube or args.auth_youtube_usa:
         autenticar_youtube(cfg, usa=args.auth_youtube_usa)
+        return
+    # AUTORIZAÇÃO DO X (2026-08-28). Roda LOCALMENTE, não em cron: depende de
+    # um navegador. É o que faltava no repo — a autorização do X era feita à
+    # mão, e a conta veio com as curtidas, que exigem um escopo (`like.read`)
+    # que o token em produção não tinha. Ver `autorizar_x` em x_client.py.
+    if args.auth_x:
+        autorizar_x(cfg)
         return
     # Modo RENOVADOR (2026-08-18, ideia do usuário). Sai antes de qualquer
     # leitura paga: este cron existe só para ser o ÚNICO que renova o token do
@@ -299,6 +337,11 @@ def main() -> None:
             )
 
     trends = classificar_trends(cfg, coletar_trends(cfg))
+    # SÓ PAUTA DE MACROTEMA DEFINIDO (2026-08-28, pedido do usuário): a
+    # candidata que caiu no balde "outro" sai da disputa. Ver
+    # `filtrar_por_macrotema` para por que o corte importa mais do que parece
+    # (é o balde que escapa do rodízio de temas dos Shorts).
+    trends = filtrar_por_macrotema(trends)
 
     # TRIAGEM DO MATERIAL (2026-08-18, pedido do usuário): conferir o clipe
     # ANTES de escolher a pauta. O sinal que a seleção tinha era indireto —
@@ -327,7 +370,13 @@ def main() -> None:
     # defeito do roteiro, e trocar de tema não conserta isso, só paga o
     # ElevenLabs de novo.
     tentadas: list[dict] = []
+    # Alvo de fábrica (VIDEO_DURACAO). No Short ele passou a ser o MÁXIMO, não
+    # a meta: cada tentativa recalcula o alvo a partir da metragem da pauta
+    # escolhida, e sem guardar o valor original a segunda tentativa herdaria o
+    # alvo encolhido da primeira.
+    duracao_alvo = cfg.video_duracao
     for tentativa in range(1, TENTATIVAS_TREND + 1):
+        cfg.video_duracao = duracao_alvo
         # O LONGO cobre TRÊS acontecimentos (2026-08-18, pedido do usuário),
         # um por tópico: exigir 4 posts com clipe de um mesmo fato nunca
         # passava, e com três assuntos cada um só precisa do próprio clipe.
@@ -351,6 +400,30 @@ def main() -> None:
         panorama = panorama_do_dia(
             cfg, selecao.get("consulta_youtube") or selecao["trend"]
         )
+
+        # O MATERIAL DIMENSIONA O ROTEIRO (2026-08-28, pedido do usuário: "não
+        # coloque o vídeo em loop várias vezes, em vez disso, adeque o roteiro
+        # dentro do que cabe naquele vídeo selecionado da pauta"). Só no Short:
+        # o longo mantém a faixa dura de LONGO_MIN_S a LONGO_MAX_S e continua
+        # repetindo clipe.
+        #
+        # Vem DEPOIS da seleção porque só aqui se sabe QUAL pauta é, e ANTES do
+        # roteiro porque é o roteiro que precisa nascer do tamanho certo — a
+        # faixa de palavras (`_faixa_palavras`, escritor.py) é calculada em
+        # cima de cfg.video_duracao. `alvo_pelo_material` nunca devolve None
+        # aqui: a candidata sem metragem já saiu no portão da seleção.
+        if cfg.formato == "curto":
+            alvo = alvo_pelo_material(
+                cfg, (selecao["trend_obj"]).get("segundos_video")
+            )
+            if alvo is not None and alvo < cfg.video_duracao:
+                print(
+                    f"[material] A pauta tem ~"
+                    f"{float(selecao['trend_obj'].get('segundos_video') or 0):.0f}s "
+                    f"de clipe; o roteiro passa a mirar {alvo}s em vez de "
+                    f"{cfg.video_duracao}s (o Short não repete clipe em loop)."
+                )
+                cfg.video_duracao = alvo
 
         roteiro = gerar_roteiro(
             cfg, selecao, trends,
@@ -422,6 +495,33 @@ def main() -> None:
                     f"com a narração (detalhe em "
                     f"{pasta / 'auditoria_clipe.json'})"
                 )
+            # SEGUNDA CONFERÊNCIA DA METRAGEM, agora sobre o que a auditoria
+            # DEIXOU (2026-08-28). A primeira (o portão da seleção) contou o
+            # que a X API prometeu; esta conta o que sobrou depois do veto e do
+            # trecho útil de cada clipe, que é o que de fato vai à tela.
+            #
+            # Ela é o que impede o Short de voltar a repetir clipe por outra
+            # porta: aprovar um clipe de 8s para um roteiro de 25 daria
+            # exatamente o loop que o pedido tirou. Cai no FALLBACK DE TEMA
+            # (a candidata perde a vez) porque ainda estamos antes do TTS —
+            # custa notícias, roteiro e visão, nunca narração.
+            #
+            # Só conta quando TODOS os aprovados foram medidos: com um clipe
+            # sem `dur_s` (ffprobe falhou) a soma sairia menor que a verdade e
+            # derrubaria uma pauta que tinha material. Medida faltando é
+            # ignorância nossa, e ignorância não veta pauta em nenhum outro
+            # ponto deste pipeline.
+            elif cfg.formato == "curto" and all(m.get("dur_s") for m in clipes):
+                tela = sum(segundos_uteis(m) for m in clipes)
+                preciso = cfg.video_duracao * MATERIAL_MARGEM
+                if tela < preciso:
+                    recusa = (
+                        f"os {len(clipes)} clipe(s) aprovados somam "
+                        f"{tela:.0f}s de trecho útil, e o roteiro de "
+                        f"{cfg.video_duracao}s precisa de ~{preciso:.0f}s — o "
+                        "Short não repete mais clipe em loop, então a tela "
+                        "ficaria sem imagem no fim"
+                    )
         if not recusa:
             break
 

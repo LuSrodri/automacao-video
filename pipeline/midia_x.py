@@ -174,7 +174,8 @@ def baixar_midias_posts(
                 "expansions": "attachments.media_keys,author_id",
                 "user.fields": "username",
                 "media.fields": (
-                    "media_key,type,url,variants,preview_image_url,width,height"
+                    "media_key,type,url,variants,preview_image_url,width,"
+                    "height,duration_ms"
                 ),
             },
             headers={"Authorization": f"Bearer {token}"},
@@ -220,6 +221,32 @@ def baixar_midias_posts(
         }
 
     brutos = [m for m in midias if m.get("type") in ("video", "animated_gif")]
+    # TETO DE DURAÇÃO DO CLIPE NO SHORT (2026-08-28, pedido do usuário: "só
+    # escolha vídeos que tenham até 30 segundos no máximo"). A coleta já
+    # descartou o POST cujo menor clipe passa do teto (x_client), mas um post
+    # aprovado pode trazer os dois — o corte de 20s e a íntegra de 6 minutos —,
+    # e é aqui que a íntegra fica de fora. Ganho duplo: ela não ocupa vaga no
+    # pool e não gasta banda, porque o corte acontece ANTES do download.
+    #
+    # O formato longo não tem teto: lá o clipe ocupa uma parte inteira do vídeo
+    # e a montagem continua repetindo em loop, então clipe comprido é ganho.
+    if cfg.formato == "curto":
+        teto_ms = float(cfg.curto_max_dur_clipe_s) * 1000.0
+        cabem = [
+            m for m in brutos
+            # Duração desconhecida (o X não a informa para GIF animado) não
+            # veta: sem medida não há teto a aplicar, e vetar por falta de dado
+            # jogaria fora material bom.
+            if not isinstance(m.get("duration_ms"), (int, float))
+            or float(m["duration_ms"]) <= teto_ms
+        ]
+        if len(cabem) < len(brutos):
+            print(
+                f"[midia-x] {len(brutos) - len(cabem)} clipe(s) acima do teto "
+                f"de {cfg.curto_max_dur_clipe_s}s do Short fora do pool "
+                f"(o Short não repete clipe, então só entra o que cabe inteiro)"
+            )
+        brutos = cabem
     if not brutos:
         print("[midia-x] Nenhum clipe de vídeo anexado nos posts consultados")
 

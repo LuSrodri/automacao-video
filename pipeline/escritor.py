@@ -142,6 +142,7 @@ from .config import (
     ENGAJAMENTO_MINIMO,
     RETENCAO_MINIMA,
     Config,
+    alvo_pelo_material,
 )
 from .cortes import localizar_citacao
 from .seo import limpar_tags, resumo_para_prompt
@@ -1598,6 +1599,24 @@ def _linha_triagem(trend: dict) -> str:
     )
 
 
+def _linha_material(trend: dict) -> str:
+    """Quantos segundos de clipe a candidata tem, para o prompt de seleção.
+
+    Só faz sentido no Short, e só desde 2026-08-28: com o loop fora da
+    montagem, o material deixou de ser um detalhe de produção e virou o TETO do
+    vídeo — uma pauta com 22 segundos de clipe rende um Short de 22 segundos,
+    não o de 25 que o canal pede. A seleção precisa enxergar isso para preferir,
+    entre duas candidatas parecidas, a que tem imagem para o formato inteiro.
+    """
+    segundos = trend.get("segundos_video")
+    if not segundos:
+        return ""
+    return (
+        f"   Material de vídeo: ~{float(segundos):.0f}s de clipe (é o TETO do "
+        "tempo de tela desta pauta — o vídeo não repete clipe)\n"
+    )
+
+
 def _resumo_trends(trends: list[dict]) -> str:
     linhas = []
     for i, t in enumerate(trends, 1):
@@ -1607,6 +1626,7 @@ def _resumo_trends(trends: list[dict]) -> str:
             f"   Macrotema: {t.get('macrotema', '?')}\n"
             f"   Posts coletados sobre o assunto: {t.get('num_posts', '?')}\n"
             f"   Posts com clipe de vídeo nativo: {t.get('posts_com_video', '?')}\n"
+            + _linha_material(t)
             + _linha_triagem(t)
             + f"   VALOR INFORMATIVO: {t.get('valor_informativo', '?')}\n"
             f"   URGÊNCIA: {t.get('urgencia', '?')}\n"
@@ -2178,6 +2198,39 @@ def selecionar_trend(
                 "já está no teto de 100 por chamada da API."
             )
         candidatas = com_material
+
+    # PORTÃO DE METRAGEM DO SHORT (2026-08-28). Companheiro do fim do loop na
+    # montagem: sem repetir clipe, uma pauta com 12 segundos de material não
+    # rende um Short de 21 (o piso duro do formato) — ela renderia 12 segundos
+    # de vídeo e 9 de tela vazia. `alvo_pelo_material` devolve None nesse caso,
+    # e a candidata sai aqui, antes de custar roteiro, notícias e visão.
+    #
+    # Note que este portão não existe para as candidatas SEM medida: clipe cuja
+    # duração o X não informou (GIF animado) devolve o alvo cheio e passa, que
+    # é o comportamento anterior. O portão barra quem foi medido e não coube.
+    if not longo:
+        com_metragem = [
+            t for t in candidatas
+            if alvo_pelo_material(cfg, t.get("segundos_video")) is not None
+        ]
+        if len(com_metragem) < len(candidatas):
+            print(
+                f"[veto] {len(candidatas) - len(com_metragem)} candidata(s) "
+                f"com menos de ~{CURTO_MIN_S}s de clipe fora da disputa (o "
+                "Short não repete mais clipe em loop, então o material é o "
+                f"teto do vídeo; {len(com_metragem)} seguem)."
+            )
+        if not com_metragem:
+            raise SystemExit(
+                "Nenhuma candidata de hoje tem clipe suficiente para o piso de "
+                f"{CURTO_MIN_S}s do Short — a montagem não repete mais clipe em "
+                "loop, então o vídeo não teria imagem para o tempo inteiro. "
+                "As alavancas, nesta ordem: curtir no X posts com clipe mais "
+                "longo (a pauta sai das curtidas), subir CURTO_MAX_DUR_CLIPE se "
+                "o teto de clipe estiver cortando material bom, ou pôr na lista "
+                "contas que publiquem vídeo."
+            )
+        candidatas = com_metragem
 
     # Não há portão de QUANTIDADE no curto: a exigência de 2 posts com clipe,
     # testada em 2026-08-17, estreitou a disputa (7 de 8 candidatas fora numa

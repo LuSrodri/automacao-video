@@ -53,7 +53,7 @@ python main.py --long-take        # vídeo longo de análise (16:9), em portugu�
 python main.py --long-take -usa   # vídeo longo de análise (16:9), em inglês
 ```
 
-Autorizações (uma vez só, não geram vídeo): `--auth-youtube` e `--auth-youtube-usa`.
+Autorizações (uma vez só, não geram vídeo): `--auth-youtube`, `--auth-youtube-usa` e `--auth-x`.
 
 Com `-usa`, todo o material — escolha do tema, título, descrição, texto narrado e hashtags — é produzido em inglês americano e direcionado 100% ao público dos EUA (a coleta também prioriza o que está dominando a conversa por lá), e a narração usa a voz americana configurada em `ELEVENLABS_VOICE_ID_USA`.
 
@@ -177,7 +177,10 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
-| `X_LIST_ID` | — | Id da **lista do X** de onde sai a pauta. **Obrigatório**: é o caminho único da coleta desde 2026-08-22 |
+| `X_LIST_ID` | — | Id da **lista do X**. **Obrigatório**, mas desde 2026-08-28 é o **fallback**: a fonte primária da pauta são as curtidas do usuário |
+| `X_CURTIDOS` | `1` | Liga as **curtidas do usuário** como fonte primária da pauta (`/2/users/:id/liked_tweets`). **Exige o escopo `like.read` no token do X** — sem ele a leitura volta 403, o log avisa e a lista assume. `0` desliga e volta ao comportamento anterior |
+| `X_CURTIDOS_DIAS` | `7` | Janela da coleta de curtidas, em dias, aplicada sobre a **data do post**: a API não devolve quando a curtida aconteceu, só a ordem (ver a seção da pauta) |
+| `X_CURTIDOS_MIN` | `5` | Posts aproveitáveis abaixo dos quais a coleta **cai para a lista**. O gatilho é escassez, não erro |
 | `X_TOKEN_MARGEM_MIN` | `75` | Minutos de vida restante abaixo dos quais o cron renovador troca o access token do X. Precisa ser **maior que o intervalo do cron renovador**, senão o token vence entre dois ticks |
 | `X_MAX_POSTS` | `100` | Teto de posts lidos **por vídeo** (a X API cobra por post lido) — é o maior item da conta. `100` é o **máximo por chamada** do endpoint de lista, então a coleta cabe em uma leitura só. Foi 200 até 2026-08-24, 50 no corte de custo daquele dia, e voltou a 100 em 2026-08-25, quando a janela de tempo saiu da lista e o teto virou o único limitador de material |
 | `X_MAX_POSTS_BUSCA` | `30` (só `--long-take`) | Busca **aberta** por clipes do assunto, fora das contas do canal. Fontes **não curadas** — a auditoria é a única guarda, e ela julga pertinência, não veracidade; `0` desliga |
@@ -187,13 +190,14 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
 | `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
-| `VIDEO_DURACAO` | `25` | Duração-alvo da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%). Caiu de 60 para 25 em 2026-08-09. **Piso duro de 21s**: Short mais curto que isso não é publicado, e valor abaixo de 21 aqui é recusado no carregamento |
+| `VIDEO_DURACAO` | `25` | Duração-**máxima** da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%). Caiu de 60 para 25 em 2026-08-09 e deixou de ser meta em 2026-08-28: sem loop, o roteiro é dimensionado pelo material da pauta e este valor é o teto. **Piso duro de 21s**: Short mais curto que isso não é publicado, e valor abaixo de 21 aqui é recusado no carregamento |
 | `VIDEO_VELOCIDADE` | `1.25` | Velocidade da narração e, com ela, do ritmo do vídeo inteiro. O **Short roda acelerado**; o `--long-take` roda em `1.0` (`LONG_VELOCIDADE`). O orçamento de palavras do roteiro é multiplicado por este valor |
 | `VIDEO_LARGURA` | `1080` | Largura do vídeo |
 | `VIDEO_ALTURA` | `1920` | Altura do vídeo |
 | `MAX_POSTS_MIDIA` | `12` | Posts da trend consultados no lookup de mídias (a X API cobra por post lido) |
 | `POOL_EXTRA_CLIPES` | `3` | Clipes baixados além dos que entram na montagem, como folga da auditoria |
 | `MAX_FOTOS` | `4` | Fotos dos posts baixadas para as cartelas (`0` desliga) |
+| `CURTO_MAX_DUR_CLIPE` | `30` | Duração máxima do clipe da pauta, em segundos, **só no Short**. Post cujo menor clipe passa disto não vira pauta, e clipe acima do teto não entra no pool nem gasta download. É a contrapartida do fim do loop; não pode ficar abaixo do piso de 21s. O `--long-take` não tem teto |
 | `MAX_CARTELAS` | `1` | Cartelas de imagem nos momentos-chave, que tomam a tela inteira pelo deslize do carrossel (`0` desliga). Caiu de 2 para 1 com o Short de 25s: cada imagem tira ~4s de clipe da tela. É a **única** camada de imagem desde 2026-08-24, quando `MAX_FIGURAS` saiu |
 | `VETO_TEXTO_DENSO` | `1` | Barra o clipe **tomado por texto** (e, mais ainda, por texto **parado**) quando ele não é o assunto que a narração descreve. `0` aceita de volta o fundo de slide/print atrás das legendas queimadas |
 | `VETO_CLIPE_PARADO` | `1` | Barra o clipe **estático** (o mesmo quadro do começo ao fim) e o de **pessoa falando para a câmera** (entrevista, podcast, coletiva, âncora). Veto duro, sem exceção de contexto nem de formato. `0` aceita de volta o busto falante e a foto com áudio |
@@ -310,7 +314,24 @@ Com eles saiu também a regra que **escondia o crédito de reprodução** enquan
 
 ## Como funcionam os clipes e os cortes
 
-O pipeline baixa um **pool** de clipes de vídeo dos posts originais da trend (X API, MP4 de maior bitrate): **3 + `POOL_EXTRA_CLIPES`** entram na disputa por 3 vagas na montagem (**8 vagas no `--long-take`**). O **GPT com visão** descreve e classifica cada um a partir de frames extraídos pelo ffmpeg e a **auditoria** derruba o que não presta (veja abaixo). Na tela, cada clipe carrega o próprio **crédito de reprodução** no canto superior direito ("Reprodução Imagem: X" + "Conta `@usuario`" do post de onde ele veio), e clipe mais curto que a janela repete em **loop**.
+O pipeline baixa um **pool** de clipes de vídeo dos posts originais da trend (X API, MP4 de maior bitrate): **3 + `POOL_EXTRA_CLIPES`** entram na disputa por 3 vagas na montagem (**8 vagas no `--long-take`**). O **GPT com visão** descreve e classifica cada um a partir de frames extraídos pelo ffmpeg e a **auditoria** derruba o que não presta (veja abaixo). Na tela, cada clipe carrega o próprio **crédito de reprodução** no canto superior direito ("Reprodução Imagem: X" + "Conta `@usuario`" do post de onde ele veio).
+
+### O Short não repete mais clipe (2026-08-28)
+
+Pedido do usuário: *"não coloque o vídeo em loop várias vezes, em vez disso, adeque o roteiro dentro do que cabe naquele vídeo selecionado da pauta"*. Isso **inverte quem manda no tamanho do Short**: `VIDEO_DURACAO=25` virou um **teto**, não uma meta. Antes o alvo era fixo e a montagem esticava o material repetindo o clipe — foi assim que um clipe com 4s de trecho útil ficou **27,9s na tela**, seis voltas do mesmo pedaço.
+
+São quatro camadas, e as quatro são necessárias porque cada uma cobre uma falha diferente:
+
+1. **Teto de duração na coleta** (`CURTO_MAX_DUR_CLIPE=30`) — post cujo menor clipe passa de 30s não vira pauta, e o clipe acima do teto não entra no pool nem gasta download. Sem loop, clipe de quatro minutos não é material melhor: é um clipe do qual só se usaria o começo, escolhido às cegas.
+2. **Portão na seleção da pauta** — cada trend carrega `segundos_video` (a soma dos `MAX_CLIPES` clipes mais longos, medida em `duration_ms`, de graça no mesmo envelope). Candidata que não sustenta o piso de 21s **sai da disputa antes de custar roteiro, notícias e visão**.
+3. **O roteiro nasce do tamanho do material** — `alvo_pelo_material` (config.py) devolve `min(25s, metragem / 1,15)` e é ele que alimenta a faixa de palavras do roteirista. A margem de 1,15 existe porque o roteiro é pedido em **palavras** e o TTS entrega o segundo que entrega (±11% medido em 8 narrações reais); ela paga também o `RESPIRO_FINAL` e os crossfades.
+4. **Encaixe na montagem** (`_encaixar_no_material`, edicao.py) — o planejador de cortes é um LLM lendo a narração: ele decide onde cada clipe entra pelo **sentido do texto**, e nada o impede de dar 18 segundos ao clipe de 9. As janelas são então repartidas com teto — quem estourou é fixado no seu limite e o excedente vai para quem tem folga, mantendo a soma igual à narração.
+
+Entre 2 e 4 há ainda uma **segunda conferência de metragem**, logo depois da auditoria e **antes do TTS**: a primeira contou o que a X API prometeu, esta soma o **trecho útil** dos clipes que sobreviveram ao veto. Não fechando, a candidata perde a vez pelo fallback de tema — custa notícias, roteiro e visão, nunca narração.
+
+O **zoom inteligente** que recorta clipe horizontal para o quadro vertical acompanhando quem está em cena (`enquadramento.py`) **continua valendo**, sem mudança. O que mudou para ele é que o ramo `mod(t,span)` da trajetória — feito para o clipe dar a volta junto com o loop — ficou **inerte no Short**, já que ali a janela nunca é mais longa que o clipe.
+
+No **`--long-take` nada disso muda**: lá cada pauta ocupa uma parte inteira do vídeo, o `-stream_loop -1` continua, não há teto de duração de clipe e a faixa de 120-150s segue dura.
 
 **Daqui para baixo os dois formatos divergem** (2026-08-25):
 
@@ -483,9 +504,69 @@ Pedido do usuário em **2026-08-16**: *"volte para o formato fullscreen com o pr
 
 **O que saiu junto, lá atrás.** Com a imagem ocupando a tela inteira (2026-08-09), o **desfoque do que ficava atrás das cartelas** (`CARTELA_BLUR_SIGMA`/`CARTELA_BLUR_RAMPA`) perdeu função e foi removido: não há mais nada atrás para tirar de foco. As cartelas deixaram de ser **sequências de PNG** e passaram a ser **um PNG só** cada.
 
-## Como funciona a leitura da lista do X
+## Autorização do X (`--auth-x`)
 
-A pauta sai de **uma lista do X** (`X_LIST_ID`), lida em `/2/lists/{id}/tweets`: uma chamada paginada, **cronológica**, com os posts de todos os membros. **Pôr ou tirar alguém da lista é a forma de mexer na pauta do canal** — vale já na execução seguinte, sem commit nem deploy.
+```bash
+python main.py --auth-x
+```
+
+Abre o navegador, autoriza o app com PKCE e **grava os tokens direto no serviço do cron renovador no Render** — os crons de vídeo leem de lá em tempo de execução, então **não há nada a deployar** depois.
+
+**Callback:** usa `http://localhost:8080/callback`, que **já está cadastrado** no app (conferido no painel em 2026-08-28; lá estão registrados o `http` e o `https` da mesma URL — o código usa o `http`, que um servidor local serve sem certificado). O X exige correspondência **exata**, inclusive do caminho `/callback`; `X_OAUTH_REDIRECT_URI` muda o valor, mas o novo precisa estar cadastrado.
+
+**Credenciais:** o comando usa `X_OAUTH_CLIENT_ID`/`X_OAUTH_CLIENT_SECRET` do `.env` e, quando não os encontra lá, **lê os dois do próprio Render** (mesma fonte da verdade que o token já usa, `_ler_do_render`). Na prática basta ter `RENDER_API_KEY` e `RENDER_TOKEN_SERVICE_ID` — e eles podem ir na linha de comando, sem passar pelo disco:
+
+```bash
+RENDER_API_KEY=... RENDER_TOKEN_SERVICE_ID=crn-... python main.py --auth-x
+```
+
+Isso existe porque o `.env` **local** de quem opera pelos crons envelhece sem que nada quebre: tudo roda no Render. Em 2026-08-28 o do repositório ainda tinha `FIRECRAWL_API_KEY`, `TIKTOK_*` e `ZERNIO_API_KEY`, removidos do pipeline em 16/08.
+
+Escopos pedidos: `tweet.read users.read list.read like.read offline.access`.
+
+**Escopo não se conserta no painel.** Os escopos de OAuth 2.0 não são uma configuração do app: eles são **pedidos na URL de autorização** e gravados no token no momento em que o usuário autoriza. O que o painel tem é *App permissions* (Read / Read and write / …), que define o **teto** do que pode ser concedido — não o que foi.
+
+Medido em 2026-08-28, e visível no próprio painel (App > Keys & Tokens > OAuth 2.0 Keys > Access Token): o token vigente dizia `list.write, list.read, users.read, tweet.read` — **sem `like.read`** —, respondia **200** em `/2/users/me` e **403** em `/2/users/:id/liked_tweets`. O *App permissions* estava em "Read and write", que já permite `like.read`; o que faltava era **pedir** o escopo, e a autorização original não pedia. Só uma autorização nova carrega o escopo novo.
+
+Por isso o comando **imprime os escopos que o X concedeu** e avisa se algum faltou. O token do X é opaco e não existe endpoint de introspecção, então esse é o único lugar onde eles aparecem — junto da renovação horária, que desde 2026-08-28 também loga `[x] Escopos do token: …`.
+
+Até esta data a autorização do X era feita **à mão**: o README mandava "reautorize no navegador" e não havia nada que fizesse isso, ao contrário do YouTube.
+
+## Como funciona a escolha da pauta (curtidas → lista do X)
+
+A pauta tem **duas fontes, em ordem** desde **2026-08-28**, e as mesmas para os **dois formatos** (Short e `--long-take` entram pelo mesmo `coletar_trends` e recebem a mesma pauta elegível):
+
+```
+posts curtidos  ──(menos de X_CURTIDOS_MIN aproveitáveis)──▶  lista do X
+```
+
+### 1. As curtidas do usuário (fonte primária)
+
+`/2/users/:id/liked_tweets` devolve os posts que o dono da conta curtiu, da curtida mais recente para a mais antiga. **Curtir um post no X passou a ser a forma mais barata de mexer na pauta do canal**: é curadoria a mão, feita de graça e antes de o pipeline rodar, e o mesmo orçamento de leitura (`X_MAX_POSTS`, ~US$ 0,005 por post) passa a comprar material escolhido em vez de timeline bruta.
+
+- **Exige o escopo `like.read`** — um a mais do que a lista privada pedia. **Token autorizado antes de 2026-08-28 não o tem**: a leitura volta **403**, o pipeline avisa no log e usa a lista. Para ativar de verdade, reautorize no navegador pedindo `like.read` junto dos escopos atuais e regrave `X_OAUTH_REFRESH_TOKEN`.
+- **A janela é aproximada, e isso é limitação da API, não escolha** — a janela pedida é de **curtida** ("o que eu curti nos últimos 7 dias") e o endpoint **não devolve quando a curtida aconteceu**, só a ordem. Nem aceita `start_time`. O que o pipeline faz: lê as `X_MAX_POSTS` curtidas **mais recentes** (que já é "o que curti por último") e passa por cima delas uma janela de `X_CURTIDOS_DIAS` sobre a **data do post**. O efeito colateral conhecido e aceito é o inverso — post publicado hoje e curtido há duas semanas passa pela janela de data, mas só chega ali se ainda estiver entre as curtidas mais novas, o que o torna raro.
+- **Sem parada antecipada na paginação** — como a ordem é de curtida, as datas dos posts vêm embaralhadas e não dá para parar de paginar ao sair da janela (na lista dá, porque lá a ordem é cronológica). Quem limita o gasto é `X_MAX_POSTS`.
+- **O fallback dispara por escassez, não por erro** — abaixo de `X_CURTIDOS_MIN` posts aproveitáveis a coleta cai para a lista. É esse o modo de falha real da fonte: semana sem curtir, curtida em post de texto e escopo ausente chegam todos como "veio pouco". Um punhado de posts não forma trend, e mandar o GPT tirar dez trends de três posts inventa pauta. Quando o fallback dispara, as curtidas que vieram **não são jogadas fora** — elas foram pagas e são material curado, então entram na frente das da lista, deduplicadas por URL.
+- **`X_CURTIDOS=0` desliga a fonte** e volta ao comportamento anterior (só a lista).
+
+### 2. A lista do X (fallback)
+
+`X_LIST_ID`, lida em `/2/lists/{id}/tweets`: uma chamada paginada, **cronológica**, com os posts de todos os membros. Foi o **caminho único** entre 2026-08-22 e 2026-08-28 e continua inteira, agora atrás das curtidas. **Pôr ou tirar alguém da lista continua mexendo na pauta** — vale já na execução seguinte, sem commit nem deploy. Falha de leitura **dela** aborta a execução: não há terceira fonte.
+
+### Os três filtros da pauta, e onde cada um mora
+
+O pedido de 2026-08-28 foi selecionar os posts curtidos "que tenha vídeo, que seja live footage, e que esteja dentro nos macrotemas que a gente definiu". Os três valem, em camadas diferentes, **por custo**:
+
+| filtro | onde | por quê ali |
+| --- | --- | --- |
+| **tem vídeo** (e, no Short, clipe de até `CURTO_MAX_DUR_CLIPE`s) | na coleta (`_filtrar_posts`) | sai de graça do envelope que já veio (`media.fields=type,duration_ms`) |
+| **live footage** | `triagem.py` (antes da escolha da pauta) e `auditoria.py` (palavra final) | é **visão do GPT sobre frames do clipe**; rodá-la sobre os 100 posts lidos custaria mais que o vídeo inteiro |
+| **macrotema definido** | `classificacao.py` + o corte em `main.py` | é uma chamada de LLM sobre a **trend já formada**, não sobre post solto |
+
+O filtro de macrotema derruba a candidata do balde **"outro"** — a que o classificador não conseguiu pôr em nenhum dos dezesseis rótulos. Ele **cede quando zeraria a disputa**: dia em que todas caem no balde é dia de classificação ruim, não de pauta ruim. O corte importa mais do que parece porque "outro" **não entra no rodízio de temas dos Shorts**: dois Shorts seguidos de "outro" não seriam barrados por nada.
+
+### Detalhes que valem para as duas fontes
 
 Antes disso a coleta lia as **contas seguidas** (`/2/users/:id/following`) por `search/recent` com `from:` em lotes. O problema era mecânico: 162 contas não cabem numa query de 512 caracteres, viravam 7 lotes, e o teto de leitura era **repartido** entre eles — 28 posts para 25 contas, escolhidos por **relevância**. O efeito medido em 2026-08-17: `@sentdefender` publicou 12 vezes em 24h e apareceu **zero** vez na coleta. A lista não tem nada disso.
 
@@ -495,8 +576,9 @@ Antes disso a coleta lia as **contas seguidas** (`/2/users/:id/following`) por `
 - **Repost fora** (2026-08-25) — o repost é casca: a X API não manda `attachments` nele (o clipe mora no post original) nem o texto inteiro, só `"RT @fulano: …"`. Como não dá para excluí-lo no servidor, ele é lido e pago de qualquer jeito; o que se evita é ele ocupar uma vaga do teto. Na **busca** (`--long-take`) o tratamento é outro: lá o repost é **resolvido** para o post original, com texto íntegro e mídia.
 - **Autenticação** — lista **privada** exige contexto de usuário. O access token OAuth 2.0 é distribuído por um cron dedicado (`--renovar-x-token`), que o grava junto com o **vencimento** nas env vars do próprio serviço; os crons de vídeo leem de lá pela API do Render, em tempo de execução, e **não renovam nada** (com quatro crons renovando por conta própria, quem renovasse por último invalidava o refresh dos outros — o token é de uso único).
 - **Renovação por idade, não por morte** (2026-08-22) — o renovador trocava o token só depois que ele **morria**: testava `/2/users/me` e, com 200, não fazia nada. Como o token vale 2h e o cron roda de hora em hora, a troca saía de 3 em 3 horas e sobrava uma **janela morta de até uma hora** em cada ciclo. Medido em 22/08: renovações às 00:20, 03:20, 06:20… e **401 na leitura da lista em exatamente as quatro execuções de vídeo que caíam nessas janelas** (US 03:02, BR 06:03, US 15:04, BR 18:04) — 4 das 12 do dia. Agora o vencimento é gravado junto com o token e a troca acontece com `X_TOKEN_MARGEM_MIN` minutos de vida ainda pela frente. A margem tem que ser **maior que o intervalo do cron renovador**; o `/2/users/me` ficou como conferência para o caso de token revogado antes da hora.
-- **Sem rede debaixo** — falha de leitura **aborta**. O fallback pelas contas seguidas foi removido em 2026-08-22 porque era ele que fazia o 401 acima passar despercebido: o vídeo saía com a pauta ordenada por relevância, e nos logs isso aparecia como um aviso no meio de uma execução bem-sucedida. Página que quebra no **meio** da paginação ainda aproveita o que já veio.
-- **Veto de fonte** — `CONTAS_VETADAS` continua valendo, agora aplicado sobre os posts da lista.
+- **Sem rede debaixo da lista** — falha de leitura **dela** aborta. O fallback pelas contas seguidas foi removido em 2026-08-22 porque era ele que fazia o 401 acima passar despercebido: o vídeo saía com a pauta ordenada por relevância, e nos logs isso aparecia como um aviso no meio de uma execução bem-sucedida. Página que quebra no **meio** da paginação ainda aproveita o que já veio. Nas **curtidas** é diferente, por desenho: falha ali não aborta, cai para a lista.
+- **Veto de fonte** — `CONTAS_VETADAS` continua valendo, aplicado às duas fontes.
+- **Um filtro só para as duas** — os cortes (conta vetada, repost, sem clipe, clipe longo demais no Short) moram em `_filtrar_posts`, e não em cada coletor: as duas fontes precisam produzir a **mesma** pauta elegível, e duplicar a regra seria descobrir a divergência num vídeo publicado.
 
 ## Como funciona o dossiê dos campeões
 
@@ -627,9 +709,12 @@ A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de pro
 ## Problemas comuns
 
 - **Erro na coleta de posts** — confira `X_CONSUMER_KEY`/`X_CONSUMER_SECRET` e o saldo/plano do app em [developer.x.com](https://developer.x.com).
-- **Quer mudar as contas acompanhadas** — **adicione ou remova o membro na lista do X**: a coleta lê `X_LIST_ID` a cada execução e a mudança vale já na próxima.
+- **Quer mudar a pauta** — **curta no X os posts que quer ver virarem vídeo**: as curtidas são a fonte primária e valem já na próxima execução. Para mexer no fallback, adicione ou remova o membro na **lista do X** (`X_LIST_ID`, lida a cada execução).
+- **`403` ao ler as curtidas / `[x] curtidas:` não aparece no log** — o token do X não tem o escopo **`like.read`**, que a lista privada não exigia. Rode **`python main.py --auth-x`** (ver abaixo). Enquanto isso o pipeline **não quebra**: ele avisa e usa a lista.
+- **`As curtidas renderam N post(s) aproveitável … caindo para a lista do X`** — não é erro, é o fallback fazendo o que deve. Se virar rotina, ou a semana foi de poucas curtidas, ou elas foram em post sem clipe de vídeo, ou (no Short) os clipes passavam de `CURTO_MAX_DUR_CLIPE`. A linha `[x] curtidas:` acima diz qual dos três.
+- **`Nenhuma candidata … tem clipe suficiente para o piso de 21s do Short`** — o Short não repete mais clipe, então a pauta precisa ter ~24s de clipe para render 21s de vídeo. Alavancas, nesta ordem: curtir posts com clipe mais longo, subir `CURTO_MAX_DUR_CLIPE` se o teto estiver cortando material bom, ou pôr na lista contas que publiquem vídeo.
 - **`Leitura da lista … falhou: 401`** — access token do X vencido ou revogado. Confira o cron `x-token-refresher` (ele grava `X_OAUTH_ACCESS_TOKEN` e `X_OAUTH_ACCESS_TOKEN_EXPIRA` no próprio serviço) e, se o refresh tiver sido queimado, reautorize no navegador. Desde 2026-08-22 isso **aborta** a execução em vez de cair para as contas seguidas — não há mais fallback.
-- **`Sem X_LIST_ID não há pauta`** — preencha `X_LIST_ID` com o id da lista (o número na URL `x.com/i/lists/…`).
+- **`Sem X_LIST_ID não há fallback de pauta`** — preencha `X_LIST_ID` com o id da lista (o número na URL `x.com/i/lists/…`). Ela continua obrigatória mesmo com as curtidas ligadas: é o que sustenta o dia sem curtida aproveitável.
 - **Execução abortou sem clipe** — a trend escolhida precisa ter post com vídeo nativo; a seleção já filtra, mas o download ainda pode falhar (post apagado, todas as variantes acima de 60 MB). Desde 2026-08-05 isso derruba só a **candidata**, não a execução: o log mostra `[fallback] Tentativa 1/3 descartada` e outra trend é tentada. Abortar de vez exige as 3 falharem.
 - **Execução abortou na auditoria** (`[fallback] ... a auditoria aprovou 0 clipe(s)` nas 3 tentativas) — todo o material das candidatas era de telejornal, tinha selo de emissora ou não mostrava o que a narração diz. Abrir o `auditoria_clipe.json` da pasta do vídeo mostra o motivo de cada reprovação. Se estiver reprovando demais, o caminho é **aumentar o pool** (`MAX_POSTS_MIDIA`, `POOL_EXTRA_CLIPES`), não afrouxar a regra — a alternativa é o vídeo voltar a mostrar material que não condiz com a narração. No `--long-take` o telejornal já não reprova (entra marcado como representação visual), então uma reprovação em massa ali é de **pertinência**: o material não mostra o que a narração diz.
 - **Muitos clipes reprovados por "texto ocupando a tela"** — é o veto de 2026-08-07 funcionando: o assunto do dia rendeu sobretudo print, slide e cartaz, e nenhum deles era o que a narração descrevia. O `auditoria_clipe.json` mostra `densidade_texto` e `texto_estatico` de cada mídia. Se estiver reprovando material bom, o primeiro suspeito é a narração não estar **falando** do que a tela mostra (o auditor só marca `texto_pertinente` quando ela fala); `VETO_TEXTO_DENSO=0` desliga a regra inteira.

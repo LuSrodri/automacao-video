@@ -140,6 +140,72 @@ CURTO_MIN_S = 21
 CURTO_MARGEM_FRAC = 0.12
 CURTO_MARGEM_MIN_S = 2.0  # piso absoluto da folga, para alvos muito curtos
 
+# --- O MATERIAL DIMENSIONA O ROTEIRO (2026-08-28) ---------------------------
+# Pedido do usuário, na mesma frase que tirou o loop do Short: "não coloque o
+# vídeo em loop várias vezes, em vez disso, adeque o roteiro dentro do que cabe
+# naquele vídeo selecionado da pauta".
+#
+# Isso INVERTE quem manda no tamanho do Short. Até aqui o alvo era fixo
+# (VIDEO_DURACAO=25) e a montagem esticava o material para cobri-lo repetindo o
+# clipe — foi assim que um clipe de 4s de trecho útil ficou 27,9s na tela, seis
+# voltas do mesmo pedaço (ver PISO_DUR_UTIL_S em auditoria.py). Agora o
+# material é o teto: o roteiro é escrito para o tempo de tela que a pauta tem,
+# e o alvo de 25s passa a ser o MÁXIMO, não a meta.
+#
+# A MARGEM existe porque a narração não sai do tamanho encomendado. O roteiro é
+# pedido em PALAVRAS e o TTS entrega o segundo que entrega: nas 8 narrações
+# reais medidas nos crons o ritmo variou ±11% em torno da média. Um alvo
+# calculado colado na metragem sairia curto de imagem em metade das execuções —
+# e sem o loop, faltar material não é mais "o clipe se repete", é tela sem
+# clipe. 1,15 cobre aquele ±11% e ainda paga o RESPIRO_FINAL e os crossfades da
+# montagem.
+MATERIAL_MARGEM = 1.15
+
+
+def alvo_pelo_material(cfg: "Config", segundos_video: float | None) -> int | None:
+    """Duração-alvo do roteiro dada a metragem da pauta; None se ela não serve.
+
+    None quer dizer "esta pauta não sustenta nem o piso do formato": nem com o
+    roteiro no mínimo o material cobriria a tela. Quem chama tira a candidata
+    da disputa (`selecionar_trend`) em vez de escrever um roteiro que a
+    montagem não conseguiria vestir.
+
+    Só o SHORT é dimensionado assim. O formato longo mantém a faixa dura de
+    LONGO_MIN_S a LONGO_MAX_S e continua repetindo clipe em loop: lá cada pauta
+    ocupa uma parte inteira do vídeo e o material nunca daria conta de 120s sem
+    repetição — o pedido do usuário foi explícito sobre o Short.
+
+    Metragem desconhecida (0 ou None) devolve o alvo cheio, que é o
+    comportamento anterior a esta mudança. É o caso do GIF animado, cuja
+    duração o X não informa: sem medida não há o que dimensionar, e chutar
+    veta pauta boa.
+    """
+    if cfg.formato != "curto":
+        return cfg.video_duracao
+    segundos = float(segundos_video or 0)
+    if segundos <= 0:
+        return cfg.video_duracao
+    cabe = int(segundos / MATERIAL_MARGEM)
+    if cabe < CURTO_MIN_S:
+        return None
+    return min(cfg.video_duracao, cabe)
+
+
+def segundos_uteis(clipe: dict) -> float:
+    """Quanto de um clipe BAIXADO a montagem consegue pôr na tela, em segundos.
+
+    Não é a duração do arquivo: a montagem entra pelo `inicio_util_s` (o começo
+    do miolo sem busto falante, medido em midia_x.py) e o que vem antes disso
+    nunca vai ao ar. Contar o arquivo inteiro superestimaria o material
+    exatamente nos clipes de veículo, que são os que mais têm abertura para
+    descartar.
+    """
+    dur = clipe.get("dur_s")
+    if dur is None:
+        return 0.0
+    inicio = float(clipe.get("inicio_util_s") or 0.0)
+    return max(0.0, float(dur) - inicio)
+
 # --- Formato LONGO (flag --long-take) ---------------------------------------
 # Vídeo de análise educacional em 16:9, de 120 a 150 segundos, para os dois
 # canais (combina com -usa). Convive com o formato curto (Shorts 9:16) no mesmo
@@ -463,6 +529,26 @@ class Config:
     # (o access token que o cron renovador distribui); pública aceita o bearer
     # app-only.
     x_list_id: str = ""
+    # CURTIDAS DO USUÁRIO como fonte PRIMÁRIA da pauta (2026-08-28, desenho do
+    # usuário: "vídeos curtidos --fallback--> lista do X"). Lê
+    # `/2/users/:id/liked_tweets`, que exige contexto de usuário COM O ESCOPO
+    # `like.read` — um escopo a mais do que a lista privada precisa. Token
+    # autorizado antes desta data NÃO o tem, e a leitura volta 403: o pipeline
+    # avisa e usa a lista, então a falta do escopo custa qualidade de pauta, não
+    # execução. X_CURTIDOS=0 desliga a fonte e volta ao comportamento anterior.
+    x_curtidos: bool = True
+    # Janela da coleta de curtidas, em DIAS, aplicada sobre a data do POST. A
+    # janela que o usuário pediu é de CURTIDA ("posts que eu curtir nos últimos
+    # 7 dias") e essa a API não entrega — ela não devolve quando a curtida
+    # aconteceu, só a ORDEM (da mais nova para a mais velha). Ver
+    # `_coletar_curtidos` em x_client.py para o que isso implica.
+    x_curtidos_dias: int = 7
+    # Piso de posts APROVEITÁVEIS abaixo do qual a coleta cai para a lista. O
+    # gatilho do fallback é escassez, não exceção: o modo de falha real das
+    # curtidas é semana sem curtir, curtida em post de texto ou escopo ausente
+    # (que chega aqui como zero post). Um punhado de posts não forma trend, e
+    # mandar o GPT tirar dez trends de três posts produz pauta inventada.
+    x_curtidos_min: int = 5
     # OAuth 2.0 de USUÁRIO, só para ler LISTA PRIVADA (2026-08-17). O bearer
     # app-only não enxerga lista privada, e o fluxo de usuário do X tem uma
     # armadilha: o refresh token é de USO ÚNICO — cada renovação emite outro e
@@ -547,6 +633,22 @@ class Config:
     # só teria como resultado abortar o vídeo.
     pool_extra_clipes: int = 3
     max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
+    # TETO DE DURAÇÃO DO CLIPE, em segundos, SÓ NO SHORT (2026-08-28, pedido do
+    # usuário: "para vídeos curtos, só escolha vídeos que tenham até 30
+    # segundos no máximo"). Post cujo menor clipe passa disto é descartado
+    # ainda na coleta, e clipe acima do teto não entra no pool nem na conta de
+    # material da trend.
+    #
+    # Ele existe por causa do fim do loop na montagem, no mesmo pedido: sem
+    # repetir clipe, o material é que define o tamanho do vídeo, e clipe de
+    # quatro minutos não é material melhor que um de 25 segundos — é um clipe
+    # do qual só se usaria o começo, escolhido às cegas. Com o teto, o pool do
+    # Short é feito de clipes que o vídeo consegue mostrar por inteiro.
+    #
+    # O formato LONGO não tem teto (o valor fica aqui, mas `_teto_de_clipe` só
+    # o aplica no curto): lá cada pauta ocupa uma parte inteira do vídeo, o
+    # loop continua valendo e clipe comprido é ganho, não estorvo.
+    curto_max_dur_clipe_s: int = 30
     # Imagens que tomam o quadro pelo deslize do carrossel, por vídeo.
     # Caiu de 2 para 1 em 2026-08-09, junto com o Short de 25 segundos: cada
     # imagem tira ~4s de clipe da tela, e duas deixariam a maior parte do Short
@@ -627,6 +729,10 @@ def carregar_config(exige_lista: bool = True) -> Config:
         x_consumer_key=os.environ["X_CONSUMER_KEY"],
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
         x_list_id=(os.getenv("X_LIST_ID", "") or "").strip(),
+        x_curtidos=os.getenv("X_CURTIDOS", "1").strip() not in ("0", "false", "False"),
+        x_curtidos_dias=int(os.getenv("X_CURTIDOS_DIAS", "7")),
+        x_curtidos_min=int(os.getenv("X_CURTIDOS_MIN", "5")),
+        curto_max_dur_clipe_s=int(os.getenv("CURTO_MAX_DUR_CLIPE", "30")),
         x_oauth_client_id=(os.getenv("X_OAUTH_CLIENT_ID", "") or "").strip(),
         x_oauth_client_secret=(os.getenv("X_OAUTH_CLIENT_SECRET", "") or "").strip(),
         x_oauth_refresh_token=(os.getenv("X_OAUTH_REFRESH_TOKEN", "") or "").strip(),
@@ -684,10 +790,11 @@ def carregar_config(exige_lista: bool = True) -> Config:
         in ("1", "true", "sim", "yes"),
     )
 
-    # A LISTA é a única fonte de pauta desde 2026-08-22 (o caminho pelas contas
-    # seguidas foi removido). Fail-fast aqui, e não na primeira chamada da X
-    # API, porque sem ela não há pauta nenhuma — e descobrir isso depois de
-    # pagar o token é caro.
+    # A LISTA virou o FALLBACK da pauta em 2026-08-28: na frente dela estão as
+    # CURTIDAS do usuário (X_CURTIDOS). Ela continua OBRIGATÓRIA, e o fail-fast
+    # continua aqui, porque é ela que sustenta o dia em que não houve curtida
+    # com clipe — e uma execução que descobre a falta da lista já tendo lido as
+    # curtidas descobre isso depois de pagar por elas.
     #
     # `exige_lista=False` para os modos que NÃO coletam: o cron renovador do
     # token e as autorizações do YouTube. O renovador não tem X_LIST_ID nas env
@@ -696,9 +803,10 @@ def carregar_config(exige_lista: bool = True) -> Config:
     # segundos depois do deploy de 2026-08-22.
     if exige_lista and not cfg.x_list_id:
         raise SystemExit(
-            "Sem X_LIST_ID não há pauta: preencha com o id da LISTA do X de "
-            "onde sai a pauta do canal (a coleta pelas contas seguidas não "
-            "existe mais)."
+            "Sem X_LIST_ID não há fallback de pauta: preencha com o id da "
+            "LISTA do X que sustenta o dia sem curtida aproveitável (a fonte "
+            "primária são as CURTIDAS do usuário desde 2026-08-28; a coleta "
+            "pelas contas seguidas não existe mais)."
         )
 
     # A duração final segue o áudio da narração; este valor orienta o
@@ -715,6 +823,21 @@ def carregar_config(exige_lista: bool = True) -> Config:
         raise SystemExit(
             "VIDEO_VELOCIDADE deve estar entre 0.5 e 2.0 (1.0 = velocidade "
             f"normal; recebido: {cfg.velocidade})."
+        )
+    # O teto de clipe do Short precisa caber o vídeo inteiro em UM clipe: com
+    # o loop fora, um teto abaixo do piso duro obrigaria toda pauta a ter dois
+    # clipes aprovados, e o piso da auditoria no curto é de UM.
+    if not CURTO_MIN_S <= cfg.curto_max_dur_clipe_s <= 600:
+        raise SystemExit(
+            f"CURTO_MAX_DUR_CLIPE deve estar entre {CURTO_MIN_S} e 600 "
+            f"segundos — abaixo do piso duro do Short ({CURTO_MIN_S}s) nenhum "
+            "clipe sozinho cobriria o vídeo, e a montagem não repete mais "
+            f"clipe em loop; recebido: {cfg.curto_max_dur_clipe_s}."
+        )
+    if not 1 <= cfg.x_curtidos_dias <= 90:
+        raise SystemExit(
+            "X_CURTIDOS_DIAS deve estar entre 1 e 90 dias (recebido: "
+            f"{cfg.x_curtidos_dias})."
         )
     cfg.output_dir.mkdir(exist_ok=True)
     return cfg

@@ -1,18 +1,53 @@
-"""Coleta dos posts da LISTA do X e sumarização das trends via GPT.
+"""Coleta dos posts do X que viram pauta, e sumarização das trends via GPT.
 
-A PAUTA VEM DE UMA LISTA DO X (X_LIST_ID), e de mais nada (2026-08-22, pedido
-do usuário). O pipeline lê `/2/lists/{id}/tweets`: uma chamada paginada,
-cronológica, com todos os membros da lista. Pôr ou tirar alguém da lista no X é
-a forma de mexer na pauta do canal — sem commit e sem deploy.
+DUAS FONTES, EM ORDEM (2026-08-28, desenho do usuário: "vídeos curtidos
+--fallback--> lista do X"), e as MESMAS para os dois formatos — Short e longo
+entram por `coletar_trends` e recebem a mesma pauta elegível:
+
+1. AS CURTIDAS DO USUÁRIO (`/2/users/:id/liked_tweets`), dentro de uma janela
+   de X_CURTIDOS_DIAS. É a fonte primária: curtir um post é curadoria a mão que
+   já acontece de graça, e o mesmo orçamento de leitura passa a comprar
+   material escolhido em vez de timeline bruta. Exige contexto de usuário COM O
+   ESCOPO `like.read` — um a mais do que a lista privada precisa. Ver
+   `_coletar_curtidos` para as três coisas que a API NÃO entrega aqui (quando a
+   curtida aconteceu, `start_time`, ordem por data do post) e o que se faz na
+   falta delas.
+2. A LISTA DO X (X_LIST_ID, `/2/lists/{id}/tweets`): uma chamada paginada,
+   cronológica, com todos os membros da lista. Foi o caminho único entre
+   2026-08-22 e 2026-08-28 e continua inteira aqui, agora como FALLBACK. Pôr ou
+   tirar alguém da lista no X segue sendo a forma de mexer nela — sem commit e
+   sem deploy.
+
+O fallback dispara por ESCASSEZ (menos de X_CURTIDOS_MIN posts aproveitáveis
+nas curtidas), não por exceção: o modo de falha real da fonte nova é semana sem
+curtir, curtida em post de texto ou escopo ausente, e todos chegam como
+"veio pouco". Ver `coletar_trends`.
 
 E SÓ SOBE POST COM CLIPE (2026-08-25, pedido do usuário): repost e post sem
 mídia nativa são descartados na coleta. A v2 não filtra mídia no servidor — não
-existe parâmetro de tipo no endpoint de lista —, então o corte é feito aqui,
-sobre `expansions=attachments.media_keys` + `media.fields=type`, que já vêm no
-mesmo envelope e não custam chamada extra.
+existe parâmetro de tipo nem no endpoint de lista nem no de curtidas —, então o
+corte é feito aqui, sobre `expansions=attachments.media_keys` +
+`media.fields=type,duration_ms`, que já vêm no mesmo envelope e não custam
+chamada extra. Os filtros das duas fontes moram num lugar só (`_filtrar_posts`)
+justamente para não divergirem.
 
-CAMINHO ÚNICO. Até 2026-08-22 existia embaixo dele a arquitetura anterior
-inteira, como fallback: as CONTAS SEGUIDAS (`/2/users/:id/following`) lidas por
+NO SHORT ENTRA UM TETO DE DURAÇÃO (2026-08-28): post cujo menor clipe passa de
+CURTO_MAX_DUR_CLIPE segundos não vira pauta. Ele é a contrapartida do fim do
+loop na montagem — sem repetir clipe, o material é o teto do vídeo, e clipe
+comprido demais é clipe do qual só se usaria o começo. A duração vem de
+`duration_ms`, no mesmo envelope, e é ela também que dimensiona o roteiro (o
+campo `segundos_video` de cada trend; ver `_montar_trends`).
+
+O QUE NÃO É FILTRADO AQUI, de propósito: LIVE FOOTAGE e MACROTEMA, pedidos na
+mesma conversa. Os dois já existem no pipeline e custam o que esta camada não
+pode pagar — live footage é visão do GPT sobre frames do clipe (triagem.py
+antes da escolha da pauta, auditoria.py como palavra final) e macrotema é uma
+chamada de LLM sobre a trend já formada (classificacao.py, com o corte em
+main.py). Ver `_filtrar_posts`.
+
+A LISTA FOI CAMINHO ÚNICO ENTRE 2026-08-22 E 2026-08-28. Antes de 22/08
+existia embaixo dela a arquitetura anterior inteira, como fallback: as CONTAS
+SEGUIDAS (`/2/users/:id/following`) lidas por
 `search/recent` com `from:` em lotes de 512 caracteres, mais a TIMELINE de um
 subconjunto rotativo das contas. Ela saiu porque escondia defeito — o token
 vencido derrubava a lista em 4 das 12 execuções diárias e o vídeo saía assim
@@ -21,8 +56,9 @@ existe para eliminar (medido em 2026-08-17: uma conta com 12 posts em 24h
 apareceu ZERO vezes na coleta por lotes). Falha de leitura agora ABORTA.
 
 Usa a X API oficial v2 em modo pay-per-use (a mesma credencial do download de
-mídias em midia_x.py). A lista PRIVADA exige contexto de usuário: o access
-token OAuth 2.0 é distribuído pelo cron renovador (ver `renovar_token_do_x`).
+mídias em midia_x.py). As CURTIDAS e a lista PRIVADA exigem contexto de
+usuário: o access token OAuth 2.0 é distribuído pelo cron renovador (ver
+`renovar_token_do_x`).
 Sobra da arquitetura antiga uma única busca por `search/recent`,
 `buscar_posts_com_video`, que é do formato LONGO e não procura pauta: procura
 CLIPE de um assunto já escolhido, fora das contas do canal.
@@ -32,7 +68,8 @@ coleta e X_MAX_POSTS_BUSCA limita a busca aberta por clipes. Desde 2026-08-25
 são 100 posts por vídeo — o máximo que a X API entrega numa chamada, e por isso
 o teto virou UMA leitura só, de US$ 0,50, sem paginação.
 
-JANELA_HORAS NÃO SE APLICA MAIS À LISTA (2026-08-25, pedido do usuário). A v2
+JANELA_HORAS NÃO SE APLICA À LISTA (2026-08-25, pedido do usuário) NEM ÀS
+CURTIDAS, que têm janela própria em dias (X_CURTIDOS_DIAS). A v2
 não filtra data no endpoint de lista (confirmado no OpenAPI: `getListsPosts`
 aceita só `id`, `max_results` e `pagination_token`), então a janela era um corte
 DEPOIS de pagar — jogava fora post já comprado. Como a timeline vem em ordem
@@ -48,7 +85,15 @@ inédito) antes do engajamento, no formato que o resto do pipeline consome
 sentimento, apelo_visual, posts, data).
 """
 
+import base64
+import hashlib
+import http.server
 import json
+import os
+import threading
+import urllib.parse
+import webbrowser
+from copy import copy
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -66,6 +111,22 @@ SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
 # `start_time`: a janela é aplicada no cliente, e a ordem cronológica permite
 # parar de paginar assim que os posts ficam mais velhos que ela.
 LIST_TWEETS_ENDPOINT = "https://api.x.com/2/lists/{id}/tweets"
+# Posts que o DONO DA CONTA curtiu, do mais recente para o mais antigo. É a
+# fonte PRIMÁRIA da pauta desde 2026-08-28: curtir um post no X é o gesto de
+# curadoria mais barato que existe, e ele já acontece — a lista continua
+# embaixo, como fallback.
+#
+# Três limitações da v2, todas conferidas no OpenAPI antes de desenhar em cima:
+#   - exige CONTEXTO DE USUÁRIO com o escopo `like.read` (o bearer app-only não
+#     enxerga curtida de ninguém). Sem o escopo o X responde 403 e a coleta cai
+#     para a lista, que é exatamente o desenho pedido;
+#   - NÃO aceita `start_time`/`end_time`. A janela de dias é aplicada aqui, na
+#     data do POST;
+#   - NÃO devolve QUANDO a curtida aconteceu. O que se sabe é a ORDEM: o
+#     endpoint entrega da curtida mais recente para a mais antiga. Ver
+#     `_coletar_curtidos` para o que isso significa na prática.
+LIKED_TWEETS_ENDPOINT = "https://api.x.com/2/users/{id}/liked_tweets"
+ME_ENDPOINT = "https://api.x.com/2/users/me"
 
 MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 
@@ -129,6 +190,20 @@ def _normalizar_posts(dados: dict) -> list[dict]:
     tipo_midia = {
         m.get("media_key"): m.get("type") for m in includes.get("media") or []
     }
+    # DURAÇÃO de cada clipe, em segundos (2026-08-28). Vem de
+    # `media.fields=duration_ms` no MESMO envelope da coleta, sem chamada nem
+    # custo extra — e é o que permite ao Short escolher a pauta já sabendo se o
+    # clipe cabe no teto de CURTO_MAX_DUR_CLIPE e se sobra material para a
+    # narração inteira. `animated_gif` costuma vir SEM o campo: duração
+    # desconhecida é None, e None nunca veta (só não conta como material).
+    dur_midia = {
+        m.get("media_key"): (
+            float(m["duration_ms"]) / 1000.0
+            if isinstance(m.get("duration_ms"), (int, float))
+            else None
+        )
+        for m in includes.get("media") or []
+    }
 
     # Posts ORIGINAIS de reposts, que a expansão referenced_tweets.id devolve
     # junto. É neles que mora a mídia: o repost em si não tem `attachments`, e
@@ -160,9 +235,14 @@ def _normalizar_posts(dados: dict) -> list[dict]:
                 post["attachments"] = {"media_keys": chaves_orig}
             break
         chaves = (post.get("attachments") or {}).get("media_keys") or []
-        tem_video = any(
-            tipo_midia.get(c) in ("video", "animated_gif") for c in chaves
-        )
+        chaves_video = [
+            c for c in chaves if tipo_midia.get(c) in ("video", "animated_gif")
+        ]
+        tem_video = bool(chaves_video)
+        # Durações dos clipes DESTE post, sem os desconhecidos. Quem filtra por
+        # teto olha a mais CURTA (basta um clipe caber) e quem soma material
+        # para a narração usa a mais LONGA — as duas leituras saem daqui.
+        durs = [d for c in chaves_video if (d := dur_midia.get(c)) is not None]
         posts.append(
             {
                 "url": f"https://x.com/{usuario}/status/{id_post}",
@@ -174,6 +254,9 @@ def _normalizar_posts(dados: dict) -> list[dict]:
                 + metricas.get("quote_count", 0),
                 "respostas": metricas.get("reply_count", 0),
                 "video": tem_video,
+                # Duração dos clipes do post, em segundos. Lista vazia quando o
+                # X não informou (GIF animado, em geral).
+                "dur_videos_s": durs,
                 # Repost. A LISTA DESCARTA (2026-08-25, pedido do usuário): a
                 # casca do repost gastava uma das 50 vagas do teto sem entregar
                 # nada — não traz `attachments` (o clipe fica invisível) e o
@@ -214,7 +297,7 @@ def _consultar(
                     "referenced_tweets.id.author_id"
                 ),
                 "user.fields": "username",
-                "media.fields": "type",
+                "media.fields": "type,duration_ms",
             },
         )
     except requests.RequestException as erro:
@@ -436,6 +519,264 @@ def renovar_token_do_x(cfg: Config) -> bool:
     return True
 
 
+AUTHORIZE_URL = "https://x.com/i/oauth2/authorize"
+# Escopos que o pipeline precisa, e por quê cada um:
+#   tweet.read     — ler os posts (lista, curtidas, busca)
+#   users.read     — /2/users/me e a expansão de autor (o @ do crédito na tela)
+#   list.read      — /2/lists/{id}/tweets, o fallback da pauta
+#   like.read      — /2/users/:id/liked_tweets, a fonte primária desde 2026-08-28
+#   offline.access — sem ele o X NÃO devolve refresh token, e a autorização
+#                    valeria 2 horas em vez de indefinidamente
+ESCOPOS_X = "tweet.read users.read list.read like.read offline.access"
+# O callback JÁ CADASTRADO no app (conferido no painel em 2026-08-28, na aba
+# Settings > Authentication settings do app 33042480). Lá existem dois:
+# `https://localhost:8080/callback` e `http://localhost:8080/callback`. Este
+# código usa o **http**, que é o que um servidor local serve sem certificado —
+# o https exigiria um certificado autoassinado e um aviso do navegador no meio
+# da autorização, sem ganho nenhum para um redirect que não sai da máquina.
+#
+# A porta é FIXA, ao contrário do fluxo do YouTube, que sorteia uma. O X faz
+# EXACT MATCH do redirect_uri contra os Callback URLs cadastrados (conferido na
+# doc oficial), então porta sorteada seria rejeitada em toda tentativa. O
+# caminho `/callback` também faz parte da correspondência — o handler aceita
+# qualquer path, mas o X só redireciona para este.
+REDIRECT_PADRAO = "http://localhost:8080/callback"
+# Espera pelo redirect do navegador, em segundos. Passado isso o comando
+# devolve o terminal em vez de ficar pendurado segurando a porta.
+ESPERA_AUTORIZACAO_S = 300
+
+
+def autorizar_x(cfg: Config) -> None:
+    """Autoriza o app do X no navegador e distribui os tokens; modo `--auth-x`.
+
+    Existe desde 2026-08-28. Até aqui a autorização do X era feita À MÃO — o
+    README dizia "reautorize no navegador" e não havia nada que fizesse isso,
+    ao contrário do YouTube, que tem `--auth-youtube` desde sempre. A conta
+    dessa falta veio junto com as CURTIDAS: elas exigem o escopo `like.read`,
+    que o token em produção não tinha, e o caminho para consertar era montar o
+    PKCE do X na unha.
+
+    E ESCOPO NÃO SE CONSERTA NO PAINEL. Ligar `like.read` nas configurações do
+    app não altera token JÁ EMITIDO: os escopos são gravados no token no
+    momento da autorização. Foi exatamente o que se mediu em 28/08 — com
+    `like.read` ativado no app, `/2/users/me` respondia 200 e
+    `/2/users/:id/liked_tweets` respondia 403 com o mesmo token. Só uma
+    autorização NOVA carrega o escopo novo, e é isto aqui.
+
+    O que este modo faz, em ordem:
+
+    1. sobe um servidor local no `redirect_uri` (porta FIXA — o X faz exact
+       match contra os Callback URLs do app) e abre o navegador;
+    2. troca o código por access + refresh, com PKCE S256;
+    3. IMPRIME OS ESCOPOS CONCEDIDOS. É a única forma de ver o que o token de
+       fato carrega — o token do X é opaco e não há endpoint de introspecção;
+    4. grava refresh, access e vencimento no serviço do cron renovador, que é
+       de onde todos os crons leem em tempo de execução (ver `_ler_do_render`).
+
+    Roda LOCALMENTE, não em cron: ele depende de um navegador.
+    """
+    # AS CREDENCIAIS PODEM VIR DO RENDER, e não só do .env local (2026-08-28).
+    # Este comando roda na MÁQUINA, mas o pipeline mora no Render: o .env local
+    # de quem opera pelos crons envelhece sem que isso atrapalhe nada — o do
+    # usuário estava parado numa versão que ainda tinha Firecrawl e Zernio,
+    # removidos em 16/08. Exigir que ele fosse atualizado à mão para autorizar
+    # seria pedir que os segredos fossem copiados para o disco sem necessidade.
+    #
+    # É a mesma fonte da verdade que `_ler_do_render` já usa para o token: o
+    # serviço do cron renovador. Com RENDER_API_KEY e RENDER_TOKEN_SERVICE_ID
+    # em mãos, o resto se resolve sozinho.
+    cliente_id = cfg.x_oauth_client_id or _ler_do_render(cfg, "X_OAUTH_CLIENT_ID")
+    cliente_secret = cfg.x_oauth_client_secret or _ler_do_render(
+        cfg, "X_OAUTH_CLIENT_SECRET"
+    )
+    if cliente_id and not cfg.x_oauth_client_id:
+        print("[x-auth] Credenciais OAuth lidas do serviço do renovador no Render.")
+    if not (cliente_id and cliente_secret):
+        raise SystemExit(
+            "Sem X_OAUTH_CLIENT_ID/X_OAUTH_CLIENT_SECRET não dá para "
+            "autorizar, e não deu para lê-los no Render.\n"
+            "Ou preencha os dois no .env (developer.x.com > seu app > Keys and "
+            "tokens > OAuth 2.0 Client ID and Client Secret), ou passe "
+            "RENDER_API_KEY e RENDER_TOKEN_SERVICE_ID para este comando ler as "
+            "credenciais do serviço do cron renovador."
+        )
+    cfg = copy(cfg)
+    cfg.x_oauth_client_id = cliente_id
+    cfg.x_oauth_client_secret = cliente_secret
+
+    redirect_uri = (
+        os.getenv("X_OAUTH_REDIRECT_URI", "").strip() or REDIRECT_PADRAO
+    )
+    partes = urllib.parse.urlparse(redirect_uri)
+    porta = partes.port or (443 if partes.scheme == "https" else 80)
+
+    # PKCE: o verifier é o segredo, o challenge é o hash dele que vai na URL.
+    verifier = base64.urlsafe_b64encode(os.urandom(64)).decode().rstrip("=")
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .decode()
+        .rstrip("=")
+    )
+    estado = base64.urlsafe_b64encode(os.urandom(24)).decode().rstrip("=")
+
+    recebido: dict[str, str] = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — assinatura da stdlib
+            consulta = urllib.parse.urlparse(self.path).query
+            for chave, valor in urllib.parse.parse_qsl(consulta):
+                recebido[chave] = valor
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            ok = "code" in recebido
+            self.wfile.write(
+                (
+                    "<h2>Autorização concluída.</h2><p>Pode fechar esta aba e "
+                    "voltar ao terminal.</p>"
+                    if ok
+                    else "<h2>Autorização recusada.</h2><p>Volte ao terminal.</p>"
+                ).encode("utf-8")
+            )
+
+        def log_message(self, *_args) -> None:  # silencia o log do servidor
+            pass
+
+    try:
+        servidor = http.server.HTTPServer((partes.hostname or "localhost", porta), Handler)
+    except OSError as erro:
+        raise SystemExit(
+            f"Não deu para escutar em {redirect_uri} ({erro}). A porta precisa "
+            "estar livre e o endereço tem que ser EXATAMENTE um dos Callback "
+            "URLs do app no developer.x.com — o X não aceita porta diferente."
+        ) from erro
+
+    url = AUTHORIZE_URL + "?" + urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": cfg.x_oauth_client_id,
+            "redirect_uri": redirect_uri,
+            "scope": ESCOPOS_X,
+            "state": estado,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+
+    print(
+        f"[x-auth] Callback: {redirect_uri} (precisa estar entre os Callback "
+        "URIs do app no developer.x.com — o X exige correspondência exata).\n"
+        f"[x-auth] Escopos pedidos: {ESCOPOS_X}\n"
+        "[x-auth] Abrindo o navegador para autorização..."
+    )
+    print(f"  Se não abrir, acesse manualmente:\n  {url}\n")
+    threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
+    # TIMEOUT (2026-08-28): sem ele `handle_request` espera para SEMPRE. Fechar
+    # a aba sem autorizar não devolve o terminal e o processo fica pendurado
+    # segurando a porta — foi o que aconteceu na primeira execução deste
+    # código. O fluxo do YouTube tem o mesmo defeito; aqui ele não se repete.
+    servidor.timeout = ESPERA_AUTORIZACAO_S
+    servidor.handle_request()  # aguarda o redirect com o código
+    servidor.server_close()
+    if not recebido:
+        raise SystemExit(
+            f"Ninguém voltou do navegador em {ESPERA_AUTORIZACAO_S // 60} "
+            "minutos. Se a página do X nem chegou a abrir, confira se "
+            f"{redirect_uri} está cadastrado como Callback URI do app: o X "
+            "recusa a autorização ANTES de redirecionar quando ele não bate, "
+            "e aí nada volta para cá."
+        )
+
+    if recebido.get("error"):
+        raise SystemExit(
+            f"O X recusou a autorização: {recebido['error']} "
+            f"({recebido.get('error_description', 'sem detalhe')})."
+        )
+    if recebido.get("state") != estado or not recebido.get("code"):
+        raise SystemExit("Autorização inválida (state divergente ou código ausente).")
+
+    resp = requests.post(
+        OAUTH2_TOKEN_ENDPOINT,
+        auth=(cfg.x_oauth_client_id, cfg.x_oauth_client_secret),
+        data={
+            "grant_type": "authorization_code",
+            "code": recebido["code"],
+            "redirect_uri": redirect_uri,
+            "code_verifier": verifier,
+            "client_id": cfg.x_oauth_client_id,
+        },
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        raise SystemExit(
+            f"Troca do código pelo token falhou ({resp.status_code}): "
+            f"{resp.text[:300]}"
+        )
+    dados = resp.json()
+    refresh = dados.get("refresh_token")
+    access = dados.get("access_token")
+    if not (refresh and access):
+        raise SystemExit(
+            "O X não devolveu refresh_token. Confira se `offline.access` está "
+            "entre os escopos do app — sem ele a autorização vale 2 horas."
+        )
+
+    # OS ESCOPOS CONCEDIDOS, que é a informação que não existia em lugar nenhum
+    # e cuja falta custou a rodada de depuração de 28/08. Ele vem do X, não do
+    # que pedimos: se o app não tiver um escopo habilitado, ele some daqui.
+    concedidos = (dados.get("scope") or "").split()
+    print(f"[x-auth] Escopos CONCEDIDOS pelo X: {' '.join(concedidos) or '(nenhum)'}")
+    faltando = [e for e in ESCOPOS_X.split() if e not in concedidos]
+    if faltando:
+        print(
+            f"[x-auth] ATENÇÃO: faltou {', '.join(faltando)}. Habilite no app "
+            "(developer.x.com > User authentication settings) e rode de novo — "
+            "sem `like.read` a pauta continua saindo da lista, e sem "
+            "`list.read` o fallback morre."
+        )
+
+    # Ordem igual à do renovador: o refresh primeiro (é o que custa uma
+    # reautorização manual se perder), depois o access, e o vencimento por
+    # último — data nova apontando para token velho é a mentira que reabre a
+    # janela morta (ver `renovar_token_do_x`).
+    try:
+        ARQUIVO_REFRESH.write_text(refresh, encoding="utf-8")
+    except OSError as erro:
+        print(f"[aviso] não deu para gravar o refresh em disco: {erro}")
+
+    if not (cfg.render_api_key and cfg.render_token_service_id):
+        print(
+            "\n[x-auth] Sem RENDER_API_KEY/RENDER_TOKEN_SERVICE_ID no .env: os "
+            "tokens NÃO foram enviados ao Render. Grave à mão no serviço do "
+            "cron renovador:\n"
+            "  X_OAUTH_REFRESH_TOKEN, X_OAUTH_ACCESS_TOKEN e "
+            "X_OAUTH_ACCESS_TOKEN_EXPIRA\n"
+            f"  (o refresh ficou salvo em {ARQUIVO_REFRESH})"
+        )
+        return
+
+    ok_refresh = _gravar_no_render(cfg, "X_OAUTH_REFRESH_TOKEN", refresh)
+    ok_access = _gravar_no_render(cfg, "X_OAUTH_ACCESS_TOKEN", access)
+    segundos = int(dados.get("expires_in") or 0)
+    ok_expira = True
+    if segundos > 60:
+        vence = datetime.now(timezone.utc) + timedelta(seconds=segundos - 60)
+        ok_expira = _gravar_no_render(
+            cfg, CHAVE_EXPIRA, vence.isoformat(timespec="seconds")
+        )
+    if ok_refresh and ok_access and ok_expira:
+        print(
+            "[x-auth] Tokens gravados no serviço do cron renovador. Os crons "
+            "de vídeo leem de lá em tempo de execução — nada a deployar."
+        )
+    else:
+        print(
+            "[aviso] Nem tudo foi gravado no Render (refresh="
+            f"{ok_refresh}, access={ok_access}, vencimento={ok_expira}). "
+            "Confira as env vars do serviço do renovador à mão."
+        )
+
+
 def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
     """Access token OAuth 2.0 do USUÁRIO, renovado pelo refresh token.
 
@@ -502,6 +843,16 @@ def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
         CACHE_TOKEN_USUARIO["access"] = ""
         return None
     dados = resp.json()
+    # ESCOPOS CONCEDIDOS no log (2026-08-28). O token do X é opaco e não há
+    # endpoint de introspecção: a renovação é o ÚNICO lugar em que dá para ver
+    # o que ele carrega. A falta disso custou uma rodada inteira de depuração —
+    # `like.read` estava ativado no app, o token emitido antes não o tinha, e o
+    # sintoma era um 403 mudo só nas curtidas, com /2/users/me respondendo 200.
+    # Escopo não se conserta no painel: só uma autorização nova (`--auth-x`).
+    escopos = (dados.get("scope") or "").split()
+    if escopos:
+        falta = "" if "like.read" in escopos else "  (SEM like.read: a pauta sai da lista, não das curtidas)"
+        print(f"[x] Escopos do token: {' '.join(escopos)}{falta}")
     novo = dados.get("refresh_token")
     if novo and novo != refresh:
         # Grava SEMPRE em disco antes de qualquer outra coisa: o token velho já
@@ -530,6 +881,222 @@ def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
         CACHE_TOKEN_USUARIO["expira_em"] = vence.isoformat(timespec="seconds")
     CACHE_TOKEN_USUARIO["access"] = dados.get("access_token") or ""
     return CACHE_TOKEN_USUARIO["access"] or None
+
+
+def _teto_de_clipe(cfg: Config) -> float | None:
+    """Duração máxima do clipe da pauta, em segundos; None quando não há teto.
+
+    SÓ O SHORT tem teto (2026-08-28, pedido do usuário: "para vídeos curtos, só
+    escolha vídeos que tenham até 30 segundos no máximo"). Ele anda de par com
+    o fim do loop na montagem: sem repetir clipe, quem decide o tamanho do
+    vídeo é o material, e um clipe de 4 minutos não é material melhor que um de
+    25 segundos — é um clipe do qual só se usa o começo. O formato longo segue
+    sem teto: lá cada pauta ocupa uma parte inteira e clipe comprido é ganho.
+    """
+    return float(cfg.curto_max_dur_clipe_s) if cfg.formato == "curto" else None
+
+
+def _dentro_da_janela(post: dict, dias: int) -> bool:
+    """True se o post foi publicado nos últimos `dias`; True quando não dá para saber.
+
+    Data ilegível não veta: o campo é do X, e descartar por falta de leitura
+    jogaria fora post JÁ PAGO por um defeito nosso.
+    """
+    bruto = (post.get("data") or "").strip()
+    if not bruto:
+        return True
+    try:
+        quando = datetime.strptime(bruto[:16], "%Y-%m-%d %H:%M")
+    except ValueError:
+        return True
+    idade = datetime.now(timezone.utc) - quando.replace(tzinfo=timezone.utc)
+    return idade <= timedelta(days=dias)
+
+
+def _filtrar_posts(
+    cfg: Config, lote: list[dict], contas_vetadas: set[str], contagem: dict[str, int]
+) -> list[dict]:
+    """Aplica a TODA fonte de pauta os mesmos cortes; muta `contagem` com os motivos.
+
+    Existe desde 2026-08-28, quando a coleta ganhou uma segunda fonte (as
+    CURTIDAS). Duplicar o filtro em cada uma delas seria escrever duas vezes a
+    regra do canal e descobrir a divergência num vídeo publicado — as curtidas
+    e a lista precisam produzir a MESMA pauta elegível, que é o que o pedido
+    diz ("o mesmo módulo e modelo de pautas" para os dois formatos).
+
+    Os cortes, na ordem:
+
+    1. CONTA VETADA (CONTAS_VETADAS): quem só publica recorte de emissora.
+    2. REPOST: casca sem `attachments` e com o texto truncado em "RT @fulano:".
+    3. SEM CLIPE: o vídeo do canal é montado só com clipe do X.
+    4. CLIPE LONGO DEMAIS: só no Short, ver `_teto_de_clipe`.
+
+    O que NÃO está aqui, de propósito: LIVE FOOTAGE e MACROTEMA, os outros dois
+    filtros pedidos junto com este. Os dois já existem no pipeline e custam o
+    que não se pode pagar nesta camada — live footage é a visão do GPT sobre
+    frames do clipe (triagem.py roda ANTES da escolha da pauta, auditoria.py dá
+    a palavra final), e macrotema é uma chamada de LLM sobre a trend já formada
+    (classificacao.py, com o corte em main.py). Rodar visão sobre os 100 posts
+    lidos aqui custaria mais que o vídeo inteiro para decidir a mesma coisa que
+    já se decide adiante, de graça.
+    """
+    teto = _teto_de_clipe(cfg)
+    aprovados = []
+    for post in lote:
+        if post["usuario"].lower() in contas_vetadas:
+            contagem["conta_vetada"] = contagem.get("conta_vetada", 0) + 1
+            continue
+        if post.get("repost"):
+            contagem["repost"] = contagem.get("repost", 0) + 1
+            continue
+        if not post.get("video"):
+            contagem["sem_clipe"] = contagem.get("sem_clipe", 0) + 1
+            continue
+        if teto is not None:
+            durs = post.get("dur_videos_s") or []
+            # Basta UM clipe do post caber: o post pode trazer o corte de 20s e
+            # a íntegra de 6 minutos, e é o de 20s que o Short vai usar.
+            # Duração desconhecida (GIF animado) não veta — ver `_normalizar_posts`.
+            if durs and min(durs) > teto:
+                contagem["clipe_longo"] = contagem.get("clipe_longo", 0) + 1
+                continue
+        aprovados.append(post)
+    return aprovados
+
+
+def _id_do_usuario(cfg: Config, token: str) -> str:
+    """Id numérico do dono do token; "" quando não dá para descobrir.
+
+    `/2/users/:id/liked_tweets` não aceita "me" no lugar do id (ao contrário de
+    `/2/users/me`), então esta chamada é obrigatória antes de ler as curtidas.
+    Ela não pesa no orçamento: o X cobra por POST lido, e aqui não vem nenhum.
+    """
+    if CACHE_TOKEN_USUARIO.get("user_id"):
+        return CACHE_TOKEN_USUARIO["user_id"]
+    try:
+        dados = _get(token, ME_ENDPOINT, {})
+    except requests.RequestException as erro:
+        print(f"[aviso] X API: não deu para identificar o dono do token ({erro})")
+        return ""
+    uid = ((dados.get("data") or {}).get("id") or "").strip()
+    CACHE_TOKEN_USUARIO["user_id"] = uid
+    return uid
+
+
+def _coletar_curtidos(cfg: Config) -> list[dict]:
+    """Posts que o dono da conta CURTIU, já filtrados; [] quando a fonte falha.
+
+    FONTE PRIMÁRIA DA PAUTA desde 2026-08-28 (pedido do usuário: "pegar os
+    posts que eu curtir nos últimos 7 dias"). A lista do X continua atrás, como
+    fallback — ver `coletar_trends`.
+
+    A troca tem uma razão de qualidade e uma de custo. A lista entrega o que os
+    membros publicaram, e o filtro de clipe descarta a maior parte disso depois
+    de PAGO (a linha "[x] lista:" costuma mostrar 100 lidos para uma dúzia com
+    vídeo). A curtida é um sinal que o usuário já emite de graça, e emite
+    justamente sobre o post que quis guardar: o mesmo orçamento de leitura
+    passa a comprar material escolhido a mão em vez de timeline bruta.
+
+    O QUE A API NÃO DÁ, e como isto lida com a falta:
+
+    - QUANDO a curtida aconteceu. O endpoint devolve só o post curtido, e a
+      janela pedida é de CURTIDA ("nos últimos 7 dias"), não de publicação. O
+      que sobra é a ORDEM — o X entrega da curtida mais recente para a mais
+      antiga —, então ler as `x_max_posts` primeiras JÁ É "o que curti por
+      último". Sobre isso passa ainda a janela de `x_curtidos_dias` na data do
+      POST, que é a aproximação disponível e a que interessa a um canal de
+      notícia: post de três meses curtido ontem não vira pauta de hoje de todo
+      jeito. O efeito colateral conhecido e aceito é o inverso — post publicado
+      hoje e curtido há duas semanas passa pela janela; ele só chega aqui se
+      ainda estiver entre as curtidas mais novas, o que o torna raro.
+    - `start_time`. Confirmado no OpenAPI: o endpoint aceita `max_results` e
+      `pagination_token` e nada de tempo. Por isso a janela é aplicada DEPOIS
+      da leitura, e por isso ela não economiza um centavo — quem limita o gasto
+      aqui é `x_max_posts`, igual à lista.
+    - Ordem por DATA DO POST. Como a ordem é de CURTIDA, as datas vêm
+      embaralhadas, e não há como parar de paginar cedo por causa da janela (na
+      lista há, porque lá a ordem é cronológica). O laço para no orçamento.
+
+    Falhar aqui NÃO aborta, ao contrário da lista: este é o caminho com
+    fallback, por desenho do usuário. 403 é o caso mais provável na estreia — o
+    escopo `like.read` precisa estar no token, e token autorizado antes desta
+    mudança não o tem.
+    """
+    if not cfg.x_curtidos:
+        return []
+    token = _token_de_usuario(cfg)
+    if not token:
+        print(
+            "[aviso] Sem access token de USUÁRIO do X; as curtidas exigem "
+            "contexto de usuário (escopo like.read). Caindo para a lista."
+        )
+        return []
+    uid = _id_do_usuario(cfg, token)
+    if not uid:
+        return []
+
+    posts: list[dict] = []
+    lidos = 0
+    contagem: dict[str, int] = {}
+    fora_da_janela = 0
+    vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
+    pagina = None
+    while lidos < cfg.x_max_posts:
+        params = {
+            "max_results": min(100, max(cfg.x_max_posts - lidos, 5)),
+            "tweet.fields": "created_at,public_metrics,text,referenced_tweets",
+            "expansions": "author_id,attachments.media_keys",
+            "user.fields": "username",
+            "media.fields": "type,duration_ms",
+        }
+        if pagina:
+            params["pagination_token"] = pagina
+        try:
+            dados = _get(token, LIKED_TWEETS_ENDPOINT.format(id=uid), params)
+        except requests.RequestException as erro:
+            # SEM SystemExit: esta fonte tem fallback. O que já veio é aproveitado.
+            print(
+                f"[aviso] X API: leitura das curtidas parou ({erro}). 403 aqui "
+                "é o escopo `like.read` faltando no token — reautorize no "
+                "navegador pedindo `like.read` junto dos escopos atuais. "
+                "Seguindo com o que veio (ou com a lista, se não veio nada)."
+            )
+            break
+        lote = _normalizar_posts(dados)
+        if not lote:
+            break
+        lidos += len(lote)
+        na_janela = []
+        for post in lote:
+            if _dentro_da_janela(post, cfg.x_curtidos_dias):
+                na_janela.append(post)
+            else:
+                fora_da_janela += 1
+        posts.extend(_filtrar_posts(cfg, na_janela, vetadas, contagem))
+        pagina = (dados.get("meta") or {}).get("next_token")
+        if not pagina:
+            break
+
+    if lidos:
+        detalhe = ", ".join(
+            f"{n} {rotulo}"
+            for rotulo, n in (
+                (f"fora dos {cfg.x_curtidos_dias} dias", fora_da_janela),
+                ("repost", contagem.get("repost", 0)),
+                ("sem mídia nativa", contagem.get("sem_clipe", 0)),
+                (
+                    f"clipe acima de {cfg.curto_max_dur_clipe_s}s",
+                    contagem.get("clipe_longo", 0),
+                ),
+                ("de conta vetada", contagem.get("conta_vetada", 0)),
+            )
+            if n
+        )
+        print(
+            f"[x] curtidas: {lidos} posts lidos na X API, {len(posts)} "
+            "aproveitáveis" + (f" (descartados: {detalhe})" if detalhe else "")
+        )
+    return posts
 
 
 def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
@@ -566,8 +1133,7 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
     """
     posts: list[dict] = []
     lidos = 0  # posts que a X API devolveu — é por eles que o X cobra
-    reposts = 0
-    sem_clipe = 0
+    contagem: dict[str, int] = {}
     # Lista PRIVADA exige contexto de usuário; na pública o app-only basta.
     token = _token_de_usuario(cfg) or token
     vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
@@ -582,7 +1148,7 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
             "tweet.fields": "created_at,public_metrics,text,referenced_tweets",
             "expansions": "author_id,attachments.media_keys",
             "user.fields": "username",
-            "media.fields": "type",
+            "media.fields": "type,duration_ms",
         }
         if pagina:
             params["pagination_token"] = pagina
@@ -606,30 +1172,30 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
         if not lote:
             break
         lidos += len(lote)
-        for post in lote:
-            if post["usuario"].lower() in vetadas:
-                continue
-            # REPOST FORA (2026-08-25): casca sem `attachments` e com texto
-            # truncado. Vem antes do filtro de clipe só para o log separar as
-            # duas causas — o repost cairia no filtro de baixo de qualquer
-            # jeito, já que sem `attachments` ele nunca marca `video`.
-            if post.get("repost"):
-                reposts += 1
-                continue
-            # SÓ POST COM CLIPE (2026-08-25): o vídeo é montado apenas com
-            # clipes dos posts, então post sem mídia nativa não vira material
-            # nem pauta — ele só empurrava para a frente uma trend que a
-            # seleção ia vetar depois por "sem nenhum post com vídeo nativo".
-            if not post.get("video"):
-                sem_clipe += 1
-                continue
-            posts.append(post)
+        # Os cortes (conta vetada, repost, sem clipe, clipe longo demais no
+        # Short) moram em `_filtrar_posts` desde 2026-08-28: as CURTIDAS
+        # passaram a ser a fonte primária da pauta, e as duas fontes precisam
+        # produzir a mesma pauta elegível.
+        posts.extend(_filtrar_posts(cfg, lote, vetadas, contagem))
         pagina = (dados.get("meta") or {}).get("next_token")
         if not pagina:
             break
+    detalhe = ", ".join(
+        f"{n} {rotulo}"
+        for rotulo, n in (
+            ("repost", contagem.get("repost", 0)),
+            ("sem mídia nativa", contagem.get("sem_clipe", 0)),
+            (
+                f"clipe acima de {cfg.curto_max_dur_clipe_s}s",
+                contagem.get("clipe_longo", 0),
+            ),
+            ("de conta vetada", contagem.get("conta_vetada", 0)),
+        )
+        if n
+    )
     print(
-        f"[x] lista: {lidos} posts lidos na X API, {len(posts)} com clipe "
-        f"(descartados: {reposts} repost, {sem_clipe} sem mídia nativa)"
+        f"[x] lista: {lidos} posts lidos na X API, {len(posts)} aproveitáveis"
+        + (f" (descartados: {detalhe})" if detalhe else "")
     )
     return posts
 
@@ -686,11 +1252,27 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     return [p["url"] for p in posts]
 
 
-def _listar_posts(posts: list[dict]) -> str:
+def _listar_posts(posts: list[dict], teto: float | None = None) -> str:
     linhas = []
     for p in posts:
         texto = " ".join(p["texto"].split())[:MAX_TEXTO_POST]
+        # A DURAÇÃO do clipe entra na linha desde 2026-08-28: o Short deixou de
+        # repetir clipe em loop, então o tamanho do material é o tamanho do
+        # vídeo, e o curador precisa enxergar isso para não concentrar a trend
+        # em posts de clipe curto.
+        #
+        # A duração anunciada respeita o TETO do formato: um post com um corte
+        # de 20s e a íntegra de 6 minutos vale 20 segundos para o Short, não
+        # 360 — a íntegra nem chega a ser baixada (ver `_baixar_midias` em
+        # midia_x.py), e anunciá-la faria o curador achar que a trend tem
+        # material que ela não vai ter.
+        cabem = [
+            d for d in (p.get("dur_videos_s") or [])
+            if teto is None or d <= teto
+        ]
         video = " | COM VÍDEO" if p.get("video") else ""
+        if video and cabem:
+            video += f" ({max(cabem):.0f}s)"
         linhas.append(
             f"- @{p['usuario']} | {p['data']} UTC | {p['likes']} likes, "
             f"{p['reposts']} reposts, {p['respostas']} respostas{video}\n"
@@ -713,11 +1295,15 @@ Não existe assunto vetado por tema, e não existe assunto obrigatório: o que
 decide é o VALOR DA INFORMAÇÃO abaixo e, depois dele, o que a audiência do
 canal assiste.
 
-Você recebe os posts MAIS RECENTES da lista do X que o usuário curou — todos
-com clipe de vídeo nativo —, com autor, data, métricas de engajamento e texto.
-A DATA DE CADA POST ESTÁ NA LINHA DELE: use-a. Não existe recorte de janela
-aqui, então pauta velha pode aparecer, e o que decide o quão quente ela está é
-a data que você está lendo, não a suposição de que tudo chegou agora. Agrupe-os
+Você recebe os posts do X que o usuário curou — todos com clipe de vídeo
+nativo —, com autor, data, métricas de engajamento, duração do clipe e texto.
+Eles vêm dos posts que ele CURTIU ou de uma lista que ele mantém; nos dois
+casos é curadoria dele, não uma amostra da rede.
+
+A DATA DE CADA POST ESTÁ NA LINHA DELE: use-a. O recorte de janela aqui é
+frouxo ou inexistente, então pauta velha pode aparecer, e o que decide o quão
+quente ela está é a data que você está lendo, não a suposição de que tudo
+chegou agora. Agrupe-os
 nas ATÉ {n} TRENDS mais quentes: anúncios e lançamentos, resultados, números
 divulgados, mudanças de preço, demissões e contratações, aquisições, decisões e
 julgamentos, regulação, quedas de serviço, descobertas, pesquisas, acidentes e
@@ -766,7 +1352,10 @@ Regras dos campos:
   assunto). O vídeo do canal é montado com os CLIPES anexados a esses posts:
   entre posts igualmente centrais, PRIORIZE os marcados com "COM VÍDEO" — uma
   trend sem nenhum post com vídeo não vira vídeo do canal, e quanto mais posts
-  com vídeo, melhor. Nunca invente URL.
+  com vídeo, melhor. A DURAÇÃO de cada clipe está entre parênteses depois de
+  "COM VÍDEO", e ela importa: o vídeo do canal NÃO repete clipe, então a soma
+  dos clipes da trend é o tempo de tela que ela consegue sustentar. Entre dois
+  posts igualmente centrais, prefira o de clipe mais LONGO. Nunca invente URL.
 - "posts_video": as URLs de TODOS os posts marcados com "COM VÍDEO" que
   pertencem a esta trend, mesmo os que você não colocou em "posts" por não
   serem os mais centrais — e mesmo que já estejam lá. Este campo NÃO é
@@ -865,7 +1454,7 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
                 "role": "user",
                 "content": AVISO_DADOS_EXTERNOS
                 + "\n\nPosts coletados:\n"
-                + _listar_posts(posts),
+                + _listar_posts(posts, _teto_de_clipe(cfg)),
             },
         ],
         response_format={"type": "json_schema", "json_schema": ESQUEMA_TRENDS},
@@ -874,63 +1463,98 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
 
 
 def coletar_trends(cfg: Config) -> list[dict]:
-    """Posts da LISTA do X (X_LIST_ID), resumidos em trends pelo GPT.
+    """Pauta do vídeo: as CURTIDAS do usuário e, se elas faltarem, a lista do X.
 
-    Caminho único desde 2026-08-22: não há mais fallback para as contas
-    seguidas — ver o cabeçalho do módulo. Falta de lista, token vencido ou
-    janela sem material param a execução com SystemExit, que o agendador
-    transforma em e-mail.
+    DUAS FONTES, EM ORDEM (2026-08-28, desenho do usuário: "vídeos curtidos
+    --fallback--> lista do X"), e as mesmas para os DOIS FORMATOS — o Short e o
+    longo entram por aqui e recebem a mesma pauta elegível, com um único ajuste
+    de formato (o teto de duração do clipe, que só o Short tem).
+
+    1. `_coletar_curtidos`: os posts que o dono da conta curtiu, dentro da
+       janela de `x_curtidos_dias`. É curadoria a mão, feita de graça e antes
+       de o pipeline rodar.
+    2. `_coletar_da_lista`: a lista do X (X_LIST_ID), que foi o caminho único
+       entre 2026-08-22 e hoje e continua inteira aqui embaixo.
+
+    QUANDO O FALLBACK DISPARA: quando as curtidas não chegam a
+    `x_curtidos_min` posts aproveitáveis. O gatilho é essa quantidade, e não
+    "deu erro", porque o modo de falha real desta fonte não é exceção — é
+    escassez: semana sem curtir nada, curtidas em post de texto, escopo
+    `like.read` ausente (403, que já cai aqui com as mãos vazias). Um punhado
+    de posts não forma trend, e forçar o GPT a agrupar três posts em dez trends
+    produz pauta inventada, que é pior do que usar a lista.
+
+    O piso é de posts APROVEITÁVEIS, não de posts lidos: é o material que
+    chegaria ao curador. Com as duas fontes vazias a execução aborta, como
+    abortava antes — o fallback é da FONTE, não da falta de pauta.
+
+    O que NÃO muda: quem paga é `x_max_posts` (o X cobra por post lido, ~US$
+    0,005). Quando o fallback dispara, a execução lê as duas fontes e paga as
+    duas — é o preço, conhecido, de a curadoria a mão ter a primeira palavra.
     """
-    if not cfg.x_list_id:
-        raise SystemExit(
-            "Sem X_LIST_ID não há pauta: a coleta lê a LISTA do X e o caminho "
-            "pelas contas seguidas não existe mais. Preencha X_LIST_ID no .env "
-            "(ou no Render) com o id da lista."
+    posts = _coletar_curtidos(cfg)
+
+    if len(posts) < cfg.x_curtidos_min:
+        if cfg.x_curtidos:
+            print(
+                f"[x] As curtidas renderam {len(posts)} post(s) aproveitável "
+                f"(mínimo de {cfg.x_curtidos_min}); caindo para a lista do X."
+            )
+        if not cfg.x_list_id:
+            raise SystemExit(
+                "As curtidas não deram pauta e não há X_LIST_ID para o "
+                "fallback. Ou o escopo `like.read` falta no token do X (a "
+                "linha de aviso acima diz se a leitura foi recusada), ou não "
+                "houve curtida com clipe nos últimos "
+                f"{cfg.x_curtidos_dias} dias. Preencha X_LIST_ID no .env (ou "
+                "no Render) para a lista voltar a servir de fallback."
+            )
+
+        token = obter_bearer(cfg)
+        if token is None:
+            raise SystemExit(
+                "Sem token da X API não há coleta de posts. Confira "
+                "X_CONSUMER_KEY e X_CONSUMER_SECRET no .env."
+            )
+
+        print(
+            f"[x] Lendo a lista {cfg.x_list_id} (os {cfg.x_max_posts} posts "
+            "mais recentes, só os que têm clipe)..."
         )
+        # A lista é o ÚLTIMO recurso: falhar aqui aborta, como desde
+        # 2026-08-22 (ver `_coletar_da_lista`). Não há terceira fonte, e um
+        # vídeo saindo de uma pauta pior sem ninguém ver é o que aquela
+        # decisão existe para impedir.
+        da_lista = _coletar_da_lista(cfg, token)
+        # As curtidas que vieram NÃO são jogadas fora: elas foram pagas e são
+        # material curado. Entram na frente, e a deduplicação por URL evita que
+        # um post curtido que também está na lista conte duas vezes.
+        vistos = {p["url"] for p in posts}
+        posts = posts + [p for p in da_lista if p["url"] not in vistos]
 
-    token = obter_bearer(cfg)
-    if token is None:
-        raise SystemExit(
-            "Sem token da X API não há coleta de posts. Confira X_CONSUMER_KEY "
-            "e X_CONSUMER_SECRET no .env."
-        )
-
-    print(
-        f"[x] Lendo a lista {cfg.x_list_id} (os {cfg.x_max_posts} posts mais "
-        "recentes, só os que têm clipe)..."
-    )
-    posts = _coletar_da_lista(cfg, token)
-
-    # FALLBACK DE JANELA REMOVIDO em 2026-08-24 (ver o topo do módulo). Ele
-    # relia a MESMA lista mais para trás — 8h, 12h, 24h, 48h — quando a janela
-    # vinha pobre. Saiu por duas razões, nesta ordem:
-    #   1. JANELA_HORAS virou TETO DURO de conteúdo do X por vídeo (pedido do
-    #      usuário), e reabrir para 48h no Short furava justamente esse teto;
-    #   2. cada etapa refazia a leitura INTEIRA, e a leitura é paga por post:
-    #      com X_MAX_POSTS=50, uma execução azarada gastava 200.
-    #
-    # O que sustenta a decisão é a aritmética nova: com 3 Shorts por dia e
-    # janela de 8h, cada execução tem o DOBRO do intervalo que tinha com 4h, e
-    # as três juntas cobrem o dia sem sobreposição. Se ainda assim a janela vier
-    # seca, a execução aborta — e abortar de graça é mais barato que insistir
-    # pagando. A escassez continua sendo medida logo abaixo (posts com clipe).
     if not posts:
         raise SystemExit(
-            f"A lista {cfg.x_list_id} não devolveu NENHUM post com clipe "
-            f"dentro dos {cfg.x_max_posts} posts mais recentes — e o vídeo é "
-            "montado só com clipes. A linha '[x] lista:' acima diz o que foi "
-            "descartado: se lá houver muito post lido e pouco clipe, é a lista "
-            "publicando texto em vez de vídeo; se não veio post nenhum, "
-            "confira se ela ainda tem membros e se o token do X está válido."
+            "Nenhuma das duas fontes devolveu post com clipe — e o vídeo é "
+            "montado só com clipes. As linhas '[x] curtidas:' e '[x] lista:' "
+            "acima dizem o que foi descartado e por quê: muito post lido e "
+            "pouco clipe é fonte publicando texto em vez de vídeo; nada lido "
+            "nas curtidas é escopo `like.read` ausente ou semana sem curtir; "
+            "nada lido na lista é lista sem membros ou token do X vencido."
+            + (
+                f" No Short entra ainda o teto de "
+                f"{cfg.curto_max_dur_clipe_s}s por clipe."
+                if cfg.formato == "curto"
+                else ""
+            )
         )
 
-    # Todo post que chega aqui tem clipe (o filtro está em _coletar_da_lista),
+    # Todo post que chega aqui tem clipe (o filtro está em `_filtrar_posts`),
     # então a contagem é o próprio tamanho da coleta. Ela segue impressa porque
     # é O número que decide se há material: sem ela a escassez só aparecia lá na
     # frente, como "pool de 2 clipes".
     print(
-        f"[x] {len(posts)} posts com clipe de vídeo nativo na lista; "
-        "resumindo as trends com o GPT..."
+        f"[x] {len(posts)} posts com clipe de vídeo nativo; resumindo as "
+        "trends com o GPT..."
     )
     return _montar_trends(cfg, posts)
 
@@ -948,6 +1572,22 @@ def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
     brutos = _resumir_trends(cfg, posts)
     urls_reais = {p["url"] for p in posts}
     urls_com_video = {p["url"] for p in posts if p.get("video")}
+    # MATERIAL DE VÍDEO POR POST, em segundos (2026-08-28). No Short a montagem
+    # não repete mais clipe em loop, então a soma disto é o TETO de quanto
+    # vídeo a pauta consegue segurar na tela — e é ela que dimensiona o roteiro
+    # (ver `segundos_video` abaixo e `_alvo_do_material` em main.py).
+    teto = _teto_de_clipe(cfg)
+    dur_por_url: dict[str, float] = {}
+    for post in posts:
+        cabem = [
+            d for d in (post.get("dur_videos_s") or [])
+            if teto is None or d <= teto
+        ]
+        if cabem:
+            # O mais LONGO que cabe: é o que a montagem vai preferir, e contar
+            # o mais curto subestimaria o material a ponto de vetar pauta que
+            # tem imagem de sobra.
+            dur_por_url[post["url"]] = max(cabem)
 
     trends = []
     for t in brutos:
@@ -974,6 +1614,17 @@ def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
         # Posts com vídeo primeiro: o lookup de mídias corta esta lista no teto
         # de max_posts_midia, e é dela que sai o pool de clipes.
         urls = com_video + sem_video
+
+        # SEGUNDOS DE VÍDEO DA TREND: a soma dos `max_clipes` clipes mais
+        # longos que ela tem. É o material que pode ir à tela — os outros posts
+        # com vídeo existem como folga da auditoria, não como tempo de tela,
+        # porque a montagem usa no máximo `max_clipes`. Clipe de duração
+        # desconhecida (GIF) não entra na soma: aqui o número existe para
+        # dimensionar o roteiro, e chutar duração inflaria o alvo.
+        duracoes = sorted(
+            (dur_por_url[u] for u in com_video if u in dur_por_url), reverse=True
+        )
+        segundos = sum(duracoes[: cfg.max_clipes])
         trends.append(
             {
                 "trend": t.get("trend", "").strip(),
@@ -989,6 +1640,11 @@ def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
                 # montado só com clipes do X, então trend sem nenhum post com
                 # vídeo sai da disputa na seleção.
                 "posts_com_video": len(com_video),
+                # Segundos de clipe que a trend consegue pôr na tela (soma dos
+                # `max_clipes` mais longos). No Short é o que decide o tamanho
+                # do roteiro e o que veta a candidata sem material — ver
+                # `selecionar_trend` (escritor.py).
+                "segundos_video": round(segundos, 1),
                 "data": t.get("data", ""),
             }
         )

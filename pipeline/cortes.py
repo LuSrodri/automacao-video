@@ -95,7 +95,7 @@ SOMENTE com esses clipes — não há fotos.
 
 Monte a sequência de cortes: qual clipe aparece, em que ordem e em que momento
 da narração cada um ENTRA. Cada clipe fica na tela até o próximo entrar (o
-último vai até o fim; clipe mais curto que a janela repete em loop). Regras:
+último vai até o fim). Regras:
 
 1. "entra_em" é uma citação EXATA e CURTA (3 a 8 palavras consecutivas) do
    texto da narração, copiada caractere por caractere, com a mesma pontuação e
@@ -107,13 +107,20 @@ da narração cada um ENTRA. Cada clipe fica na tela até o próximo entrar (o
 3. CASE clipe e fala: o clipe entra quando a narração fala do que ele mostra.
    Com poucos clipes, divida a narração em blocos que façam sentido com o
    conteúdo de cada um — o momento da troca importa mais que a quantidade.
-4. RITMO (estime ~2,5 palavras por segundo): nenhum clipe fica menos de ~3s na
-   tela, e as janelas NÃO precisam ser iguais — clipe forte segura 8 a 15s,
-   clipe de apoio resolve em 3 a 6s. Se possível, troque de clipe perto da
-   virada da narração (fato → implicação) para renovar a atenção.
-5. Clipe fora do assunto, redundante ou que só mostra logomarca: NÃO use
-   (basta omitir — com 1 clipe bom o vídeo inteiro pode ficar nele). Não
-   repita clipe.
+4. O CLIPE NÃO SE REPETE: ele toca uma vez, do começo ao fim, e acabou. Se você
+   der a um clipe de 9 segundos uma janela de 18, ele não vai voltar ao início
+   — a montagem encolhe a janela e desloca todos os cortes seguintes, desmontando
+   o casamento entre clipe e fala que você acabou de fazer. Olhe a DURAÇÃO de
+   cada clipe na lista e não dê a nenhum um trecho de narração mais longo do
+   que ele.
+5. RITMO (estime ~2,5 palavras por segundo): nenhum clipe fica menos de ~3s na
+   tela, e as janelas NÃO precisam ser iguais — clipe forte segura 8 a 15s (se
+   tiver essa duração), clipe de apoio resolve em 3 a 6s. Se possível, troque
+   de clipe perto da virada da narração (fato → implicação) para renovar a
+   atenção.
+6. Clipe fora do assunto, redundante ou que só mostra logomarca: NÃO use
+   (basta omitir — com 1 clipe bom e longo o suficiente o vídeo inteiro pode
+   ficar nele). Não repita clipe.
 
 Responda somente com o JSON pedido.\
 """
@@ -154,9 +161,19 @@ Responda somente com o JSON pedido.\
 
 
 def _rotulo(m: dict) -> str:
-    """Linha de apresentação de um clipe para o modelo."""
-    if m.get("dur_s"):
-        tipo = f"CLIPE DE VÍDEO de {m['dur_s']:.0f}s"
+    """Linha de apresentação de um clipe para o modelo.
+
+    A duração anunciada é a UTILIZÁVEL, não a do arquivo: a montagem entra pelo
+    `inicio_util_s` (o começo do miolo sem busto falante) e o que vem antes
+    nunca vai ao ar. A diferença passou a importar em 2026-08-28, quando o
+    Short deixou de repetir clipe — o planejador precisa dimensionar as janelas
+    pelo que existe de fato, e um clipe de 30s que começa a servir aos 12
+    entrega 18, não 30.
+    """
+    dur = m.get("dur_s")
+    if dur:
+        util = max(0.0, float(dur) - float(m.get("inicio_util_s") or 0.0))
+        tipo = f"CLIPE DE VÍDEO de {util:.0f}s aproveitáveis"
     else:
         tipo = "CLIPE DE VÍDEO"
     conta = f", post de {m['conta']}" if m.get("conta") else ""
