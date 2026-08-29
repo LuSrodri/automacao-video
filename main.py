@@ -9,9 +9,13 @@ candidatas, o que a audiência do canal assiste até o fim.
 
 Fluxo:
 1. X API coleta os posts que viram pauta, de DUAS FONTES em ordem (2026-08-28):
-   as CURTIDAS do usuário nos últimos X_CURTIDOS_DIAS
-   (`/2/users/:id/liked_tweets`) e, quando elas não rendem X_CURTIDOS_MIN posts
-   aproveitáveis, a LISTA DO X (X_LIST_ID, `/2/lists/{id}/tweets`). Curtir um
+   as X_MAX_POSTS CURTIDAS MAIS RECENTES do usuário, sem recorte de data
+   (`/2/users/:id/liked_tweets`; a janela de dias saiu em 2026-08-29) e, em
+   QUALQUER erro ou filtro delas, a LISTA DO X (X_LIST_ID,
+   `/2/lists/{id}/tweets`) — erro de leitura, menos de X_CURTIDOS_MIN posts
+   aproveitáveis, ou (desde 2026-08-29) a auditoria reprovando o material de
+   todas as candidatas lá no passo 7, que é quando o laço de fallback lê a
+   lista e recomeça em vez de abortar. Curtir um
    post no X é a forma mais barata de mexer na pauta; pôr ou tirar alguém da
    lista continua sendo a segunda. Só sobe post com clipe de vídeo nativo, e no
    Short só clipe de até CURTO_MAX_DUR_CLIPE segundos. O GPT sumariza os posts
@@ -75,7 +79,10 @@ Fluxo:
    FALLBACK DE TEMA: ficar abaixo do piso de clipes aprovados (1 no curto,
    LONGO_MIN_CLIPES_APROVADOS no longo) — ou não conseguir baixar clipe
    nenhum — não aborta mais a execução: a candidata sai da disputa e os passos
-   4 a 7 refazem com a próxima trend, até TENTATIVAS_TREND candidatas.
+   4 a 7 refazem com a próxima trend, até TENTATIVAS_TREND candidatas. E
+   esgotadas as TENTATIVAS_TREND candidatas das CURTIDAS, o laço lê a LISTA do
+   X e recomeça com a pauta dela (2026-08-29) — só depois de as duas fontes
+   falharem é que a execução aborta.
 8. ElevenLabs narra o texto (TTS), o pipeline acelera a narração conforme o
    formato (o Short é acelerado, o longo roda em velocidade normal) e corta os
    silêncios; os timestamps do alinhamento acompanham as duas coisas.
@@ -339,25 +346,39 @@ def main() -> None:
                 "só com as métricas."
             )
 
-    trends = classificar_trends(cfg, coletar_trends(cfg))
-    # SÓ PAUTA DE MACROTEMA DEFINIDO (2026-08-28, pedido do usuário): a
-    # candidata que caiu no balde "outro" sai da disputa. Ver
-    # `filtrar_por_macrotema` para por que o corte importa mais do que parece
-    # (é o balde que escapa do rodízio de temas dos Shorts).
-    trends = filtrar_por_macrotema(trends)
+    def preparar_pauta(so_lista: bool = False) -> tuple[list[dict], bool]:
+        """Coleta, classifica e tria as candidatas; (trends, a lista foi lida).
 
-    # TRIAGEM DO MATERIAL (2026-08-18, pedido do usuário): conferir o clipe
-    # ANTES de escolher a pauta. O sinal que a seleção tinha era indireto —
-    # quantos posts da candidata têm clipe —, e ele não diz nada sobre o que o
-    # clipe MOSTRA; o resultado eram execuções inteiras gastas para descobrir
-    # na auditoria que o único clipe era busto falante. Falha aqui não impede
-    # nada: candidata sem veredito disputa como antes.
-    try:
-        triar_material(cfg, trends, cfg.output_dir / "_triagem")
-    except SystemExit:
-        raise
-    except Exception as erro:
-        print(f"[aviso] Triagem do material falhou ({erro}); seguindo sem ela.")
+        Uma função porque roda DUAS vezes desde 2026-08-29: a segunda quando o
+        material das curtidas não passa nos vetos e a lista do X assume (ver o
+        laço de fallback abaixo).
+        """
+        brutas, usou = coletar_trends(cfg, so_lista=so_lista)
+        brutas = classificar_trends(cfg, brutas)
+        # SÓ PAUTA DE MACROTEMA DEFINIDO (2026-08-28, pedido do usuário): a
+        # candidata que caiu no balde "outro" sai da disputa. Ver
+        # `filtrar_por_macrotema` — a justificativa mecânica dele (o balde
+        # escapava do rodízio) caiu junto com o rodízio em 2026-08-29.
+        brutas = filtrar_por_macrotema(brutas)
+
+        # TRIAGEM DO MATERIAL (2026-08-18, pedido do usuário): conferir o clipe
+        # ANTES de escolher a pauta. O sinal que a seleção tinha era indireto —
+        # quantos posts da candidata têm clipe —, e ele não diz nada sobre o que
+        # o clipe MOSTRA; o resultado eram execuções inteiras gastas para
+        # descobrir na auditoria que o único clipe era busto falante. Falha aqui
+        # não impede nada: candidata sem veredito disputa como antes.
+        pasta_triagem = "_triagem_lista" if so_lista else "_triagem"
+        try:
+            triar_material(cfg, brutas, cfg.output_dir / pasta_triagem)
+        except SystemExit:
+            raise
+        except Exception as erro:
+            print(
+                f"[aviso] Triagem do material falhou ({erro}); seguindo sem ela."
+            )
+        return brutas, usou
+
+    trends, usou_lista = preparar_pauta()
 
     # FALLBACK DE TEMA (2026-08-05): a trend é escolhida por um sinal INDIRETO
     # de material — quantos posts dela têm clipe nativo —, e esse sinal erra:
@@ -378,22 +399,72 @@ def main() -> None:
     # escolhida, e sem guardar o valor original a segunda tentativa herdaria o
     # alvo encolhido da primeira.
     duracao_alvo = cfg.video_duracao
-    for tentativa in range(1, TENTATIVAS_TREND + 1):
+    # SEGUNDA FONTE NO LAÇO (2026-08-29, pedido do usuário: "qualquer erro ou
+    # filtro nos likedposts, fallback para a lista"). Até aqui a lista só
+    # entrava por ESCASSEZ na coleta — uma contagem feita antes de qualquer
+    # visão. Os vetos rodam quatro etapas depois, e quando eles reprovavam tudo
+    # a execução abortava com a lista intocada: foi o que aconteceu nas 10
+    # falhas de 27 a 29/08. Agora, esgotadas as TENTATIVAS_TREND candidatas das
+    # curtidas, a lista é lida (+US$ 0,50 numa execução que hoje não produz
+    # nada) e o laço recomeça com a pauta dela.
+    lista_pendente = bool(cfg.x_list_id) and not usou_lista
+    tentativa = 0
+    while True:
+        tentativa += 1
+        if tentativa > TENTATIVAS_TREND:
+            if not lista_pendente:
+                raise SystemExit(
+                    f"As {TENTATIVAS_TREND} candidatas tentadas não renderam "
+                    "material aproveitável em NENHUMA das duas fontes — nem "
+                    "nas curtidas nem na lista do X; abortando sem publicar. "
+                    "Se isso virar rotina, a alavanca é pôr na lista do X (e "
+                    "curtir) contas que publiquem VÍDEO filmado."
+                )
+            lista_pendente = False
+            print(
+                f"[fallback] As {TENTATIVAS_TREND} candidatas das curtidas "
+                "foram reprovadas na auditoria; lendo a LISTA do X e "
+                "recomeçando com a pauta dela."
+            )
+            trends, _ = preparar_pauta(so_lista=True)
+            if not trends:
+                raise SystemExit(
+                    "A lista do X não devolveu candidata alguma depois de as "
+                    "curtidas falharem; abortando sem publicar."
+                )
+            # Pauta nova, disputa nova: as excluídas eram das curtidas.
+            tentadas = []
+            tentativa = 1
         cfg.video_duracao = duracao_alvo
         # O LONGO cobre TRÊS acontecimentos (2026-08-18, pedido do usuário),
         # um por tópico: exigir 4 posts com clipe de um mesmo fato nunca
         # passava, e com três assuntos cada um só precisa do próprio clipe.
-        selecao = (
-            selecionar_trends_longo(
-                cfg, trends, videos_recentes=recentes, campeoes=campeoes,
-                excluir=tentadas,
+        # A seleção ABORTA quando as regras duras zeram as candidatas (todas
+        # já tentadas, todas repetindo vídeo publicado, nenhuma com clipe).
+        # Com a lista ainda por ler isso não é fim de execução, é fim da FONTE:
+        # o pedido de 2026-08-29 é que qualquer erro ou filtro das curtidas caia
+        # para a lista, e ficar sem candidata é o filtro mais duro de todos.
+        try:
+            selecao = (
+                selecionar_trends_longo(
+                    cfg, trends, videos_recentes=recentes, campeoes=campeoes,
+                    excluir=tentadas,
+                )
+                if cfg.formato == "longo"
+                else selecionar_trend(
+                    cfg, trends, videos_recentes=recentes, campeoes=campeoes,
+                    excluir=tentadas,
+                )
             )
-            if cfg.formato == "longo"
-            else selecionar_trend(
-                cfg, trends, videos_recentes=recentes, campeoes=campeoes,
-                excluir=tentadas,
+        except SystemExit:
+            if not lista_pendente:
+                raise
+            print(
+                "[fallback] A seleção ficou sem candidata nas curtidas; "
+                "passando para a lista do X."
             )
-        )
+            tentativa = TENTATIVAS_TREND
+            continue
         # SEO/GEO: quem MAIS publicou sobre este assunto hoje. É a única leitura
         # do pipeline sobre o lado de fora do canal — os últimos publicados e os
         # campeões de retenção calibram o tom com o próprio público, mas não
@@ -540,15 +611,6 @@ def main() -> None:
         )
         if tentativa < TENTATIVAS_TREND:
             print("[fallback] Escolhendo outra trend com o material restante.")
-    else:
-        raise SystemExit(
-            f"As {TENTATIVAS_TREND} candidatas tentadas hoje não renderam "
-            "material aproveitável — nenhuma passou do piso de clipes "
-            "auditados; abortando sem publicar. Se isso virar rotina, as "
-            "alavancas são pôr na lista do X contas que publiquem VÍDEO (de "
-            "graça) ou subir X_MAX_POSTS, que já está no teto de 100 da API "
-            "e é decisão de gasto."
-        )
 
     marcar_memoria("antes da narração")
     narracao, alinhamento = gerar_narracao(

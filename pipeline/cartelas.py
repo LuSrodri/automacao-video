@@ -296,12 +296,11 @@ def gerar_cartelas(
             # do post citado — texto por definição — e o rosto de quem a
             # narração nomeia são exatamente o material que esta camada existe
             # para mostrar.
+            # `vetar_parado=False` desliga junto o veto de TIPO
+            # (TIPOS_VETADOS_CLIPE), e é o que se quer: a cartela mais útil do
+            # canal é o PRINT do post que a narração está citando.
             vetar_texto=False,
             vetar_parado=False,
-            # E o veto a material que não é live footage é dos clipes pela mesma
-            # razão: a cartela mais útil do canal é o PRINT do post que a
-            # narração está citando, que nenhuma câmera filmou.
-            vetar_nao_filmado=False,
         )
         if not imagens:
             print("[cartelas] Nenhuma imagem aprovada na auditoria.")

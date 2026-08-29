@@ -31,10 +31,10 @@ from .config import AVISO_DADOS_EXTERNOS, Config
 #
 # A LISTA COBRE TODOS OS TEMAS desde 2026-08-16 (pedido do usuário): o canal
 # deixou de ter recorte temático, e uma lista só de rótulos de tecnologia
-# empurraria metade das pautas novas para "outro" — que é o balde de descarte e
-# NÃO entra no rodízio, ou seja, o rodízio pararia de funcionar justamente nos
-# assuntos recém-admitidos. Voltou por isso "mundo-conflitos", que tinha saído
-# em 2026-07-30 quando guerra e geopolítica foram vetadas.
+# empurraria metade das pautas novas para "outro", o balde de descarte. Voltou
+# por isso "mundo-conflitos", que tinha saído em 2026-07-30 quando guerra e
+# geopolítica foram vetadas. (Até 2026-08-29 havia um motivo mecânico a mais:
+# "outro" não entrava no rodízio de temas dos Shorts, que foi removido.)
 MACROTEMAS = [
     "ia",
     "criacoes-ia",
@@ -218,14 +218,14 @@ def filtrar_por_macrotema(trends: list[dict]) -> list[dict]:
     temático), o que este filtro faz de fato é derrubar o BALDE: a candidata
     que o classificador não conseguiu pôr em nenhum dos dezesseis rótulos.
 
-    O corte tem consequência prática além da editorial, e é ela que o
-    justifica: "outro" não entra no RODÍZIO de temas dos Shorts (escritor.py) —
-    um Short de "outro" seguido de outro Short de "outro" não é barrado por
-    nada. Enquanto ele era só um rótulo de contexto isso passava; com as
-    curtidas na fonte da pauta o volume de assunto atípico sobe, e o rodízio
-    deixaria de funcionar exatamente onde mais precisa.
+    A justificativa mecânica do corte MUDOU em 2026-08-29: ele existia porque
+    "outro" não entrava no rodízio de temas dos Shorts, e o rodízio foi
+    removido nessa data. O que sobra é a razão editorial pura — "outro" é o
+    rótulo que a classificação usa quando não consegue dizer do que a candidata
+    trata, e pauta que o próprio pipeline não soube nomear é pauta de risco. Se
+    um dia ele começar a derrubar candidata boa, é a primeira regra a revisar.
 
-    O filtro CEDE quando zeraria a disputa, como o rodízio cede: o dia em que
+    O filtro CEDE quando zeraria a disputa: o dia em que
     todas as candidatas caíram no balde é um dia de classificação ruim, não de
     pauta ruim, e trocar um vídeo por nenhum vídeo é caro demais para um rótulo.
     """
@@ -236,8 +236,7 @@ def filtrar_por_macrotema(trends: list[dict]) -> list[dict]:
     if not dentro:
         print(
             f"[classificacao] TODAS as {len(trends)} candidatas caíram em "
-            f"'{MACROTEMA_DESCARTE}'; o filtro de macrotema cede (o rodízio de "
-            "temas do Short fica sem efeito nesta execução)."
+            f"'{MACROTEMA_DESCARTE}'; o filtro de macrotema cede."
         )
         return trends
     print(

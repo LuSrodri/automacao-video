@@ -547,12 +547,13 @@ class Config:
     # avisa e usa a lista, então a falta do escopo custa qualidade de pauta, não
     # execução. X_CURTIDOS=0 desliga a fonte e volta ao comportamento anterior.
     x_curtidos: bool = True
-    # Janela da coleta de curtidas, em DIAS, aplicada sobre a data do POST. A
-    # janela que o usuário pediu é de CURTIDA ("posts que eu curtir nos últimos
-    # 7 dias") e essa a API não entrega — ela não devolve quando a curtida
-    # aconteceu, só a ORDEM (da mais nova para a mais velha). Ver
-    # `_coletar_curtidos` em x_client.py para o que isso implica.
-    x_curtidos_dias: int = 7
+    # SEM JANELA DE DATA (2026-08-29, pedido do usuário: "remover o limite de 1
+    # semana"). X_CURTIDOS_DIAS=7 existiu entre 28 e 29/08 e foi removida: a
+    # ordem que a API entrega é de CURTIDA (da mais nova para a mais velha) e o
+    # filtro caía sobre a data do POST, que é outra coisa — post antigo curtido
+    # hoje é curadoria de hoje e era descartado. Medido nas quatro execuções BR
+    # de 28-29/08: 16 a 17 dos 100 posts lidos morriam nela, ~17% do orçamento
+    # comprado e jogado fora. O recorte agora é só a ordem + X_MAX_POSTS.
     # Piso de posts APROVEITÁVEIS abaixo do qual a coleta cai para a lista. O
     # gatilho do fallback é escassez, não exceção: o modo de falha real das
     # curtidas é semana sem curtir, curtida em post de texto ou escopo ausente
@@ -694,12 +695,11 @@ class Config:
     # FALANDO para a câmera — entrevista, podcast, coletiva, depoimento
     # (auditoria.py). Desligar aceita de volta o busto falante e a foto com
     # áudio como fundo do vídeo.
+    # Desde 2026-08-29 ele carrega junto o veto de TIPO do clipe (slide,
+    # apresentação, screenshot e gravação de tela, em TIPOS_VETADOS_CLIPE), que
+    # é o que sobrou do veto de live footage — removido naquela data a pedido do
+    # usuário, junto com a chave VETO_NAO_FILMADO.
     veto_clipe_parado: bool = True
-    # Veto a clipe que NÃO É LIVE FOOTAGE — gravação de tela, slide,
-    # apresentação, cartela, animação, vídeo gerado por IA e filmagem
-    # embrulhada em moldura/mockup (auditoria.py). Desligar aceita de volta a
-    # peça montada em tela cheia.
-    veto_nao_filmado: bool = True
     output_dir: Path = field(default_factory=lambda: RAIZ / "output")
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
@@ -740,7 +740,6 @@ def carregar_config(exige_lista: bool = True) -> Config:
         x_consumer_secret=os.environ["X_CONSUMER_SECRET"],
         x_list_id=(os.getenv("X_LIST_ID", "") or "").strip(),
         x_curtidos=os.getenv("X_CURTIDOS", "1").strip() not in ("0", "false", "False"),
-        x_curtidos_dias=int(os.getenv("X_CURTIDOS_DIAS", "7")),
         x_curtidos_min=int(os.getenv("X_CURTIDOS_MIN", "5")),
         curto_max_dur_clipe_s=int(os.getenv("CURTO_MAX_DUR_CLIPE", "30")),
         x_oauth_client_id=(os.getenv("X_OAUTH_CLIENT_ID", "") or "").strip(),
@@ -796,8 +795,6 @@ def carregar_config(exige_lista: bool = True) -> Config:
         in ("1", "true", "sim", "yes"),
         veto_clipe_parado=os.getenv("VETO_CLIPE_PARADO", "1").strip().lower()
         in ("1", "true", "sim", "yes"),
-        veto_nao_filmado=os.getenv("VETO_NAO_FILMADO", "1").strip().lower()
-        in ("1", "true", "sim", "yes"),
     )
 
     # A LISTA virou o FALLBACK da pauta em 2026-08-28: na frente dela estão as
@@ -840,11 +837,6 @@ def carregar_config(exige_lista: bool = True) -> Config:
         raise SystemExit(
             f"CURTO_MAX_DUR_CLIPE deve estar entre {DUR_MINIMA_TECNICA_S} e "
             f"600 segundos (recebido: {cfg.curto_max_dur_clipe_s})."
-        )
-    if not 1 <= cfg.x_curtidos_dias <= 90:
-        raise SystemExit(
-            "X_CURTIDOS_DIAS deve estar entre 1 e 90 dias (recebido: "
-            f"{cfg.x_curtidos_dias})."
         )
     cfg.output_dir.mkdir(exist_ok=True)
     return cfg

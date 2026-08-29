@@ -240,21 +240,23 @@ DURACAO_MINIMA_LONGO = 90
 # mesmo número, e manter dois nomes para ele só criaria a chance de um dia
 # divergirem.
 TOPICOS_MAX = 3
-# Rodízio de temas dos SHORTS (2026-08-04, pedido do usuário): "intercale os
-# vídeos do shorts, cada shorts para cada tema". O macrotema dos últimos
-# RODIZIO_SHORTS_TEMAS Shorts publicados sai da disputa, então dois Shorts
-# seguidos nunca saem do mesmo tema.
+# RODÍZIO DE TEMAS DOS SHORTS REMOVIDO (2026-08-29, pedido do usuário:
+# "remova completamente o rodizio de temas"). Ele existiu de 2026-08-04 a
+# 2026-08-29 e tirava da disputa as candidatas do macrotema do Short anterior,
+# para que dois Shorts seguidos não saíssem do mesmo tema.
 #
-# ATENÇÃO — isto REINTRODUZ, de forma mais dura, a regra removida em
-# 2026-07-28 (o teto de 4 vídeos seguidos do mesmo macrotema). O motivo da
-# remoção está registrado logo abaixo e continua valendo como fato: nas três
-# sequências conferidas, o teto trocava a melhor candidata pelo melhor de um
-# macrotema que a audiência ignorava (10 vídeos, 2.296 views somadas). O
-# rodízio de agora é uma decisão editorial explícita do usuário, tomada
-# sabendo desse custo — não uma reversão por esquecimento. Se as views dos
-# Shorts caírem, esta é a primeira alavanca a revisar (RODIZIO_SHORTS_TEMAS=0
-# desliga o rodízio inteiro).
-RODIZIO_SHORTS_TEMAS = 1
+# MEDIDO no dia da remoção, execução BR das 18h: a triagem aprovou material de
+# 2 das 6 candidatas ("Photon Matrix" e "Mini Pi Plus", ambas hardware-chips) e
+# o rodízio derrubou as duas, porque hardware-chips era o tema do Short
+# anterior. Sobraram só candidatas de clipe já reprovado, as três tentativas
+# morreram nelas e a execução abortou sem publicar. O rodízio não cedeu porque
+# a cessão dele só olha se SOBROU candidata, não se sobrou candidata com
+# imagem.
+#
+# Com isso volta a valer, sem exceção, o que a remoção de 2026-07-28 já havia
+# estabelecido: nenhum teto de macrotema seguido: quem troca de assunto é o
+# sinal de audiência normalizado pela idade (views/h), que mostra o ciclo
+# esfriando sem precisar vetar ninguém.
 
 ESQUEMA_SELECAO = {
     "name": "selecao_trend",
@@ -1033,9 +1035,8 @@ macrotema com VIEWS/H bem abaixo dos mais antigos do MESMO macrotema. Quando
 isso aparecer, o pico antigo já não vale de régua — ele só está no topo das
 views acumuladas porque está no ar há mais tempo. Nesse caso escolha o
 macrotema com o melhor VIEWS/H RECENTE, mesmo que as views acumuladas dele
-sejam menores. O erro que se quer evitar aqui é o oposto do rodízio: é
-continuar publicando o assunto de ontem porque o vídeo de ontem tem o maior
-número absoluto da lista.
+sejam menores. O erro que se quer evitar aqui é continuar publicando o assunto
+de ontem porque o vídeo de ontem tem o maior número absoluto da lista.
 
 Única ressalva: não escolha uma candidata que renderia um vídeo IDÊNTICO a um
 já publicado, sem nenhum fato novo. Cobertura contínua do mesmo assunto com
@@ -1886,36 +1887,6 @@ def _somente_longos(videos_recentes: list[dict] | None) -> list[dict]:
     ]
 
 
-def _temas_a_evitar(
-    videos_recentes: list[dict] | None, macros_recentes: list[str]
-) -> list[str]:
-    """Macrotemas dos últimos SHORTS publicados, que o próximo Short deve evitar.
-
-    Implementa o rodízio pedido em 2026-08-04 ("intercale os vídeos do shorts,
-    cada shorts para cada tema"): com RODIZIO_SHORTS_TEMAS=1, o tema do Short
-    anterior sai da disputa e dois Shorts seguidos nunca saem do mesmo tema.
-
-    Olha só para os SHORTS: os vídeos longos são outro formato, saem 3x por
-    semana e não fazem parte do rodízio — deixá-los na conta faria a análise de
-    segunda-feira bloquear o Short da mesma tarde. "outro" também não entra: é
-    o rótulo de descarte da classificação, não um tema de verdade, e vetá-lo
-    derrubaria candidatas que não têm nada a ver entre si.
-    """
-    if RODIZIO_SHORTS_TEMAS <= 0:
-        return []
-    # `videos_recentes` vem do mais recente para o mais antigo, e
-    # `macros_recentes` está na mesma ordem (uma entrada por vídeo).
-    temas: list[str] = []
-    for video, macro in zip(videos_recentes or [], macros_recentes):
-        if (video.get("duracao_s") or 0) >= DURACAO_MINIMA_LONGO:
-            continue
-        if macro and macro != "outro" and macro not in temas:
-            temas.append(macro)
-        if len(temas) >= RODIZIO_SHORTS_TEMAS:
-            break
-    return temas
-
-
 def _candidata_por_nome(candidatas: list[dict], nome: str) -> dict:
     """A trend escolhida pela seleção (por nome, com folga p/ paráfrase)."""
     alvo = nome.strip().lower()
@@ -1999,8 +1970,8 @@ def selecionar_trends_longo(
     A troca (ideia do usuário) é cobrir TRÊS acontecimentos, um por tópico. Cada
     trend precisa trazer só o próprio clipe, e o piso de 3 aprovados passa a ser
     somado entre elas. A seleção de cada uma reusa `selecionar_trend` inteira —
-    régua de audiência, anti-repetição e rodízio seguem valendo, e cada escolha
-    entra na lista de exclusão da seguinte.
+    régua de audiência e anti-repetição seguem valendo, e cada escolha entra na
+    lista de exclusão da seguinte.
 
     O retorno tem a forma de uma seleção comum (o resto do pipeline não muda),
     com `trend_obj` juntando os posts das três e `selecoes` guardando as
@@ -2101,9 +2072,9 @@ def selecionar_trend(
     tudo, para que a nova seleção não devolva a mesma candidata que acabou de
     falhar — ver o laço de fallback em main.py.
 
-    O teto de macrotemas SEGUIDOS segue removido (2026-07-28); o que voltou é
-    o rodízio dos Shorts acima, mais estreito e por pedido explícito. Para os
-    vídeos LONGOS nada mudou: a defesa contra ficar preso a um assunto morto
+    NENHUM teto de macrotema seguido: o de 2026-07-28 foi removido e o rodízio
+    dos Shorts que o substituiu saiu em 2026-08-29. A defesa contra ficar preso
+    a um assunto morto
     continua sendo o sinal de audiência normalizado pela idade — o vídeo de 3
     horas atrás com 40 views/h ao lado do de 7 dias atrás com 253 views/h diz
     ao modelo que o ciclo acabou, e ele troca de tema por conta própria.
@@ -2210,32 +2181,10 @@ def selecionar_trend(
     # dele; quem trata isso é CONTAS_SEM_CLIPE (config.py), que tira o clipe de
     # quem só publica recorte de emissora antes de ele contar como material.
 
-    # RODÍZIO DE TEMAS DOS SHORTS (2026-08-04): o macrotema do(s) último(s)
-    # Short(s) publicado(s) sai da disputa, para que cada Short saia de um tema
-    # diferente do anterior. Só no formato curto — o longo tem 3 execuções por
-    # semana e um rodízio ali só reduziria a escolha a nada.
-    #
-    # O veto CEDE quando zeraria as candidatas: intercalar temas é preferência
-    # editorial, e trocar um vídeo bom por nenhum vídeo é um preço que a
-    # preferência não paga. É o oposto do veto a repetição logo abaixo, esse
-    # sim absoluto — publicar o mesmo vídeo duas vezes é pior que não publicar.
-    if not longo:
-        evitar = _temas_a_evitar(videos_recentes, macros_recentes)
-        if evitar:
-            variadas = [t for t in candidatas if t.get("macrotema") not in evitar]
-            if variadas:
-                print(
-                    f"[rodizio] {len(candidatas) - len(variadas)} candidata(s) "
-                    f"do(s) tema(s) do(s) último(s) Short ({', '.join(evitar)}) "
-                    f"fora da disputa ({len(variadas)} seguem)."
-                )
-                candidatas = variadas
-            else:
-                print(
-                    f"[rodizio] todas as candidatas são do(s) tema(s) "
-                    f"{', '.join(evitar)}; o rodízio cede — melhor repetir o "
-                    "tema do que não publicar."
-                )
+    # RODÍZIO DE TEMAS DOS SHORTS REMOVIDO em 2026-08-29 — ver a nota no lugar
+    # de RODIZIO_SHORTS_TEMAS, no topo do módulo. Nenhuma candidata sai mais da
+    # disputa por ser do mesmo macrotema do Short anterior; repetir tema é
+    # decisão do modelo, guiada pelas views/h dos publicados.
 
     janela_repeticao = (
         JANELA_REPETICAO_HORAS_LONGO if longo else JANELA_REPETICAO_HORAS

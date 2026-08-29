@@ -4,14 +4,14 @@ DUAS FONTES, EM ORDEM (2026-08-28, desenho do usuário: "vídeos curtidos
 --fallback--> lista do X"), e as MESMAS para os dois formatos — Short e longo
 entram por `coletar_trends` e recebem a mesma pauta elegível:
 
-1. AS CURTIDAS DO USUÁRIO (`/2/users/:id/liked_tweets`), dentro de uma janela
-   de X_CURTIDOS_DIAS. É a fonte primária: curtir um post é curadoria a mão que
-   já acontece de graça, e o mesmo orçamento de leitura passa a comprar
-   material escolhido em vez de timeline bruta. Exige contexto de usuário COM O
-   ESCOPO `like.read` — um a mais do que a lista privada precisa. Ver
-   `_coletar_curtidos` para as três coisas que a API NÃO entrega aqui (quando a
-   curtida aconteceu, `start_time`, ordem por data do post) e o que se faz na
-   falta delas.
+1. AS CURTIDAS DO USUÁRIO (`/2/users/:id/liked_tweets`), as X_MAX_POSTS mais
+   recentes, SEM RECORTE DE DATA (2026-08-29). É a fonte primária: curtir um
+   post é curadoria a mão que já acontece de graça, e o mesmo orçamento de
+   leitura passa a comprar material escolhido em vez de timeline bruta. Exige
+   contexto de usuário COM O ESCOPO `like.read` — um a mais do que a lista
+   privada precisa. Ver `_coletar_curtidos` para as três coisas que a API NÃO
+   entrega aqui (quando a curtida aconteceu, `start_time`, ordem por data do
+   post) e o que se faz na falta delas.
 2. A LISTA DO X (X_LIST_ID, `/2/lists/{id}/tweets`): uma chamada paginada,
    cronológica, com todos os membros da lista. Foi o caminho único entre
    2026-08-22 e 2026-08-28 e continua inteira aqui, agora como FALLBACK. Pôr ou
@@ -38,12 +38,12 @@ comprido demais é clipe do qual só se usaria o começo. A duração vem de
 `duration_ms`, no mesmo envelope, e é ela também que dimensiona o roteiro (o
 campo `segundos_video` de cada trend; ver `_montar_trends`).
 
-O QUE NÃO É FILTRADO AQUI, de propósito: LIVE FOOTAGE e MACROTEMA, pedidos na
-mesma conversa. Os dois já existem no pipeline e custam o que esta camada não
-pode pagar — live footage é visão do GPT sobre frames do clipe (triagem.py
-antes da escolha da pauta, auditoria.py como palavra final) e macrotema é uma
-chamada de LLM sobre a trend já formada (classificacao.py, com o corte em
-main.py). Ver `_filtrar_posts`.
+O QUE NÃO É FILTRADO AQUI, de propósito: TIPO DE MATERIAL e MACROTEMA. Os dois
+já existem no pipeline e custam o que esta camada não pode pagar — o tipo do
+material (slide, screenshot, gravação de tela) é visão do GPT sobre frames do
+clipe (triagem.py antes da escolha da pauta, auditoria.py como palavra final) e
+macrotema é uma chamada de LLM sobre a trend já formada (classificacao.py, com
+o corte em main.py). Ver `_filtrar_posts`.
 
 A LISTA FOI CAMINHO ÚNICO ENTRE 2026-08-22 E 2026-08-28. Antes de 22/08
 existia embaixo dela a arquitetura anterior inteira, como fallback: as CONTAS
@@ -68,8 +68,14 @@ coleta e X_MAX_POSTS_BUSCA limita a busca aberta por clipes. Desde 2026-08-25
 são 100 posts por vídeo — o máximo que a X API entrega numa chamada, e por isso
 o teto virou UMA leitura só, de US$ 0,50, sem paginação.
 
-JANELA_HORAS NÃO SE APLICA À LISTA (2026-08-25, pedido do usuário) NEM ÀS
-CURTIDAS, que têm janela própria em dias (X_CURTIDOS_DIAS). A v2
+NENHUMA JANELA DE TEMPO SE APLICA ÀS DUAS FONTES DE PAUTA: nem à LISTA
+(2026-08-25) nem às CURTIDAS, que perderam a janela própria de dias em
+2026-08-29, a pedido do usuário e pelo mesmo motivo das duas vezes anteriores —
+recortar por data DEPOIS da leitura joga fora post já pago sem economizar um
+centavo, e a ordem da fonte já faz o papel de janela (a lista vem cronológica,
+as curtidas vêm da mais recente para a mais antiga). Medido nas quatro
+execuções BR de 28-29/08: a janela de 7 dias descartava 16 a 17 dos 100 posts
+lidos, ~17% do orçamento comprado e jogado fora. A v2
 não filtra data no endpoint de lista (confirmado no OpenAPI: `getListsPosts`
 aceita só `id`, `max_results` e `pagination_token`), então a janela era um corte
 DEPOIS de pagar — jogava fora post já comprado. Como a timeline vem em ordem
@@ -896,23 +902,6 @@ def _teto_de_clipe(cfg: Config) -> float | None:
     return float(cfg.curto_max_dur_clipe_s) if cfg.formato == "curto" else None
 
 
-def _dentro_da_janela(post: dict, dias: int) -> bool:
-    """True se o post foi publicado nos últimos `dias`; True quando não dá para saber.
-
-    Data ilegível não veta: o campo é do X, e descartar por falta de leitura
-    jogaria fora post JÁ PAGO por um defeito nosso.
-    """
-    bruto = (post.get("data") or "").strip()
-    if not bruto:
-        return True
-    try:
-        quando = datetime.strptime(bruto[:16], "%Y-%m-%d %H:%M")
-    except ValueError:
-        return True
-    idade = datetime.now(timezone.utc) - quando.replace(tzinfo=timezone.utc)
-    return idade <= timedelta(days=dias)
-
-
 def _filtrar_posts(
     cfg: Config, lote: list[dict], contas_vetadas: set[str], contagem: dict[str, int]
 ) -> list[dict]:
@@ -931,11 +920,11 @@ def _filtrar_posts(
     3. SEM CLIPE: o vídeo do canal é montado só com clipe do X.
     4. CLIPE LONGO DEMAIS: só no Short, ver `_teto_de_clipe`.
 
-    O que NÃO está aqui, de propósito: LIVE FOOTAGE e MACROTEMA, os outros dois
-    filtros pedidos junto com este. Os dois já existem no pipeline e custam o
-    que não se pode pagar nesta camada — live footage é a visão do GPT sobre
-    frames do clipe (triagem.py roda ANTES da escolha da pauta, auditoria.py dá
-    a palavra final), e macrotema é uma chamada de LLM sobre a trend já formada
+    O que NÃO está aqui, de propósito: TIPO DE MATERIAL e MACROTEMA, os outros
+    dois filtros pedidos junto com este. Os dois já existem no pipeline e custam
+    o que não se pode pagar nesta camada — o tipo (slide, screenshot, gravação
+    de tela) é a visão do GPT sobre frames do clipe (triagem.py roda ANTES da
+    escolha da pauta, auditoria.py dá a palavra final), e macrotema é uma chamada de LLM sobre a trend já formada
     (classificacao.py, com o corte em main.py). Rodar visão sobre os 100 posts
     lidos aqui custaria mais que o vídeo inteiro para decidir a mesma coisa que
     já se decide adiante, de graça.
@@ -983,12 +972,25 @@ def _id_do_usuario(cfg: Config, token: str) -> str:
     return uid
 
 
-def _coletar_curtidos(cfg: Config) -> list[dict]:
-    """Posts que o dono da conta CURTIU, já filtrados; [] quando a fonte falha.
+def _coletar_curtidos(cfg: Config) -> tuple[list[dict], bool]:
+    """(posts curtidos já filtrados, houve falha de leitura).
 
-    FONTE PRIMÁRIA DA PAUTA desde 2026-08-28 (pedido do usuário: "pegar os
-    posts que eu curtir nos últimos 7 dias"). A lista do X continua atrás, como
-    fallback — ver `coletar_trends`.
+    A segunda posição é o que faz a lista assumir mesmo quando a contagem
+    passaria pelo piso: QUALQUER erro na leitura das curtidas manda a execução
+    para o fallback (2026-08-29, pedido do usuário: "qualquer erro ou filtro
+    nos likedposts, fallback para a lista"). Antes, um 403 depois de 60 posts
+    lidos devolvia esses 60 e a execução seguia como se a fonte estivesse
+    inteira.
+
+    FONTE PRIMÁRIA DA PAUTA desde 2026-08-28. A lista do X continua atrás,
+    como fallback — ver `coletar_trends`.
+
+    SEM RECORTE DE DATA desde 2026-08-29 (pedido do usuário: "remover o limite
+    de 1 semana"). O que entra são as `x_max_posts` curtidas mais recentes,
+    quaisquer que sejam as datas dos posts. Só quando ELAS acabarem — o
+    histórico inteiro cabe abaixo do teto de leitura e a paginação termina sem
+    `next_token` — é que a lista assume, que é o desenho pedido: "esgotar todos
+    os posts que eu dei like, e então passar para a lista".
 
     A troca tem uma razão de qualidade e uma de custo. A lista entrega o que os
     membros publicaram, e o filtro de clipe descarta a maior parte disso depois
@@ -999,23 +1001,21 @@ def _coletar_curtidos(cfg: Config) -> list[dict]:
 
     O QUE A API NÃO DÁ, e como isto lida com a falta:
 
-    - QUANDO a curtida aconteceu. O endpoint devolve só o post curtido, e a
-      janela pedida é de CURTIDA ("nos últimos 7 dias"), não de publicação. O
-      que sobra é a ORDEM — o X entrega da curtida mais recente para a mais
-      antiga —, então ler as `x_max_posts` primeiras JÁ É "o que curti por
-      último". Sobre isso passa ainda a janela de `x_curtidos_dias` na data do
-      POST, que é a aproximação disponível e a que interessa a um canal de
-      notícia: post de três meses curtido ontem não vira pauta de hoje de todo
-      jeito. O efeito colateral conhecido e aceito é o inverso — post publicado
-      hoje e curtido há duas semanas passa pela janela; ele só chega aqui se
-      ainda estiver entre as curtidas mais novas, o que o torna raro.
+    - QUANDO a curtida aconteceu. O endpoint devolve só o post curtido. O que
+      sobra é a ORDEM — o X entrega da curtida mais recente para a mais antiga
+      —, e é ela que faz aqui o papel de recorte: ler as `x_max_posts`
+      primeiras É "o que curti por último". Foi essa propriedade que aposentou
+      a janela de dias em 2026-08-29: com a ordem sendo de curtida, filtrar
+      pela DATA DO POST não recortava o que o usuário quis dizer (post antigo
+      curtido hoje é curadoria de hoje) e ainda descartava ~17% do que já fora
+      pago.
     - `start_time`. Confirmado no OpenAPI: o endpoint aceita `max_results` e
-      `pagination_token` e nada de tempo. Por isso a janela é aplicada DEPOIS
-      da leitura, e por isso ela não economiza um centavo — quem limita o gasto
-      aqui é `x_max_posts`, igual à lista.
+      `pagination_token` e nada de tempo. Qualquer recorte por data seria
+      DEPOIS da leitura, sem economizar um centavo — quem limita o gasto aqui é
+      `x_max_posts`, igual à lista.
     - Ordem por DATA DO POST. Como a ordem é de CURTIDA, as datas vêm
-      embaralhadas, e não há como parar de paginar cedo por causa da janela (na
-      lista há, porque lá a ordem é cronológica). O laço para no orçamento.
+      embaralhadas. Sem janela isso deixou de importar: o laço para no
+      orçamento ou quando as curtidas acabam.
 
     Falhar aqui NÃO aborta, ao contrário da lista: este é o caminho com
     fallback, por desenho do usuário. 403 é o caso mais provável na estreia — o
@@ -1023,23 +1023,23 @@ def _coletar_curtidos(cfg: Config) -> list[dict]:
     mudança não o tem.
     """
     if not cfg.x_curtidos:
-        return []
+        return [], False
     token = _token_de_usuario(cfg)
     if not token:
         print(
             "[aviso] Sem access token de USUÁRIO do X; as curtidas exigem "
             "contexto de usuário (escopo like.read). Caindo para a lista."
         )
-        return []
+        return [], True
     uid = _id_do_usuario(cfg, token)
     if not uid:
-        return []
+        return [], True
 
     posts: list[dict] = []
     lidos = 0
     contagem: dict[str, int] = {}
-    fora_da_janela = 0
     vetadas = {c.lower() for c in (cfg.contas_vetadas or [])}
+    falhou = False
     pagina = None
     while lidos < cfg.x_max_posts:
         params = {
@@ -1059,20 +1059,15 @@ def _coletar_curtidos(cfg: Config) -> list[dict]:
                 f"[aviso] X API: leitura das curtidas parou ({erro}). 403 aqui "
                 "é o escopo `like.read` faltando no token — reautorize no "
                 "navegador pedindo `like.read` junto dos escopos atuais. "
-                "Seguindo com o que veio (ou com a lista, se não veio nada)."
+                "Seguindo para a lista com o que já veio."
             )
+            falhou = True
             break
         lote = _normalizar_posts(dados)
         if not lote:
             break
         lidos += len(lote)
-        na_janela = []
-        for post in lote:
-            if _dentro_da_janela(post, cfg.x_curtidos_dias):
-                na_janela.append(post)
-            else:
-                fora_da_janela += 1
-        posts.extend(_filtrar_posts(cfg, na_janela, vetadas, contagem))
+        posts.extend(_filtrar_posts(cfg, lote, vetadas, contagem))
         pagina = (dados.get("meta") or {}).get("next_token")
         if not pagina:
             break
@@ -1081,7 +1076,6 @@ def _coletar_curtidos(cfg: Config) -> list[dict]:
         detalhe = ", ".join(
             f"{n} {rotulo}"
             for rotulo, n in (
-                (f"fora dos {cfg.x_curtidos_dias} dias", fora_da_janela),
                 ("repost", contagem.get("repost", 0)),
                 ("sem mídia nativa", contagem.get("sem_clipe", 0)),
                 (
@@ -1096,7 +1090,7 @@ def _coletar_curtidos(cfg: Config) -> list[dict]:
             f"[x] curtidas: {lidos} posts lidos na X API, {len(posts)} "
             "aproveitáveis" + (f" (descartados: {detalhe})" if detalhe else "")
         )
-    return posts
+    return posts, falhou
 
 
 def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
@@ -1462,52 +1456,75 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
     return json.loads(resposta.choices[0].message.content)["trends"]
 
 
-def coletar_trends(cfg: Config) -> list[dict]:
-    """Pauta do vídeo: as CURTIDAS do usuário e, se elas faltarem, a lista do X.
+def coletar_trends(
+    cfg: Config, so_lista: bool = False
+) -> tuple[list[dict], bool]:
+    """(trends da pauta, a LISTA foi lida).
 
     DUAS FONTES, EM ORDEM (2026-08-28, desenho do usuário: "vídeos curtidos
     --fallback--> lista do X"), e as mesmas para os DOIS FORMATOS — o Short e o
     longo entram por aqui e recebem a mesma pauta elegível, com um único ajuste
     de formato (o teto de duração do clipe, que só o Short tem).
 
-    1. `_coletar_curtidos`: os posts que o dono da conta curtiu, dentro da
-       janela de `x_curtidos_dias`. É curadoria a mão, feita de graça e antes
-       de o pipeline rodar.
+    1. `_coletar_curtidos`: as `x_max_posts` curtidas mais recentes do dono da
+       conta, sem recorte de data (2026-08-29). É curadoria a mão, feita de
+       graça e antes de o pipeline rodar.
     2. `_coletar_da_lista`: a lista do X (X_LIST_ID), que foi o caminho único
-       entre 2026-08-22 e hoje e continua inteira aqui embaixo.
+       entre 2026-08-22 e 2026-08-28 e continua inteira aqui embaixo.
 
-    QUANDO O FALLBACK DISPARA: quando as curtidas não chegam a
-    `x_curtidos_min` posts aproveitáveis. O gatilho é essa quantidade, e não
-    "deu erro", porque o modo de falha real desta fonte não é exceção — é
-    escassez: semana sem curtir nada, curtidas em post de texto, escopo
-    `like.read` ausente (403, que já cai aqui com as mãos vazias). Um punhado
-    de posts não forma trend, e forçar o GPT a agrupar três posts em dez trends
-    produz pauta inventada, que é pior do que usar a lista.
+    QUANDO O FALLBACK DISPARA (2026-08-29, pedido do usuário: "qualquer erro ou
+    filtro nos likedposts, fallback para a lista"), em três gatilhos:
+
+    - ERRO de leitura das curtidas — 403 por falta de `like.read`, rede,
+      token de usuário ausente. Antes isto só derrubava a fonte quando zerava a
+      contagem; agora força o fallback sozinho, mesmo com posts na mão.
+    - FILTRO: as curtidas não chegam a `x_curtidos_min` posts aproveitáveis
+      depois dos cortes de `_filtrar_posts` (repost, sem clipe, clipe longo
+      demais, conta vetada). Um punhado de posts não forma trend, e mandar o
+      GPT tirar dez trends de três posts produz pauta inventada.
+    - VETO, lá na frente: quando a auditoria reprova o material de TODAS as
+      candidatas tentadas, `main.py` chama esta função de novo com
+      `so_lista=True` em vez de abortar. É o gatilho que faltava — o que
+      derrubou as 10 execuções de 27 a 29/08 não foi escassez de post, foi
+      material que não passava nos vetos, e a lista nunca chegava a ser lida.
 
     O piso é de posts APROVEITÁVEIS, não de posts lidos: é o material que
     chegaria ao curador. Com as duas fontes vazias a execução aborta, como
     abortava antes — o fallback é da FONTE, não da falta de pauta.
 
+    Com `so_lista=True` as curtidas são puladas de uma vez: é a segunda rodada
+    chamada pelo laço de fallback, e reler as mesmas curtidas ali seria pagar
+    de novo pelo material que acabou de ser reprovado.
+
     O que NÃO muda: quem paga é `x_max_posts` (o X cobra por post lido, ~US$
     0,005). Quando o fallback dispara, a execução lê as duas fontes e paga as
     duas — é o preço, conhecido, de a curadoria a mão ter a primeira palavra.
     """
-    posts = _coletar_curtidos(cfg)
+    if so_lista:
+        posts, falhou, precisa_lista = [], False, True
+    else:
+        posts, falhou = _coletar_curtidos(cfg)
+        precisa_lista = falhou or len(posts) < cfg.x_curtidos_min
 
-    if len(posts) < cfg.x_curtidos_min:
-        if cfg.x_curtidos:
+    usou_lista = False
+    if precisa_lista:
+        if cfg.x_curtidos and not so_lista:
             print(
                 f"[x] As curtidas renderam {len(posts)} post(s) aproveitável "
-                f"(mínimo de {cfg.x_curtidos_min}); caindo para a lista do X."
+                + (
+                    "e a leitura falhou"
+                    if falhou
+                    else f"(mínimo de {cfg.x_curtidos_min})"
+                )
+                + "; caindo para a lista do X."
             )
         if not cfg.x_list_id:
             raise SystemExit(
                 "As curtidas não deram pauta e não há X_LIST_ID para o "
                 "fallback. Ou o escopo `like.read` falta no token do X (a "
                 "linha de aviso acima diz se a leitura foi recusada), ou não "
-                "houve curtida com clipe nos últimos "
-                f"{cfg.x_curtidos_dias} dias. Preencha X_LIST_ID no .env (ou "
-                "no Render) para a lista voltar a servir de fallback."
+                "há curtida com clipe no histórico. Preencha X_LIST_ID no "
+                ".env (ou no Render) para a lista voltar a servir de fallback."
             )
 
         token = obter_bearer(cfg)
@@ -1526,6 +1543,7 @@ def coletar_trends(cfg: Config) -> list[dict]:
         # vídeo saindo de uma pauta pior sem ninguém ver é o que aquela
         # decisão existe para impedir.
         da_lista = _coletar_da_lista(cfg, token)
+        usou_lista = True
         # As curtidas que vieram NÃO são jogadas fora: elas foram pagas e são
         # material curado. Entram na frente, e a deduplicação por URL evita que
         # um post curtido que também está na lista conte duas vezes.
@@ -1556,7 +1574,7 @@ def coletar_trends(cfg: Config) -> list[dict]:
         f"[x] {len(posts)} posts com clipe de vídeo nativo; resumindo as "
         "trends com o GPT..."
     )
-    return _montar_trends(cfg, posts)
+    return _montar_trends(cfg, posts), usou_lista
 
 
 def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
