@@ -353,7 +353,12 @@ def main() -> None:
         material das curtidas não passa nos vetos e a lista do X assume (ver o
         laço de fallback abaixo).
         """
-        brutas, usou = coletar_trends(cfg, so_lista=so_lista)
+        # `recentes` vai junto porque as DESCRIÇÕES dele são a memória do que
+        # já foi consumido: o post do X que já virou vídeo sai da disputa antes
+        # da classificação (ver `x_client.posts_ja_usados`).
+        brutas, usou = coletar_trends(
+            cfg, so_lista=so_lista, videos_publicados=recentes
+        )
         brutas = classificar_trends(cfg, brutas)
         # SÓ PAUTA DE MACROTEMA DEFINIDO (2026-08-28, pedido do usuário): a
         # candidata que caiu no balde "outro" sai da disputa. Ver

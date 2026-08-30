@@ -77,6 +77,15 @@ MAX_CARACTERES_TAGS = 480
 MAX_TAGS = 15
 MAX_CARACTERES_TAG = 40
 
+# Posts do X listados como fontes na descrição publicada. Não é só crédito: é o
+# REGISTRO do que a pauta consumiu, relido em toda execução para tirar da
+# disputa a curtida que já virou vídeo (`x_client.posts_ja_usados`). O teto
+# existe para a descrição não estourar os 5.000 caracteres do YouTube — a
+# truncagem cortaria pelo fim, e o fim é justamente este bloco.
+MAX_FONTES = 30
+# Teto de caracteres da descrição no YouTube (`youtube.publicar` corta aqui).
+MAX_DESCRICAO = 5000
+
 # Capítulos (formato longo): o YouTube só ativa "momentos principais" quando o
 # primeiro carimbo é 0:00, existem pelo menos 3 e cada trecho dura no mínimo
 # 10 segundos. Abaixo disso o bloco não vira capítulo — vira lixo na descrição.
@@ -441,9 +450,18 @@ def montar_descricao(
        com número e fonte, no formato que motor de resposta generativo extrai;
     3. os capítulos (formato longo, quando fecham) — viram "momentos
        principais" e dão ao YouTube um índice do que o vídeo cobre;
-    4. as fontes reais (formato longo) — os posts do X que a narração citou
-       nominalmente;
+    4. as fontes reais — os posts do X de onde a pauta e os clipes saíram;
     5. as hashtags, sempre por último.
+
+    O BLOCO DE FONTES SAI NOS DOIS FORMATOS desde 2026-08-30. Ele era só do
+    longo, e era isso que quebrava o desenho das curtidas ("esgotar os vídeos
+    curtidos pela descrição dos nossos vídeos"): sem o link do post na
+    descrição do Short, nada marcava a curtida como GASTA, e ela voltava à
+    disputa em toda execução — foi assim que o laser de matar mosquito saiu
+    duas vezes no canal BR. A descrição publicada é a ÚNICA memória durável do
+    pipeline (o disco do Render é efêmero e `videos.txt` morre com o
+    contêiner), então é ela que carrega o registro. Quem lê estes links de
+    volta é `x_client.posts_ja_usados`.
     """
     rotulos = _rotulos(publico)
     paragrafo, hashtags = _separar_hashtags(roteiro.get("descricao") or "")
@@ -462,15 +480,35 @@ def montar_descricao(
         linhas = [f"{_mm_ss(t)} {titulo}" for t, titulo in marcos]
         blocos.append(rotulos["capitulos"] + "\n" + "\n".join(linhas))
 
-    if formato == "longo":
-        urls = list(
-            dict.fromkeys(u for u in ((trend or {}).get("posts") or []) if u)
-        )[:10]
-        if urls:
-            blocos.append(
-                rotulos["fontes"] + "\n" + "\n".join(f"- {u}" for u in urls)
-            )
+    # NOS DOIS FORMATOS (2026-08-30) — ver o cabeçalho da função. O teto subiu
+    # de 10 para MAX_FONTES porque cada URL que fica de fora é um post curtido
+    # que NÃO conta como gasto: a lista precisa cobrir os posts da pauta
+    # inteira, não uma amostra dela.
+    urls = list(
+        dict.fromkeys(u for u in ((trend or {}).get("posts") or []) if u)
+    )[:MAX_FONTES]
+    indice_fontes = -1
+    if urls:
+        indice_fontes = len(blocos)
+        blocos.append(
+            rotulos["fontes"] + "\n" + "\n".join(f"- {u}" for u in urls)
+        )
 
     if hashtags:
         blocos.append(hashtags)
-    return "\n\n".join(blocos)
+    descricao = "\n\n".join(blocos)
+    # O YouTube corta a descrição em 5.000 caracteres (`youtube.publicar`), e o
+    # corte é PELO FIM — onde moram as fontes. Perder um link ali não é perder
+    # crédito, é perder o registro que impede o post de virar vídeo de novo,
+    # então quando o texto passa do teto quem cede são as URLs (as últimas
+    # primeiro), e não o bloco inteiro.
+    while len(descricao) > MAX_DESCRICAO and urls:
+        urls.pop()
+        if urls:
+            blocos[indice_fontes] = (
+                rotulos["fontes"] + "\n" + "\n".join(f"- {u}" for u in urls)
+            )
+        else:
+            del blocos[indice_fontes]  # rótulo sozinho seria ruído
+        descricao = "\n\n".join(blocos)
+    return descricao

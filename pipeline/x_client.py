@@ -96,6 +96,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import threading
 import urllib.parse
 import webbrowser
@@ -902,8 +903,53 @@ def _teto_de_clipe(cfg: Config) -> float | None:
     return float(cfg.curto_max_dur_clipe_s) if cfg.formato == "curto" else None
 
 
+# Id numérico de um post do X dentro de uma URL. Mesmo desenho do padrão de
+# midia_x.py (que não é importado aqui: midia_x importa ESTE módulo, e a volta
+# fecharia o ciclo). Casa tanto x.com quanto twitter.com porque a descrição
+# publicada guarda o link como ele foi montado na época.
+PADRAO_ID_POST = re.compile(r"(?:x|twitter)\.com/[^/\s]+/status/(\d+)")
+
+
+def posts_ja_usados(videos_publicados: list[dict] | None) -> set[str]:
+    """Ids dos posts do X que JÁ viraram vídeo, lidos das descrições publicadas.
+
+    É a metade que faltava do desenho das curtidas (2026-08-28): a coleta lê as
+    `x_max_posts` curtidas mais recentes e nada as consumia, então o mesmo post
+    disputava a pauta em toda execução até sair de novo. Em 2026-08-30 o laser
+    de matar mosquito saiu duas vezes no canal BR — as duas execuções estavam
+    fora da janela de JANELA_REPETICAO_HORAS, que é o único veto que existia, e
+    ele julga SEMÂNTICA (o mesmo fato contado de outro jeito) por LLM, não
+    identidade do material.
+
+    O registro é a DESCRIÇÃO PUBLICADA, pelo desenho do usuário ("esgotar os
+    vídeos curtidos pela descrição dos nossos vídeos"), e não um arquivo: o
+    disco do Render é efêmero, `videos.txt` morre com o contêiner e não há
+    banco. A descrição, ao contrário, é escrita pelo próprio pipeline
+    (`seo.montar_descricao`), fica no YouTube e volta de graça em
+    `youtube.ultimos_publicados`, que TODA execução já lê antes de gastar um
+    centavo com o X.
+
+    O alcance da memória é o dessa leitura — os 100 últimos vídeos do canal
+    dentro de DIAS_REFERENCIA. Ele é maior que o pool de curtidas (as 100 mais
+    recentes), então um post só escapa se tiver sido usado antes disso e
+    continuar entre as 100 curtidas mais novas — caso em que o post é velho e a
+    curtida também.
+
+    Compara por ID e não por URL porque o @ do autor pode mudar (e muda quando
+    um repost é resolvido para o post original na coleta).
+    """
+    ids: set[str] = set()
+    for video in videos_publicados or []:
+        ids.update(PADRAO_ID_POST.findall(video.get("descricao") or ""))
+    return ids
+
+
 def _filtrar_posts(
-    cfg: Config, lote: list[dict], contas_vetadas: set[str], contagem: dict[str, int]
+    cfg: Config,
+    lote: list[dict],
+    contas_vetadas: set[str],
+    contagem: dict[str, int],
+    ja_usados: set[str] | None = None,
 ) -> list[dict]:
     """Aplica a TODA fonte de pauta os mesmos cortes; muta `contagem` com os motivos.
 
@@ -915,6 +961,10 @@ def _filtrar_posts(
 
     Os cortes, na ordem:
 
+    0. JÁ USADO: o post já aparece nas fontes de um vídeo publicado. É o
+       primeiro porque é o único corte que não depende de nada do post — ver
+       `posts_ja_usados`. Sem ele a curtida nunca era CONSUMIDA e voltava à
+       disputa em toda execução.
     1. CONTA VETADA (CONTAS_VETADAS): quem só publica recorte de emissora.
     2. REPOST: casca sem `attachments` e com o texto truncado em "RT @fulano:".
     3. SEM CLIPE: o vídeo do canal é montado só com clipe do X.
@@ -930,8 +980,13 @@ def _filtrar_posts(
     já se decide adiante, de graça.
     """
     teto = _teto_de_clipe(cfg)
+    usados = ja_usados or set()
     aprovados = []
     for post in lote:
+        id_post = PADRAO_ID_POST.search(post["url"])
+        if id_post and id_post.group(1) in usados:
+            contagem["ja_usado"] = contagem.get("ja_usado", 0) + 1
+            continue
         if post["usuario"].lower() in contas_vetadas:
             contagem["conta_vetada"] = contagem.get("conta_vetada", 0) + 1
             continue
@@ -972,7 +1027,9 @@ def _id_do_usuario(cfg: Config, token: str) -> str:
     return uid
 
 
-def _coletar_curtidos(cfg: Config) -> tuple[list[dict], bool]:
+def _coletar_curtidos(
+    cfg: Config, ja_usados: set[str] | None = None
+) -> tuple[list[dict], bool]:
     """(posts curtidos já filtrados, houve falha de leitura).
 
     A segunda posição é o que faz a lista assumir mesmo quando a contagem
@@ -991,6 +1048,13 @@ def _coletar_curtidos(cfg: Config) -> tuple[list[dict], bool]:
     histórico inteiro cabe abaixo do teto de leitura e a paginação termina sem
     `next_token` — é que a lista assume, que é o desenho pedido: "esgotar todos
     os posts que eu dei like, e então passar para a lista".
+
+    E ESGOTAR AGORA ESGOTA MESMO (2026-08-30): `ja_usados` tira daqui a curtida
+    que já virou vídeo, lida das descrições publicadas. Até então "acabar" só
+    podia significar acabar a PAGINAÇÃO — o X devolve sempre as 100 curtidas
+    mais recentes, a leitura não guarda nada entre execuções e o disco do
+    Render é efêmero, então o mesmo post curtido voltava à disputa três vezes
+    por dia, todo dia, até ser escolhido de novo. Ver `posts_ja_usados`.
 
     A troca tem uma razão de qualidade e uma de custo. A lista entrega o que os
     membros publicaram, e o filtro de clipe descarta a maior parte disso depois
@@ -1067,7 +1131,7 @@ def _coletar_curtidos(cfg: Config) -> tuple[list[dict], bool]:
         if not lote:
             break
         lidos += len(lote)
-        posts.extend(_filtrar_posts(cfg, lote, vetadas, contagem))
+        posts.extend(_filtrar_posts(cfg, lote, vetadas, contagem, ja_usados))
         pagina = (dados.get("meta") or {}).get("next_token")
         if not pagina:
             break
@@ -1076,6 +1140,7 @@ def _coletar_curtidos(cfg: Config) -> tuple[list[dict], bool]:
         detalhe = ", ".join(
             f"{n} {rotulo}"
             for rotulo, n in (
+                ("já publicados por nós", contagem.get("ja_usado", 0)),
                 ("repost", contagem.get("repost", 0)),
                 ("sem mídia nativa", contagem.get("sem_clipe", 0)),
                 (
@@ -1093,7 +1158,9 @@ def _coletar_curtidos(cfg: Config) -> tuple[list[dict], bool]:
     return posts, falhou
 
 
-def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
+def _coletar_da_lista(
+    cfg: Config, token: str, ja_usados: set[str] | None = None
+) -> list[dict]:
     """Posts dos membros da LISTA (X_LIST_ID), cronológicos, numa chamada só.
 
     Substitui inteira a mecânica de `search/recent` com `from:`: lá as 162
@@ -1170,13 +1237,14 @@ def _coletar_da_lista(cfg: Config, token: str) -> list[dict]:
         # Short) moram em `_filtrar_posts` desde 2026-08-28: as CURTIDAS
         # passaram a ser a fonte primária da pauta, e as duas fontes precisam
         # produzir a mesma pauta elegível.
-        posts.extend(_filtrar_posts(cfg, lote, vetadas, contagem))
+        posts.extend(_filtrar_posts(cfg, lote, vetadas, contagem, ja_usados))
         pagina = (dados.get("meta") or {}).get("next_token")
         if not pagina:
             break
     detalhe = ", ".join(
         f"{n} {rotulo}"
         for rotulo, n in (
+            ("já publicados por nós", contagem.get("ja_usado", 0)),
             ("repost", contagem.get("repost", 0)),
             ("sem mídia nativa", contagem.get("sem_clipe", 0)),
             (
@@ -1457,7 +1525,9 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
 
 
 def coletar_trends(
-    cfg: Config, so_lista: bool = False
+    cfg: Config,
+    so_lista: bool = False,
+    videos_publicados: list[dict] | None = None,
 ) -> tuple[list[dict], bool]:
     """(trends da pauta, a LISTA foi lida).
 
@@ -1492,6 +1562,18 @@ def coletar_trends(
     chegaria ao curador. Com as duas fontes vazias a execução aborta, como
     abortava antes — o fallback é da FONTE, não da falta de pauta.
 
+    POST QUE JÁ VIROU VÍDEO NÃO DISPUTA (2026-08-30). `videos_publicados` são
+    os vídeos que `main.py` já leu do canal para a régua de audiência, e as
+    descrições deles trazem os links dos posts que cada vídeo consumiu
+    (`seo.montar_descricao`). `posts_ja_usados` os transforma em ids e
+    `_filtrar_posts` os corta nas DUAS fontes — é isto que "esgotar as
+    curtidas" queria dizer, e é o corte que faltava: a leitura das curtidas não
+    tem memória nenhuma (o X devolve sempre as 100 mais recentes) e o único
+    veto de repetição que existia era o semântico de 36h de
+    `escritor._video_repetido`, que não alcança um post reaproveitado uma
+    semana depois. Sem `videos_publicados` nada é cortado, e a coleta se
+    comporta como antes.
+
     Com `so_lista=True` as curtidas são puladas de uma vez: é a segunda rodada
     chamada pelo laço de fallback, e reler as mesmas curtidas ali seria pagar
     de novo pelo material que acabou de ser reprovado.
@@ -1500,10 +1582,23 @@ def coletar_trends(
     0,005). Quando o fallback dispara, a execução lê as duas fontes e paga as
     duas — é o preço, conhecido, de a curadoria a mão ter a primeira palavra.
     """
+    # POST QUE JÁ VIROU VÍDEO SAI DAS DUAS FONTES (2026-08-30). `ja_usados` sai
+    # das descrições dos vídeos publicados, que `main.py` já leu para a régua de
+    # audiência — nenhuma chamada nova, nenhum custo. É o que faz "esgotar as
+    # curtidas" acontecer de verdade: sem isto a mesma curtida disputava a
+    # pauta em toda execução, e o único veto de repetição era semântico e de
+    # 36h (ver `escritor._video_repetido`).
+    ja_usados = posts_ja_usados(videos_publicados)
+    if ja_usados:
+        print(
+            f"[x] {len(ja_usados)} post(s) do X já usados em vídeos publicados "
+            "saem da disputa nas duas fontes."
+        )
+
     if so_lista:
         posts, falhou, precisa_lista = [], False, True
     else:
-        posts, falhou = _coletar_curtidos(cfg)
+        posts, falhou = _coletar_curtidos(cfg, ja_usados)
         precisa_lista = falhou or len(posts) < cfg.x_curtidos_min
 
     usou_lista = False
@@ -1542,7 +1637,7 @@ def coletar_trends(
         # 2026-08-22 (ver `_coletar_da_lista`). Não há terceira fonte, e um
         # vídeo saindo de uma pauta pior sem ninguém ver é o que aquela
         # decisão existe para impedir.
-        da_lista = _coletar_da_lista(cfg, token)
+        da_lista = _coletar_da_lista(cfg, token, ja_usados)
         usou_lista = True
         # As curtidas que vieram NÃO são jogadas fora: elas foram pagas e são
         # material curado. Entram na frente, e a deduplicação por URL evita que
@@ -1557,7 +1652,10 @@ def coletar_trends(
             "acima dizem o que foi descartado e por quê: muito post lido e "
             "pouco clipe é fonte publicando texto em vez de vídeo; nada lido "
             "nas curtidas é escopo `like.read` ausente ou semana sem curtir; "
-            "nada lido na lista é lista sem membros ou token do X vencido."
+            "nada lido na lista é lista sem membros ou token do X vencido; "
+            "tudo descartado como 'já publicados por nós' é a curadoria "
+            "ESGOTADA — as curtidas do histórico já viraram vídeo, e a saída é "
+            "curtir post novo."
             + (
                 f" No Short entra ainda o teto de "
                 f"{cfg.curto_max_dur_clipe_s}s por clipe."

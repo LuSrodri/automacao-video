@@ -199,6 +199,17 @@ TENTATIVAS_FAIXA_PALAVRAS = 3
 # cobre a mesma janela de posts do X das execuções seguintes (JANELA_HORAS=24
 # + folga), então a candidata só passa se o resumo dela tiver fato novo. Mais
 # antigo que isso, qualquer desenvolvimento já é naturalmente novo.
+#
+# ESTA JANELA NÃO É MAIS A ÚNICA DEFESA (2026-08-30). Ela julga SEMÂNTICA — o
+# mesmo fato contado de outro jeito — e por isso precisa ser curta: a lista de
+# publicados inteira num prompt de LLM, e um veredito por candidata, custam a
+# cada tentativa. O que ela nunca alcançou é o material REPETIDO: o mesmo post
+# do X, curtido uma vez, disputando a pauta em toda execução até sair de novo
+# (foi o laser de matar mosquito no canal BR). Isso agora é resolvido por
+# identidade, de graça e sem janela nenhuma, na coleta —
+# `x_client.posts_ja_usados` corta o post cujo link já está na descrição de um
+# vídeo publicado. As duas camadas são complementares: uma pega o mesmo FATO
+# vindo de outro post, a outra pega o mesmo POST.
 JANELA_REPETICAO_HORAS = 36
 # No formato longo a janela é maior: o cron dispara menos vezes por dia e
 # refazer a MESMA análise no dia seguinte é pior do que refazer uma manchete.
