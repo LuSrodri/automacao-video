@@ -182,7 +182,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-from pipeline.audio import gerar_narracao
+from pipeline.audio import ajustar_ao_alvo, gerar_narracao
 from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
 from pipeline.classificacao import classificar_trends, filtrar_por_macrotema
@@ -486,16 +486,38 @@ def main() -> None:
         # faixa de palavras (`_faixa_palavras`, escritor.py) é calculada em
         # cima de cfg.video_duracao. `alvo_pelo_material` nunca devolve None
         # aqui: a candidata sem metragem já saiu no portão da seleção.
+        # A METRAGEM QUE ENTRA AQUI É A APROVEITÁVEL (2026-08-30). Antes vinha
+        # `segundos_video`, a duração CHEIA do clipe informada pela X API — e a
+        # conferência do fim deste laço mede outra coisa: `segundos_uteis`, que
+        # desconta a abertura de busto falante que a montagem descarta. Com
+        # duas réguas diferentes e a mesma MATERIAL_MARGEM dos dois lados, todo
+        # clipe com ponta a cortar era reprovado por exatamente o tamanho da
+        # ponta: na execução BR de 30/08 o clipe do DHL Stadium foi aprovado
+        # com nota 5 e descartado assim mesmo, 13,6s de útil contra 13,8s
+        # exigidos, porque o roteiro nascera dos 14,6s do arquivo.
+        #
+        # O número vem da TRIAGEM, que já rodou a visão nesta candidata antes
+        # da escolha (triagem.py) — não há medida nova a pagar. Ela mede UM
+        # clipe de amostra e a montagem pode acabar com mais de um, então o
+        # alvo sai conservador: o roteiro pode ficar mais curto do que caberia,
+        # nunca mais comprido. Errar para baixo custa segundos de vídeo; errar
+        # para cima custa a pauta inteira.
+        #
+        # Candidata sem triagem (fora do teto de MAX_CANDIDATAS, download ou
+        # visão falhos) cai na duração cheia, como era antes: medida faltando é
+        # ignorância nossa, e não é motivo para encolher vídeo.
         if cfg.formato == "curto":
-            alvo = alvo_pelo_material(
-                cfg, (selecao["trend_obj"]).get("segundos_video")
+            trend_obj = selecao["trend_obj"]
+            metragem = trend_obj.get("segundos_uteis") or trend_obj.get(
+                "segundos_video"
             )
+            alvo = alvo_pelo_material(cfg, metragem)
             if alvo is not None and alvo < cfg.video_duracao:
                 print(
-                    f"[material] A pauta tem ~"
-                    f"{float(selecao['trend_obj'].get('segundos_video') or 0):.0f}s "
-                    f"de clipe; o roteiro passa a mirar {alvo}s em vez de "
-                    f"{cfg.video_duracao}s (o Short não repete clipe em loop)."
+                    f"[material] A pauta tem ~{float(metragem or 0):.0f}s de "
+                    f"clipe aproveitável; o roteiro passa a mirar {alvo}s em "
+                    f"vez de {cfg.video_duracao}s (o Short não repete clipe "
+                    "em loop)."
                 )
                 cfg.video_duracao = alvo
 
@@ -616,7 +638,33 @@ def main() -> None:
     narracao, alinhamento = gerar_narracao(
         cfg, roteiro["texto_video"], pasta / "narracao.mp3"
     )
-    narracao, alinhamento, _ = aparar_silencios(narracao, alinhamento)
+    narracao, alinhamento, dur_narracao = aparar_silencios(
+        narracao, alinhamento
+    )
+
+    # A VELOCIDADE FECHA A CONTA (2026-08-30, pedido do usuário: "calcula-se a
+    # velocidade para bater, partindo da velocidade padrão de hoje").
+    #
+    # Até aqui o pipeline pedia o roteiro em PALAVRAS, convertia para segundos
+    # por um ritmo médio e torcia. O TTS varia ±11% em torno desse médio, e o
+    # vídeo saía do tamanho que a narração desse — o alvo era uma intenção, não
+    # um resultado. Este é o primeiro ponto do pipeline em que a duração é
+    # MEDIDA (narrada e sem os silêncios), e portanto o único em que dá para
+    # corrigir em vez de absorver.
+    #
+    # O ajuste vai para os DOIS LADOS: narração comprida acelera, narração
+    # curta desacelera. A correção é sempre pequena porque o alvo é o mesmo que
+    # o orçamento de palavras mirou — o que sobra para corrigir é o erro de
+    # ritmo, não a metragem.
+    #
+    # SÓ NO SHORT. O formato longo narra em 1.0 por decisão editorial (análise
+    # em fala apressada não é acompanhável) e tem piso duro de 120s que aborta:
+    # mexer na velocidade dele seria passar por cima das duas coisas de uma vez,
+    # e ninguém pediu isso.
+    if cfg.formato == "curto":
+        alinhamento, dur_narracao = ajustar_ao_alvo(
+            narracao, alinhamento, float(cfg.video_duracao), dur_narracao
+        )
 
     largura, altura = cfg.video_largura, cfg.video_altura
     duracao = duracao_audio(narracao) + RESPIRO_FINAL

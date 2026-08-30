@@ -24,7 +24,7 @@ Custo e limites, de propósito:
 from pathlib import Path
 
 from .auditoria import _motivo_do_veto
-from .config import Config
+from .config import Config, segundos_uteis
 from .midia_x import baixar_midias_posts, descrever_midias
 
 # Teto de candidatas triadas por execução. As trends chegam ordenadas por valor
@@ -82,6 +82,19 @@ def triar_material(cfg: Config, trends: list[dict], pasta: Path) -> None:
         # O arquivo fica: se esta trend for a escolhida, a auditoria reusa o
         # clipe já baixado em vez de pagar o download de novo.
         trend["clipe_triado"] = str(clipes[0]["caminho"])
+        # A METRAGEM APROVEITÁVEL, guardada aqui (2026-08-30). A visão acabou
+        # de medir onde termina o busto falante da abertura, e é esse pedaço —
+        # não o arquivo inteiro — que a montagem põe no ar. Sem guardar, o
+        # número morria nesta função e `alvo_pelo_material` dimensionava o
+        # roteiro pela duração CHEIA que a X API informa, enquanto a
+        # conferência do fim (main.py) cobrava o pedaço aproveitável. Duas
+        # réguas diferentes com a mesma margem: todo clipe com abertura para
+        # descartar falhava por exatamente o tamanho dessa abertura. Foi o que
+        # derrubou o clipe do DHL Stadium na execução BR de 30/08 — aprovado
+        # com nota 5, descartado por 0,2s.
+        trend["segundos_uteis"] = segundos_uteis(
+            dict(clipes[0], inicio_util_s=laudo.get("inicio_util_s"))
+        )
         marca = "OK" if not veto else f"VETADO ({veto[:48]})"
         print(f"[triagem]   {marca}: {trend['trend'][:52]}")
 
