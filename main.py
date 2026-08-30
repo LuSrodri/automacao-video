@@ -197,6 +197,7 @@ from pipeline.config import (
     carregar_config,
     segundos_uteis,
 )
+from pipeline.apuracao import apurar
 from pipeline.cortes import atribuir_clipes, planejar_cortes, texto_da_pauta
 from pipeline.edicao import (
     RESPIRO_FINAL,
@@ -480,6 +481,20 @@ def main() -> None:
             cfg, selecao.get("consulta_youtube") or selecao["trend"]
         )
 
+        # APURAÇÃO (2026-08-30, pedido do usuário: "o roteiro fala direto que
+        # não dá para saber X, não dá para saber Y; isso degrada muito a
+        # experiência da audiência"). Busca na web o que o post do X não conta
+        # — o número, o quanto era antes, quem paga, qual o próximo marco — e
+        # entrega ao roteirista com o veículo e a URL de cada fato, conferidos
+        # em código contra as páginas que a busca abriu (ver apuracao.py).
+        #
+        # Fica DENTRO do laço, ao lado do panorama e pelo mesmo motivo: cada
+        # tentativa é outra pauta, e apuração de uma não serve para a outra.
+        # DEPOIS da seleção porque só aqui se sabe qual é a pauta, e ANTES do
+        # roteiro porque é o roteiro que precisa nascer com o dado na mão.
+        # Falha aberta: sem dossiê o roteiro sai como saía antes desta data.
+        dossie = apurar(cfg, selecao.get("trend_obj") or {"trend": selecao["trend"]})
+
         # O MATERIAL DIMENSIONA O ROTEIRO (2026-08-28, pedido do usuário: "não
         # coloque o vídeo em loop várias vezes, em vez disso, adeque o roteiro
         # dentro do que cabe naquele vídeo selecionado da pauta"). Só no Short:
@@ -529,6 +544,7 @@ def main() -> None:
         roteiro = gerar_roteiro(
             cfg, selecao, trends,
             videos_recentes=recentes, campeoes=campeoes, panorama=panorama,
+            apuracao=dossie,
         )
 
         marca = "_longo" if cfg.formato == "longo" else ""
@@ -897,6 +913,7 @@ def main() -> None:
         formato=cfg.formato,
         trend=trend_video,
         marcos=marcos,
+        fontes_apuracao=(dossie or {}).get("urls"),
     )
 
     registrar(cfg, video_final, roteiro["titulo"], descricao)

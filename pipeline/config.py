@@ -687,6 +687,23 @@ class Config:
     # 2026-08-07 (metadados calibrados só pelo histórico do próprio canal).
     seo_panorama: bool = True
     seo_max_videos: int = 20  # vídeos do dia lidos por execução (teto da API: 50)
+    # APURAÇÃO (apuracao.py, 2026-08-30): busca na web o que o post do X não
+    # conta, para o roteiro parar de narrar o próprio buraco ("não dá para
+    # saber quanto custa"). Uma chamada de web search por execução, ~US$ 0,01
+    # mais os tokens de conteúdo — ver a conta na docstring do módulo.
+    # Desligar volta ao comportamento anterior: os fatos saem só dos posts.
+    apuracao: bool = True
+    # Modelo da apuração. Vazio = `text_model`. Existe separado porque a web
+    # search é hospedada na Responses API e nem todo modelo a serve: se a
+    # chamada voltar erro de ferramenta não suportada, é aqui que se aponta
+    # para outro modelo sem mexer no resto do pipeline (que segue no
+    # chat.completions com o TEXT_MODEL de sempre).
+    apuracao_model: str = ""
+    # Domínios que a busca pode ler, separados por vírgula. Vazio = a lista
+    # curada de apuracao.py (veículos de referência + fonte primária, por
+    # canal); "-" = web aberta, sem filtro. O filtro é o que impede o vídeo de
+    # atribuir número de agregador de IA a veículo real.
+    apuracao_dominios: str = ""
     # Veto a clipe tomado por texto na tela, sobretudo texto PARADO, quando ele
     # não é o assunto que a narração descreve (auditoria.py). Desligar aceita
     # de volta o fundo de slide/print atrás das legendas queimadas.
@@ -791,6 +808,10 @@ def carregar_config(exige_lista: bool = True) -> Config:
         seo_panorama=os.getenv("SEO_PANORAMA", "1").strip().lower()
         in ("1", "true", "sim", "yes"),
         seo_max_videos=int(os.getenv("SEO_MAX_VIDEOS", "20")),
+        apuracao=os.getenv("APURACAO", "1").strip().lower()
+        in ("1", "true", "sim", "yes"),
+        apuracao_model=(os.getenv("APURACAO_MODEL", "") or "").strip(),
+        apuracao_dominios=(os.getenv("APURACAO_DOMINIOS", "") or "").strip(),
         veto_texto_denso=os.getenv("VETO_TEXTO_DENSO", "1").strip().lower()
         in ("1", "true", "sim", "yes"),
         veto_clipe_parado=os.getenv("VETO_CLIPE_PARADO", "1").strip().lower()

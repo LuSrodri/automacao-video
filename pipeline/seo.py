@@ -83,6 +83,11 @@ MAX_CARACTERES_TAG = 40
 # existe para a descrição não estourar os 5.000 caracteres do YouTube — a
 # truncagem cortaria pelo fim, e o fim é justamente este bloco.
 MAX_FONTES = 30
+# Páginas da APURAÇÃO creditadas na descrição (apuracao.py, 2026-08-30). Teto
+# próprio e curto: elas são crédito de leitura, não registro — nenhuma
+# mecânica do pipeline as relê, e cada uma empurra o bloco de posts (esse sim
+# relido) para mais perto do corte de 5.000 caracteres.
+MAX_FONTES_APURACAO = 8
 # Teto de caracteres da descrição no YouTube (`youtube.publicar` corta aqui).
 MAX_DESCRICAO = 5000
 
@@ -440,6 +445,7 @@ def montar_descricao(
     formato: str = "curto",
     trend: dict | None = None,
     marcos: list[tuple[float, str]] | None = None,
+    fontes_apuracao: list[str] | None = None,
 ) -> str:
     """Monta a descrição publicada a partir das peças do roteiro.
 
@@ -450,7 +456,8 @@ def montar_descricao(
        com número e fonte, no formato que motor de resposta generativo extrai;
     3. os capítulos (formato longo, quando fecham) — viram "momentos
        principais" e dão ao YouTube um índice do que o vídeo cobre;
-    4. as fontes reais — os posts do X de onde a pauta e os clipes saíram;
+    4. as fontes reais — os posts do X de onde a pauta e os clipes saíram e,
+       depois deles, as páginas que a apuração leu (`fontes_apuracao`);
     5. as hashtags, sempre por último.
 
     O BLOCO DE FONTES SAI NOS DOIS FORMATOS desde 2026-08-30. Ele era só do
@@ -487,6 +494,21 @@ def montar_descricao(
     urls = list(
         dict.fromkeys(u for u in ((trend or {}).get("posts") or []) if u)
     )[:MAX_FONTES]
+    # AS PÁGINAS DA APURAÇÃO ENTRAM DEPOIS DOS POSTS (2026-08-30), e a ordem é
+    # a coisa importante aqui. Duas razões, as duas mecânicas:
+    #
+    # 1. O bloco é lido de volta por `x_client.posts_ja_usados`, que é o
+    #    registro de qual curtida já virou vídeo. Ele casa um padrão de
+    #    x.com/.../status/<id>, então link de veículo passa batido e não
+    #    contamina a memória — mas só porque ele fica FORA do padrão, nunca
+    #    porque alguém o filtrou.
+    # 2. Quando a descrição estoura os 5.000 caracteres, o laço logo abaixo
+    #    corta URLs PELO FIM. Com a apuração no fim, quem cede primeiro é o
+    #    crédito de leitura; o registro dos posts, que é o que impede a mesma
+    #    pauta de sair duas vezes, é o último a sair.
+    urls += [
+        u for u in dict.fromkeys(fontes_apuracao or []) if u and u not in urls
+    ][:MAX_FONTES_APURACAO]
     indice_fontes = -1
     if urls:
         indice_fontes = len(blocos)

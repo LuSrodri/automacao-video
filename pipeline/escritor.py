@@ -127,6 +127,7 @@ from urllib.parse import urlparse
 
 from openai import OpenAI
 
+from .apuracao import resumo_para_prompt as resumo_da_apuracao
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import (
     AVISO_DADOS_EXTERNOS,
@@ -1185,9 +1186,19 @@ Você é roteirista de vídeos curtos (YouTube Shorts) de ANÁLISE, sem recorte
 temático: o assunto do vídeo é o que estiver acontecendo, seja ele qual for.
 {foco}
 
-Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca) e os POSTS DO
-X que originaram a trend. Fatos, nomes, empresas, datas e números saem DAÍ —
-não invente nada, e não use fato que não esteja no material recebido.
+Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
+X que originaram a trend e, quando houver, o bloco de APURAÇÃO. Fatos, nomes,
+empresas, datas e números saem DAÍ — não invente nada, e não use fato que não
+esteja no material recebido.
+
+NUNCA NARRE O BURACO. É PROIBIDO dizer no vídeo que um dado não existe, que
+não está claro, que não foi divulgado ou que não dá para saber — o espectador
+não veio ouvir o que você não sabe. Quando faltar um número, PROCURE-O no
+bloco de APURAÇÃO, que existe exatamente para isso; se ele não estiver lá,
+escreva a frase em torno do que você TEM (o que aconteceu, quem fez, o que
+muda) e siga. Confessar a lacuna em voz alta não é honestidade, é desperdiçar
+segundo de vídeo — e continua valendo, acima de tudo, que inventar o número é
+falta pior ainda.
 
 ENQUADRAMENTO — SEMPRE análise ou educacional, em formato EXPLICATIVO: o vídeo
 explica o que aconteceu, como funciona e por que importa — nunca é um grito de
@@ -1202,9 +1213,12 @@ FONTES — OBRIGATÓRIO citar a fonte na narração: todo fato central do vídeo
 atribuído a quem o publicou — a conta do X que trouxe o fato ("no post de
 @unusual_whales", "Elon Musk postou") ou o veículo que a própria conta cita
 ("segundo a Reuters"). Cite SOMENTE fontes que estão na lista de posts
-recebida; cite pelo menos uma, no ponto onde o fato dela entra, embutida na
-frase — nunca em bloco de leitura de créditos. Nome de veículo ou de conta
-citado como fonte NÃO conta no teto de nomes próprios desconhecidos.
+recebida OU o veículo indicado no bloco de APURAÇÃO; cite pelo menos uma, no
+ponto onde o fato dela entra, embutida na frase — nunca em bloco de leitura de
+créditos. Fato vindo da apuração SEMPRE sai com o veículo dele na frase ("a
+Reuters apurou que..."), porque é assim que ele deixa de ser afirmação solta.
+Nome de veículo ou de conta citado como fonte NÃO conta no teto de nomes
+próprios desconhecidos.
 
 PÚBLICO — A REGRA QUE MANDA EM TODAS AS OUTRAS: escreva para um ADULTO leigo
 (o espectador real do canal: homem de 25 a 54 anos, curioso por tecnologia,
@@ -1373,9 +1387,18 @@ qualquer assunto pode virar vídeo, e o que decide o valor do vídeo é a
 explicação, não o tema.
 {foco}
 
-Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca) e os POSTS DO
-X que originaram a trend. Fatos, nomes, empresas, datas e números saem DAÍ —
-não invente nada. Fato que não está no material recebido não entra no vídeo.
+Você recebe a TREND escolhida (com a IMAGEM MENTAL que ela evoca), os POSTS DO
+X que originaram a trend e, quando houver, o bloco de APURAÇÃO. Fatos, nomes,
+empresas, datas e números saem DAÍ — não invente nada. Fato que não está no
+material recebido não entra no vídeo.
+
+NUNCA NARRE O BURACO. É PROIBIDO dizer no vídeo que um dado não existe, que
+não está claro, que não foi divulgado ou que não dá para saber. Neste formato
+o defeito é ainda mais caro: o espectador veio pela densidade, e a frase que
+confessa a lacuna ocupa o lugar da que entregaria o dado. Quando faltar um
+número, PROCURE-O no bloco de APURAÇÃO; se ele não estiver lá, construa a
+batida em cima do que você TEM e siga. Inventar o número, esse, segue sendo a
+falta mais grave de todas.
 
 ESPECTADOR — A REGRA QUE MANDA EM TODAS AS OUTRAS: um adulto leigo (25 a 54
 anos, sem formação técnica) que está PROCURANDO EMPREGO ou EM TRANSIÇÃO DE
@@ -1399,10 +1422,12 @@ de algo escrito na tela.
 
 FONTES — OBRIGATÓRIO citar nominalmente: cada afirmação central é atribuída a
 quem a publicou — a conta do X ("no post de @unusual_whales") ou o veículo que
-ela cita ("segundo a Reuters"). Cite SOMENTE fontes da lista de posts recebida,
-pelo menos DUAS ao longo do vídeo, embutidas na frase — nunca em bloco de
-créditos. "Segundo fontes", sem nome, continua proibido. Nome de
-veículo ou de conta citado como fonte não conta como nome próprio de nicho.
+ela cita ("segundo a Reuters"). Cite SOMENTE fontes da lista de posts recebida
+OU o veículo indicado no bloco de APURAÇÃO, pelo menos DUAS ao longo do vídeo,
+embutidas na frase — nunca em bloco de créditos. Fato vindo da apuração SEMPRE
+sai com o veículo dele na frase. "Segundo fontes", sem nome, continua
+proibido. Nome de veículo ou de conta citado como fonte não conta como nome
+próprio de nicho.
 
 TOM: analista adulto e afiado — jornalismo econômico de bom nível, não
 palestra motivacional e não aula. Autoridade seca, sem entusiasmo fofo, sem
@@ -2637,12 +2662,23 @@ def gerar_roteiro(
     videos_recentes: list[dict] | None = None,
     campeoes: list[dict] | None = None,
     panorama: dict | None = None,
+    apuracao: dict | None = None,
 ) -> dict:
     """Gera o roteiro completo da trend escolhida, a partir dos posts do X.
 
     A busca de NOTÍCIAS (Firecrawl) que enriquecia este material foi removida em
-    2026-08-16: os fatos, nomes e números saem agora só do resumo da trend e dos
-    posts que a originaram, e são essas contas as fontes citáveis na narração.
+    2026-08-16: os fatos, nomes e números passaram a sair só do resumo da trend
+    e dos posts que a originaram, e eram essas contas as únicas fontes citáveis
+    na narração.
+
+    `apuracao` REABRE essa porta em 2026-08-30, por outro caminho (ver
+    ``apuracao.py``). O que fechou a primeira não foi custo nem qualidade, foi
+    ATRIBUIÇÃO — "os fatos passam a vir só dos posts do X, que são as fontes
+    citáveis". Agora cada fato do dossiê chega aqui já conferido, em código,
+    contra a página que a busca realmente abriu, e com o veículo que o
+    roteirista é obrigado a citar. É o material que faltava para o vídeo parar
+    de narrar o próprio buraco ("não dá para saber quanto custa") — sintoma de
+    material fechado, não de redação. Opcional: sem ele o roteiro sai como saía.
 
     `panorama` é o retrato do assunto no YouTube de hoje (``seo.py``): os
     vídeos que outros canais já publicaram sobre o mesmo fato nas últimas
@@ -2669,6 +2705,7 @@ def gerar_roteiro(
         f"daqui): {trend_escolhida.get('imagem_mental', '?')}\n\n"
         "POSTS DO X QUE ORIGINARAM A TREND (fontes citáveis na narração):\n"
         + _fontes_x(trend_escolhida.get("posts") or [])
+        + resumo_da_apuracao(apuracao)
         + _resumo_estilo(videos_recentes, campeoes, cfg.formato)
         + resumo_para_prompt(panorama)
     )
