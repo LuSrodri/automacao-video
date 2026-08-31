@@ -11,18 +11,27 @@ acompanhar quem está em cena. Recorte de centro fixo não serve: decapita o
 sujeito assim que ele sai do meio do quadro, que é o caso normal em filmagem de
 rua, coletiva e câmera na mão.
 
-O QUE MANDA NO DESENHO É A NITIDEZ, não a detecção. Recorte até 9:16 cheio de
-uma fonte 720p dá uma janela de 404 px de largura, que precisa subir 2,67x até
-os 1080 do quadro — visivelmente mole. Por isso o recorte NÃO vai sempre até
-9:16: a largura é governada por UPSCALE_MAX, e a proporção que sobrar continua
-sendo preenchida pela camada borrada que `edicao.py` já monta. De 720p a tela
-sai de 32% para ~60% preenchida sem perder definição; de 1080p, para ~90%.
-Subir UPSCALE_MAX aproxima do 9:16 cheio e amolece; descer volta ao de hoje.
+O RECORTE VAI ATÉ 9:16 CHEIO (2026-08-31, pedido explícito do usuário). Até
+aqui a largura da janela era governada por um teto de ampliação (UPSCALE_MAX,
+1,6): a janela nunca era mais estreita que 675 px, o clipe enchia a tela na
+proporção `altura da fonte / 1200` e o resto continuava sendo desfoque — 60% de
+tela numa fonte 720p, que é a fonte normal do X. O teto SAIU. A janela é agora
+exatamente a proporção do quadro, e o clipe preenche o quadro inteiro venha ele
+de onde vier.
 
-NENHUM CLIPE FICA PIOR QUE HOJE. Sem folga horizontal útil, sem quadro legível
-ou sem OpenCV instalado, `planejar` devolve None e a montagem segue pelo
-caminho de sempre. Isto é acabamento, não credencial: falha aqui degrada, não
-aborta (ao contrário da diretriz de fail-fast que vale para API e chave).
+O CUSTO É NITIDEZ, e ele foi aceito de olho aberto: 9:16 de uma fonte 720p é
+uma janela de 404 px que sobe 2,67x até os 1080 do quadro. Quanto menor a
+fonte, pior — daí o fator de ampliação sair no log da montagem, para que a
+conta apareça em vez de ficar implícita. Quem quiser o compromisso de volta não
+reintroduz teto aqui: mexe no piso de resolução do clipe, lá na triagem.
+
+QUEM GARANTE O PREENCHIMENTO NÃO É ESTE MÓDULO. `edicao.py` escala a camada
+nítida por COBERTURA (`increase` + `crop`), então o quadro fica cheio mesmo sem
+plano nenhum — só que aí o recorte é de centro fixo. Este módulo decide ONDE a
+janela fica e como ela anda; devolver None aqui não devolve a barra borrada,
+devolve a câmera parada no meio. Sem folga horizontal, sem quadro legível ou
+sem OpenCV instalado é isso que acontece: acabamento degrada, não aborta (ao
+contrário da diretriz de fail-fast que vale para API e chave).
 
 COMO A TRAJETÓRIA CHEGA NO FFMPEG. Não por `sendcmd`: no formato longo os
 clipes entram com `-stream_loop -1` (edicao.py) e comando de sendcmd dispara uma
@@ -91,10 +100,8 @@ FPS_AMOSTRA = 6
 ALTURA_AMOSTRA = 180
 
 # --- Recorte --------------------------------------------------------------
-# Quanto o recorte pode ser ampliado até a largura do quadro. É o único
-# parâmetro do compromisso nitidez x preenchimento — ver o cabeçalho.
-UPSCALE_MAX = 1.6
-# Abaixo desta folga horizontal não há curso de câmera que compense o recorte.
+# Abaixo desta folga horizontal não há curso de câmera que valha a pena: o
+# recorte de `edicao.py` preenche o quadro do mesmo jeito, parado no centro.
 FOLGA_MINIMA_FRAC = 0.08
 
 # --- Câmera virtual -------------------------------------------------------
@@ -146,15 +153,19 @@ def _suave(u: str) -> str:
 
 
 def _largura_recorte(src_l: int, src_a: int, alvo_l: int, alvo_a: int) -> int | None:
-    """A janela mais ESTREITA que o teto de upscale permite, ou None."""
+    """A janela na PROPORÇÃO DO QUADRO, ou None se não houver curso de câmera.
+
+    A largura é a do quadro cheio e ponto — o teto de ampliação saiu em
+    2026-08-31 (ver o cabeçalho). O par ímpar é evitado porque o x264 exige
+    dimensão par e o `crop` não arredonda sozinho.
+    """
     if src_l <= 0 or src_a <= 0 or alvo_l <= 0 or alvo_a <= 0:
         return None
-    # Fonte já tão estreita quanto o alvo: não há o que recortar.
+    # Fonte já tão estreita quanto o alvo: não há o que recortar na horizontal
+    # (o que sobrar na vertical é a cobertura de `edicao.py` que resolve).
     if src_l * alvo_a <= alvo_l * src_a:
         return None
-    cheio = src_a * alvo_l / alvo_a  # recorte na proporção do alvo
-    nitido = alvo_l / UPSCALE_MAX  # o mais estreito que ainda não borra
-    crop_l = int(min(float(src_l), max(cheio, nitido)))
+    crop_l = int(min(float(src_l), src_a * alvo_l / alvo_a))
     crop_l -= crop_l % 2
     if crop_l <= 0 or src_l - crop_l < FOLGA_MINIMA_FRAC * src_l:
         return None
@@ -458,7 +469,7 @@ def planejar(
         cortes = _cortes(quadros)
         xs, conf = _alvos(quadros, cinza, cortes)
         if not (conf > 0).any():
-            return None  # nada detectado: recorte de centro fixo não compensa
+            return None  # nada detectado: fica o recorte de centro fixo
 
         centro = _centros(xs, conf, cortes, cinza.shape[2], src_l, crop_l)
 

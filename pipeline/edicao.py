@@ -22,20 +22,33 @@ nenhum sem pedido explícito.
 RECORTE QUE ACOMPANHA O SUJEITO (2026-08-25, pedido do usuário). Até aqui o
 clipe horizontal simplesmente ganhava a barra borrada em cima e embaixo do
 quadro vertical: com fonte 1280x720 a faixa nítida era 1080x608 num quadro de
-1920 de altura, 32% da tela, e os outros 68% eram desfoque. Agora o clipe é
+1920 de altura, 32% da tela, e os outros 68% eram desfoque. O clipe passou a ser
 RECORTADO numa janela mais estreita que ANDA pelo quadro atrás de quem está em
-cena, e a faixa nítida passa a ~60% da tela de uma fonte 720p e a ~90% de uma
-1080p. Quem decide o recorte e a trajetória é `enquadramento.py`; aqui só entra
-o filtro `crop` na frente do `scale` da camada nítida.
+cena. Quem decide o recorte e a trajetória é `enquadramento.py`; aqui entra o
+filtro `crop` na frente do `scale` da camada nítida.
 
-Isto NÃO é volta de cenário: o que está na tela continua sendo só o clipe, e a
-camada borrada de fundo é a mesma de antes — o que mudou é quanto do quadro o
-clipe nítido ocupa. E o recorte NÃO vai até 9:16 cheio de propósito: isso
-exigiria ampliar uma janela de 404 px até os 1080 do quadro (2,67x) e a imagem
-ficaria visivelmente mole. O teto de ampliação é `enquadramento.UPSCALE_MAX`, e
-a proporção que sobra continua sendo preenchida pela camada borrada. Clipe sem
-folga horizontal, sem sujeito detectável ou em ambiente sem OpenCV segue pelo
-caminho antigo, inteiro: `planejar` devolve None e nada muda.
+O CLIPE PREENCHE O QUADRO INTEIRO (2026-08-31, pedido explícito do usuário).
+O recorte de 25/08 tinha teto de ampliação e parava antes do 9:16 cheio: a tela
+saía preenchida na proporção `altura da fonte / 1200`, o que dava ~60% na fonte
+720p que o X entrega na maioria dos clipes, e o resto seguia desfoque. O teto
+saiu. A camada nítida agora escala por COBERTURA (`increase` + `crop=quadro`)
+em vez de caber dentro dele (`decrease`), e é ISSO que garante o preenchimento
+— não o plano de enquadramento. A diferença importa: sem plano (clipe já
+vertical, sem folga, sem sujeito, OpenCV ausente, ffprobe mudo) a cobertura
+recorta pelo CENTRO e o quadro fica cheio do mesmo jeito; com plano, a janela
+já vem na proporção do quadro e a cobertura é um no-op que só absorve o
+arredondamento par do `crop`. Vale nos dois sentidos: fonte mais DEITADA que o
+quadro perde as laterais, fonte mais EM PÉ perde o topo e o pé.
+
+O custo é nitidez, e foi aceito de olho aberto: 9:16 de uma fonte 720p é uma
+janela de 404 px ampliada 2,67x. O fator sai no log de cada clipe justamente
+para a conta não ficar implícita.
+
+A camada borrada de fundo CONTINUA sendo montada, e não é sobra: ela é o que
+aparece por baixo enquanto a camada nítida está em meio-fade no crossfade entre
+dois clipes. O que ela deixou de ser é barra.
+
+Isto NÃO é volta de cenário: o que está na tela continua sendo só o clipe.
 
 CARROSSEL. As cartelas de imagem (cartelas.py) não são cartões sobrepostos ao
 clipe: elas ocupam o quadro inteiro
@@ -740,19 +753,21 @@ def montar_video(
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[bg{i}]"
         )
 
-        # Frente: o clipe nítido no maior tamanho que CABE no quadro, centrado
-        # (no vertical isso é a largura total; no 16:9, a altura). Sem zoom nem
-        # deslize — o clipe já tem movimento próprio; a transição editorial é um
-        # crossfade curto e limpo.
+        # Frente: o clipe nítido COBRINDO o quadro inteiro (2026-08-31). Sem
+        # zoom nem deslize — o clipe já tem movimento próprio; a transição
+        # editorial é um crossfade curto e limpo.
         #
         # RECORTE QUE ACOMPANHA (2026-08-25): antes de escalar, o clipe
-        # horizontal é RECORTADO numa janela mais estreita que anda pelo quadro
-        # atrás de quem está em cena (enquadramento.py). É o que tira a faixa
-        # nítida de 32% da tela e leva para ~60% sem borrar. Só o `x` do crop
-        # varia — a largura é fixa por clipe, senão o `w` que o overlay abaixo
-        # usa para centralizar mudaria a cada quadro e o clipe tremeria. Sem
-        # plano (clipe já vertical, sem folga, sem sujeito, OpenCV ausente) o
-        # recorte é vazio e a cadeia é a de sempre.
+        # horizontal é RECORTADO numa janela que anda pelo quadro atrás de quem
+        # está em cena (enquadramento.py). Só o `x` do crop varia — a largura é
+        # fixa por clipe, senão o `w` que o overlay abaixo usa para centralizar
+        # mudaria a cada quadro e o clipe tremeria.
+        #
+        # O `increase`+`crop` depois dele é a garantia de tela cheia, e vale
+        # com plano ou sem: sem plano ele recorta pelo centro, com plano a
+        # janela já está na proporção do quadro e ele só apara o pixel do
+        # arredondamento par. Por isso o preenchimento não depende de OpenCV,
+        # de detecção nem do ffprobe.
         dimensoes = dimensoes_video(s["caminho"])
         plano = (
             enquadramento.planejar(
@@ -770,12 +785,19 @@ def montar_video(
             )
             print(
                 f"[edicao] Clipe {i + 1}: recorte {plano['crop_l']}x"
-                f"{plano['crop_a']} de {dimensoes[0]}x{dimensoes[1]}, "
+                f"{plano['crop_a']} de {dimensoes[0]}x{dimensoes[1]} "
+                f"({tela_l / plano['crop_l']:.2f}x de ampliação), "
                 f"{plano['movimentos']} movimento(s) de câmera."
+            )
+        elif dimensoes:
+            print(
+                f"[edicao] Clipe {i + 1}: sem plano de câmera, cobertura de "
+                f"centro fixo de {dimensoes[0]}x{dimensoes[1]}."
             )
         filtros.append(
             f"[in_fg{i}]{recorte}"
-            f"scale={tela_l}:{tela_a}:force_original_aspect_ratio=decrease,"
+            f"scale={tela_l}:{tela_a}:force_original_aspect_ratio=increase,"
+            f"crop={tela_l}:{tela_a},"
             f"format=rgba,{dessat}{fade_in}{fade_out}"
             f"setpts=PTS-STARTPTS+{ini:.2f}/TB[fg{i}]"
         )
