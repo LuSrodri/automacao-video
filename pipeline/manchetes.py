@@ -42,9 +42,11 @@ das citações dos tópicos, e enquanto a única regra da citação foi "existir
 estar em ordem", a do tópico 1 podia pousar no meio do bloco dele. O vídeo do
 canal US de 26/08 saiu com abertura de 45,4s e pauta 1 de 10,2s — o índice
 "ainda neste vídeo" ficou 30% do vídeo na tela enquanto a narração já contava a
-primeira história. `planejar_partes` agora ABORTA fora da faixa
-(config.LONGO_ABERTURA_MAX_S e config.LONGO_PAUTA_MIN_S). É a rede de baixo: a
-de cima é o teto em palavras no escritor, que reprova de graça e com reescrita.
+primeira história. `planejar_partes` agora ABORTA acima do teto da abertura
+(config.LONGO_ABERTURA_MAX_S). É a rede de baixo: a de cima é o teto em palavras
+no escritor, que reprova de graça e com reescrita. O PISO das pautas
+(LONGO_PAUTA_MIN_S) saiu em 2026-09-01 — cada capítulo dura o que o clipe dele
+dá (config.alvos_das_pautas), então pauta curta virou resultado, não defeito.
 
 ESTILO — o MESMO da capa (identidade.py): etiqueta de cor chapada com retícula
 Ben-Day, título em grotesca pesada com a desregistragem ciano/magenta e um
@@ -65,7 +67,6 @@ from . import identidade as ident
 from .config import (
     LONGO_ABERTURA_MAX_S,
     LONGO_ABERTURA_S,
-    LONGO_PAUTA_MIN_S,
     Config,
 )
 
@@ -96,10 +97,10 @@ ENTRELINHA_INDICE = 1.42  # respiro maior: três linhas coladas viram parágrafo
 TRACKING_FRAC = 0.34  # espaçamento do kicker, fração do tamanho da fonte
 
 # A duração mínima de uma parte era PARTE_CURTA_S = 6.0 e só imprimia aviso.
-# Saiu em 2026-08-26: a faixa agora é dura e mora em config.py
-# (LONGO_ABERTURA_MAX_S e LONGO_PAUTA_MIN_S), com os dois lados medidos —
-# o piso não pegava nada com 6s, e não havia TETO nenhum para a abertura,
-# que é o lado por onde o vídeo saiu errado.
+# Saiu em 2026-08-26 e o que ficou no lugar dela foi um TETO, não um piso:
+# LONGO_ABERTURA_MAX_S (config.py), medido no áudio final. O piso não pegava
+# nada com 6s, e não havia teto nenhum para a abertura — que é o lado por onde
+# o vídeo saiu errado.
 
 
 def _medidor() -> ImageDraw.ImageDraw:
@@ -383,9 +384,8 @@ def planejar_partes(
     Levanta SystemExit se a divisão não fechar: sem as quatro partes não existe
     o vídeo que o usuário desenhou, e o que sairia é o bloco corrido que ele
     rejeitou. Também levanta se as partes existirem mas com as DURAÇÕES
-    erradas — abertura acima de LONGO_ABERTURA_MAX_S ou pauta abaixo de
-    LONGO_PAUTA_MIN_S —, porque quatro partes na proporção errada são o mesmo
-    vídeo errado com outra aparência.
+    erradas — abertura acima de LONGO_ABERTURA_MAX_S —, porque quatro partes na
+    proporção errada são o mesmo vídeo errado com outra aparência.
     """
     topicos = roteiro.get("topicos") or []
     # Uma pausa por VIRADA de pauta, e uma parte a mais que as pausas (a
@@ -499,14 +499,10 @@ def planejar_partes(
                 "enquanto a narração já conta a primeira pauta, e a manchete "
                 "dela entrar quando a história acabou; abortando sem publicar."
             )
-        if i and fim - inicio < LONGO_PAUTA_MIN_S:
-            raise SystemExit(
-                f"A parte '{rotulos[i]}' ficou com {fim - inicio:.1f}s e o "
-                f"piso é {LONGO_PAUTA_MIN_S:.0f}s — o roteiro distribuiu mal o "
-                "texto entre as pautas, e uma pauta curta demais é a manchete "
-                "dela aparecendo depois de a história já ter sido contada "
-                "debaixo do painel da parte anterior; abortando sem publicar."
-            )
+        # O PISO DE CADA PAUTA (LONGO_PAUTA_MIN_S, 20s) SAIU em 2026-09-01, com
+        # a duração flexível de capítulo: a pauta agora é encomendada do tamanho
+        # do clipe dela, então 12 segundos é o resultado certo para um clipe de
+        # 14 e não um roteiro mal distribuído.
         partes.append(
             {
                 "indice": i,

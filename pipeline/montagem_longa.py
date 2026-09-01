@@ -332,6 +332,15 @@ def _montar_parte(
             if inicio_util is not None and float(inicio_util) > 0
             else []
         )
+        # `-stream_loop -1` DEIXOU DE SER O MECANISMO E VIROU A REDE
+        # (2026-09-01). Enquanto as pautas somavam 120-150s fixos, era ele que
+        # cobria a diferença entre uma parte de 40s e o clipe de 15s dela — o
+        # loop que o usuário mandou tirar. Agora cada capítulo é encomendado do
+        # tamanho do clipe dele (`config.alvos_das_pautas`), então a repetição
+        # não deveria ser alcançada. Fica aqui mesmo assim porque a alternativa
+        # é pior: sem loop, o clipe que acaba antes do fim da parte vira TELA
+        # PRETA (foi o que `eof_action=pass` fez no Short em 28/08). Rede que
+        # não é usada não custa nada; tela preta custa o vídeo.
         comando += [
             "-stream_loop", "-1", *seek, "-t", f"{dur_render:.3f}",
             "-i", str(clipe["caminho"]),

@@ -133,10 +133,8 @@ from .config import (
     AVISO_DADOS_EXTERNOS,
     LONGO_ABERTURA_MAX_S,
     LONGO_ABERTURA_S,
-    LONGO_MAX_S,
     LONGO_MIN_POSTS_VIDEO,
     LONGO_NUM_TRENDS,
-    LONGO_MIN_S,
     ENGAJAMENTO_MINIMO,
     RETENCAO_MINIMA,
     Config,
@@ -184,8 +182,15 @@ FOLGA_PALAVRAS = 1.15
 # contra uma duração-alvo de 60 — o modelo entregava metade das palavras, a
 # única tentativa de correção também ficava curta, e o vídeo ia ao ar assim.
 # Chamada de texto é a etapa mais barata do pipeline; insistir aqui custa muito
-# menos do que abortar depois da narração no piso duro de duração.
-TENTATIVAS_FAIXA_PALAVRAS = 3
+# menos do que consertar depois, quando a narração já foi paga.
+#
+# SUBIU DE 3 PARA 5 em 2026-09-01 (pedido do usuário: "se estourar ou ficar
+# abaixo, coloque para refazer"). O orçamento de palavras deixou de ser uma
+# preferência sobre o tamanho do vídeo e passou a ser o tamanho do MATERIAL:
+# fora da faixa, o vídeo ou acaba com a tela vazia ou joga clipe fora. Ficou
+# caro o bastante para valer mais duas chamadas de texto — a etapa mais barata
+# que existe aqui.
+TENTATIVAS_FAIXA_PALAVRAS = 5
 # Teto de vídeos SEGUIDOS do mesmo macrotema: REMOVIDO em 2026-07-28. Ele valia
 # 4 e era a única regra de variabilidade do canal, mas o custo apareceu nos
 # números: as três sequências conferidas no canal BR mostram o mesmo padrão —
@@ -215,19 +220,14 @@ JANELA_REPETICAO_HORAS = 36
 # No formato longo a janela é maior: o cron dispara menos vezes por dia e
 # refazer a MESMA análise no dia seguinte é pior do que refazer uma manchete.
 JANELA_REPETICAO_HORAS_LONGO = 72
-# Formato LONGO: a faixa de palavras sai da FAIXA DURA de duração do formato
-# (120 a 150s), não de VIDEO_DURACAO. A margem é ASSIMÉTRICA e puxa a faixa
-# para DENTRO em cima e para CIMA embaixo, porque as duas pontas custam coisas
-# diferentes: estourar o teto só encarece o TTS, enquanto furar o piso de 120s
-# está proibido e aborta a execução em main.py depois da narração já paga.
+# MARGEM_LONGO_MIN_S / MARGEM_LONGO_MAX_S: REMOVIDAS em 2026-09-01.
 #
-# A margem de baixo subiu de 6 para 10 em 2026-08-05, junto com a recalibração
-# de PALAVRAS_POR_SEGUNDO: ela precisa cobrir a narração mais RÁPIDA (é a que
-# fura o piso), e com 6 o piso caía em 119s na ponta rápida das duas medições
-# de formato longo — reprovando por 1 segundo. São só duas medições, então a
-# margem aqui é mais generosa que a do Short de propósito.
-MARGEM_LONGO_MIN_S = 10  # mira acima do piso
-MARGEM_LONGO_MAX_S = 6  # mira abaixo do teto
+# Eram as margens assimétricas que puxavam a faixa de palavras do formato longo
+# para dentro da faixa dura de 120-150s — a de baixo (10s) existia só para o
+# roteiro não furar o piso de 120s e abortar a execução depois da narração já
+# paga. Sem piso não há o que proteger: o longo passou a ser dimensionado pelo
+# material como o Short, com a mesma conta (`_faixa_palavras`), o mesmo teto
+# proporcional e o mesmo piso proporcional de FRACAO_MINIMA.
 # Duração (s) a partir da qual um vídeo já publicado no canal conta como
 # LONGO. A regra dura do formato longo (veto a vídeo
 # repetido) olha só para os vídeos longos: senão a rajada de Shorts do dia
@@ -1556,15 +1556,16 @@ frase de analista vazia.
 
 DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 {palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
-colchetes não contam). Os DOIS limites são DUROS — o formato do canal é de
-{minimo_s} a {maximo_s} segundos, e vídeo abaixo de {minimo_s} segundos é
-DESCARTADO pelo pipeline, não publicado. Texto curto demais é o erro mais caro
-aqui: prefira errar para cima. Se faltar espaço, corte detalhe secundário do
-a contextualização geral ou encurte a batida (a) de um tópico — nunca a pauta
+colchetes não contam). Esse número NÃO é o formato do canal, é o MATERIAL DE
+HOJE: ele foi calculado somando os segundos de clipe que as três pautas
+trouxeram. Os dois limites são DUROS e o pipeline devolve o roteiro para
+reescrita fora deles. Estourar deixa a tela sem imagem no fim de uma parte;
+ficar abaixo joga clipe fora. Se faltar espaço, corte detalhe secundário da
+contextualização geral ou encurte a batida (a) de um tópico — nunca a pauta
 falada, nunca a batida (c) de nenhuma pauta (a análise), nunca o fecho, e nunca
 menos nem mais que {topicos_max} tópicos. Se sobrar espaço, acrescente dado
 concreto do material recebido (número, nome, cena) às pautas que você já tem —
-NÃO acrescente um quarto tópico, e nunca encha linguiça.
+NÃO acrescente um quarto tópico, e nunca encha linguiça.{pautas_orcamento}
 
 MATERIAL VISUAL — o corpo do vídeo é montado SOMENTE com os clipes de vídeo
 anexados aos posts do X da trend (até {max_clipes} clipes, nada de foto
@@ -2194,7 +2195,7 @@ def selecionar_trend(
                 "Nenhuma candidata de hoje tem os "
                 f"{LONGO_MIN_POSTS_VIDEO} posts com clipe que o formato longo "
                 "precisa para chegar ao piso da auditoria — o vídeo não teria "
-                f"material para {LONGO_MIN_S}-{LONGO_MAX_S}s de tela; "
+                "clipe nenhum para as três pautas; "
                 "abortando antes de gastar "
                 "roteiro e narração. Se isso virar rotina, a alavanca é a "
                 "própria lista do X: contas que publiquem VÍDEO. X_MAX_POSTS "
@@ -2300,6 +2301,13 @@ def _contar_palavras(texto: str) -> int:
     return len(re.sub(r"\[[^\]]*\]", " ", texto).split())
 
 
+# Nome público do mesmo contador, para o main medir o ritmo real da narração
+# com a MESMA régua que o orçamento de palavras usa. Contar as audio tags de um
+# lado e não do outro enviesaria o alvo da segunda narração justamente nos
+# roteiros mais marcados.
+contar_palavras_faladas = _contar_palavras
+
+
 def _resumo_estilo(
     videos_recentes: list[dict] | None,
     campeoes: list[dict] | None,
@@ -2375,23 +2383,23 @@ def _resumo_estilo(
 
 
 def _faixa_palavras(cfg: Config) -> tuple[int, int]:
-    """Piso e teto de palavras faladas do roteiro, conforme o formato.
+    """Piso e teto de palavras faladas do roteiro, em qualquer formato.
 
-    No formato longo a faixa sai da FAIXA DURA do próprio formato (120 a 150s),
-    com as margens assimétricas de MARGEM_LONGO_MIN_S/MARGEM_LONGO_MAX_S para
-    absorver a variação de ritmo do TTS sem furar o piso.
+    UMA CONTA SÓ PARA OS DOIS FORMATOS desde 2026-09-01 (pedido do usuário:
+    "na hora de produzir o roteiro, sempre priorizar o tamanho do material").
+    O longo tinha a sua própria, tirada da faixa dura de 120-150s do formato,
+    porque lá o alvo era do FORMATO e não da pauta. Agora `cfg.video_duracao`
+    chega aqui já dimensionado pelo material nos dois casos (`main.py`, com
+    `alvo_pelo_material` no Short e `alvos_das_pautas` no longo), e a faixa é
+    sempre a mesma: o teto é o alvo convertido em palavras, o piso é
+    FRACAO_MINIMA dele.
 
-    No formato curto o teto vem da duração-alvo (VIDEO_DURACAO) e o piso é o
-    MAIOR entre a fração da duração-alvo e o que o PISO DURO do Short exige:
-    FRACAO_MINIMA sozinha autorizava um roteiro de 51 segundos com alvo de 60,
-    e qualquer variação de ritmo para baixo derrubava isso abaixo dos 50s
-    proibidos — o piso duro tem que entrar no orçamento de palavras, não só na
-    conferência do fim.
-
-    A VELOCIDADE entra como multiplicador: a narração acelerada do Short cabe
+    A VELOCIDADE entra como multiplicador: a narração acelerada cabe
     proporcionalmente mais palavras no mesmo tempo de tela, e sem isso o vídeo
     sairia mais curto que a duração pedida — que foi exatamente o bug do piso
-    de palavras em 2026-07-16, por outro caminho.
+    de palavras em 2026-07-16, por outro caminho. É também o que faz a queda de
+    1,25x para 1,05x no Short (2026-09-01) "adequar a geração de palavras"
+    sozinha: o mesmo clipe passa a pedir ~16% menos texto.
 
     Os SEGUNDOS aqui são sempre segundos do áudio FINAL, porque é isso que
     PALAVRAS_POR_SEGUNDO mede desde 2026-08-05 (depois da aceleração e do corte
@@ -2399,11 +2407,6 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     está dentro da constante.
     """
     ritmo = PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
-    if cfg.formato == "longo":
-        return (
-            int((LONGO_MIN_S + MARGEM_LONGO_MIN_S) * ritmo),
-            int((LONGO_MAX_S - MARGEM_LONGO_MAX_S) * ritmo),
-        )
     limite = int(cfg.video_duracao * ritmo)
     # O TERMO ABSOLUTO SAIU em 2026-08-28, com o piso duro do formato. Ele era
     # `(CURTO_MIN_S + margem) * ritmo`, e existia para o roteiro nunca sair
@@ -2417,6 +2420,124 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     # roteiro, e continua valendo.
     piso = int(limite * FRACAO_MINIMA)
     return piso, max(limite, piso)
+
+
+def reescrever_para_duracao(
+    cfg: Config, roteiro: dict, palavras_alvo: int, motivo: str
+) -> dict:
+    """Refaz o texto do Short para um número de palavras MEDIDO, não estimado.
+
+    Pedido do usuário em 2026-09-01: "se estourar ou ficar abaixo, coloque para
+    refazer". A faixa de palavras do `gerar_roteiro` já refaz, mas ela converte
+    segundos em palavras por PALAVRAS_POR_SEGUNDO, que é a média de dez
+    narrações — e o TTS varia ±11% em torno dessa média. Enquanto a velocidade
+    não tinha limite, esse erro era absorvido esticando o áudio; com a faixa de
+    1,00x a 1,15x, ele às vezes sobra.
+
+    Aqui o número não é mais média: `palavras_alvo` vem de dividir as palavras
+    da narração que ACABOU de ser medida pela duração que ela deu, com esta voz
+    e este texto. É a única conversão exata que o pipeline consegue fazer, e
+    por isso a segunda narração costuma fechar.
+
+    O TÍTULO é restaurado do roteiro antigo de propósito: a pasta da execução já
+    foi criada com o slug dele e a capa vai ser desenhada a partir dele. Trocar
+    o título aqui deixaria o nome da pasta mentindo sobre o vídeo, e o ganho
+    seria zero — quem precisava mudar era o tamanho da narração.
+
+    Devolve o roteiro NOVO só se ele ficou mais perto do alvo; senão devolve o
+    que entrou. Nunca levanta: falhar aqui deixa o vídeo do tamanho que estava,
+    que é pior do que o alvo mas melhor do que execução perdida.
+    """
+    piso = max(1, int(palavras_alvo * 0.95))
+    teto = max(piso, int(palavras_alvo * 1.05))
+    atual = _contar_palavras(roteiro.get("texto_video") or "")
+    print(
+        f"[roteiro] Refazendo o texto para o material: {atual} palavras -> "
+        f"{piso}-{teto} ({motivo})."
+    )
+
+    instrucoes = INSTRUCOES_ROTEIRO.format(
+        foco=FOCO_USA if cfg.publico == "usa" else FOCO_BRASIL,
+        duracao=cfg.video_duracao,
+        palavras=teto,
+        palavras_min=piso,
+    )
+    pedido = (
+        f"O roteiro abaixo foi narrado e MEDIDO: com {atual} palavras faladas "
+        f"ele não cabe no tempo de imagem que a pauta tem. Reescreva o JSON "
+        f"completo com {piso} a {teto} palavras faladas em texto_video "
+        + (
+            "cortando detalhes do ACONTECIMENTO"
+            if atual > teto
+            else "acrescentando detalhes CONCRETOS ao ACONTECIMENTO (número, "
+            "nome, mecanismo), sem encher linguiça"
+        )
+        + " — mantenha o assunto, o preview de abertura, a consequência única "
+        "e a conclusão em tensão. Esta contagem foi medida no áudio real, "
+        "não estimada: respeite-a."
+    )
+
+    cliente = OpenAI(api_key=cfg.openai_api_key)
+    try:
+        resposta = cliente.chat.completions.create(
+            model=cfg.text_model,
+            messages=[
+                {"role": "system", "content": instrucoes},
+                {
+                    "role": "assistant",
+                    "content": json.dumps(roteiro, ensure_ascii=False),
+                },
+                {"role": "user", "content": pedido},
+            ],
+            response_format={"type": "json_schema", "json_schema": ESQUEMA_ROTEIRO},
+        )
+        novo = json.loads(resposta.choices[0].message.content)
+    except Exception as erro:  # noqa: BLE001 — o vídeo segue com o texto atual
+        print(f"[aviso] A reescrita por duração falhou ({erro}); texto mantido.")
+        return roteiro
+
+    novo["titulo"] = roteiro.get("titulo", novo.get("titulo", ""))
+    _aparar_hook_final(novo)
+    novas = _contar_palavras(novo.get("texto_video") or "")
+    if abs(novas - palavras_alvo) >= abs(atual - palavras_alvo):
+        print(
+            f"[aviso] A reescrita saiu com {novas} palavras e não chegou mais "
+            f"perto de {palavras_alvo}; mantendo o texto anterior."
+        )
+        return roteiro
+    print(f"[roteiro] Texto refeito com {novas} palavras faladas.")
+    return novo
+
+
+def _orcamento_das_pautas(cfg: Config, pautas_s: list[int] | None) -> str:
+    """Linha do prompt com o tamanho de CADA pauta do formato longo.
+
+    Existe desde 2026-09-01, com a duração flexível de capítulo. As pautas do
+    vídeo longo não têm mais que somar 120-150s divididos a gosto: cada uma
+    dura o que o clipe DELA dá, e é aqui que o roteirista fica sabendo disso —
+    em segundos e em palavras, porque é em palavras que ele escreve.
+
+    Sem `pautas_s` (chamada antiga, ou material sem medida nenhuma) devolve
+    string vazia: o prompt volta a pedir só o total, como pedia antes.
+    """
+    if not pautas_s:
+        return ""
+    ritmo = PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
+    linhas = [
+        f"   - pauta {k}: ~{s}s de fala (~{max(1, int(s * ritmo))} palavras)"
+        for k, s in enumerate(pautas_s, 1)
+    ]
+    return (
+        "\n\nTAMANHO DE CADA PAUTA — o vídeo é montado em partes separadas e "
+        "cada pauta recebe UM clipe, que dura o que dura. Por isso as pautas "
+        "NÃO têm o mesmo tamanho, e o de cada uma está fixado abaixo. Respeite "
+        "a proporção: pauta que estoura o tempo dela deixa a tela sem imagem "
+        "no fim da parte, e pauta curta demais desperdiça o clipe.\n"
+        + "\n".join(linhas)
+        + "\n   Pautas de tamanhos diferentes são o desenho, não um defeito: "
+        "elas dão o ritmo do vídeo. A pauta MAIOR é a que merece a análise "
+        "mais longa; a menor entrega o fato e passa adiante."
+    )
 
 
 def _aparar_hook_final(roteiro: dict) -> None:
@@ -2663,8 +2784,14 @@ def gerar_roteiro(
     campeoes: list[dict] | None = None,
     panorama: dict | None = None,
     apuracao: dict | None = None,
+    pautas_s: list[int] | None = None,
 ) -> dict:
     """Gera o roteiro completo da trend escolhida, a partir dos posts do X.
+
+    `pautas_s` (só no formato longo, 2026-09-01) são os segundos de fala de
+    CADA pauta, calculados pelo material de cada uma em `config.alvos_das_pautas`
+    e passados adiante pelo main. É o que permite ao vídeo longo ter capítulos
+    de tamanhos diferentes sem repetir clipe. Ausente, o prompt pede só o total.
 
     A busca de NOTÍCIAS (Firecrawl) que enriquecia este material foi removida em
     2026-08-16: os fatos, nomes e números passaram a sair só do resumo da trend
@@ -2726,10 +2853,14 @@ def gerar_roteiro(
     if longo:
         formatacao["max_clipes"] = cfg.max_clipes
         formatacao["topicos_max"] = TOPICOS_MAX
-        formatacao["minimo_s"] = LONGO_MIN_S
-        formatacao["maximo_s"] = LONGO_MAX_S
         formatacao["abertura_palavras"] = ABERTURA_MAX_PALAVRAS
         formatacao["abertura_s"] = LONGO_ABERTURA_S
+        # O TAMANHO DE CADA CAPÍTULO, em palavras, vai para o prompt
+        # (2026-09-01). Sem isto o modelo distribui o texto como quiser entre as
+        # três pautas, e a pauta que ganhar mais texto do que o clipe dela
+        # comporta volta a precisar de loop — que é justamente o que a duração
+        # flexível de capítulo veio tirar.
+        formatacao["pautas_orcamento"] = _orcamento_das_pautas(cfg, pautas_s)
     instrucoes = modelo_instrucoes.format(**formatacao)
 
     resposta = cliente.chat.completions.create(
@@ -2830,8 +2961,9 @@ def gerar_roteiro(
             print(
                 f"[aviso] texto_video ficou com {palavras} palavras faladas "
                 f"depois de {TENTATIVAS_FAIXA_PALAVRAS} tentativas (faixa "
-                f"{minimo}-{limite}); seguindo com a melhor versão — se ela "
-                "furar o piso de duração, a execução aborta depois da narração."
+                f"{minimo}-{limite}); seguindo com a melhor versão — a "
+                "velocidade da narração e, se ela não bastar, a reescrita "
+                "depois de medir o áudio (main.py) ainda corrigem o resto."
             )
 
     # Auditoria pró-leigo (título + descrição + narração) com UMA reescrita:

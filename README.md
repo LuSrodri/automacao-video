@@ -14,7 +14,7 @@ Pipeline em Python que transforma as trends mais quentes do X (Twitter) em um v�
 6. **GPT 5.6 Luna** escreve o roteiro **explicativo (análise/educacional) em tom adulto**, **sempre citando as fontes** (as contas do X que originaram a trend, e os veículos que elas citam): para um adulto leigo (o público real: homens de 25-54) com metade da atenção — frases com **ritmo de fala natural** (8 a 16 palavras, teto 20, alternando curtas de impacto com mais cheias), uma ideia por frase, **vocabulário preciso de telejornal** (sem jargão de nicho nem sigla sem explicação), tom de furo de notícia (nunca infantil), e a estrutura fixa em **cinco blocos: PREVIEW (0-2s) → CONTEXTUALIZAÇÃO → ACONTECIMENTO → CONSEQUÊNCIA → CONCLUSÃO** — a abertura **diz o que o vídeo vai entregar** (sem dar o número, que é do acontecimento) e a conclusão entrega isso de um jeito que **emenda de volta nela quando o Short reinicia** (loop) e carrega a **disputa** do assunto, sem CTA falado. Ver "Como funciona a estrutura em cinco blocos". O **título e a descrição são autossuficientes** (teste do leigo: sem nome de nicho, sem cauda de suspense; a descrição entrega o fato com a fonte, não é teaser) e prometem **exatamente** o que o vídeo entrega. Uma **auditoria pró-leigo** (chamada própria ao GPT) confere título, descrição e narração contra essas regras e pede **uma reescrita** quando reprova. O roteiro inclui **audio tags** (`[excited]`, `[whispers]`…) que ditam o tom da voz. Desde 2026-08-07 ele devolve também as **tags de busca** do vídeo e a **resposta curta** que vai para a descrição no par `P:`/`R:` — ver "Como funcionam o SEO e o GEO".
 7. **X API** baixa um **pool de clipes de vídeo** dos posts originais da trend (o MP4 de **maior bitrate que cabe no teto de 60 MB**: o X serve o mesmo clipe em várias resoluções, e a de cima às vezes é um 4K de 2,9 GB — descartá-la descartava o clipe inteiro, então o download **desce a lista de variantes** até uma caber) — mais do que os 3 que entram na montagem, como folga para a auditoria — junto com a **conta de origem** de cada clipe e as **fotos dos posts**, que alimentam as cartelas. **Imagem estática nunca ocupa a tela**, então não há busca de imagens na web.
 8. **Auditoria do material visual** (`pipeline/auditoria.py`): o **GPT com visão** descreve e **classifica** cada clipe do pool (cena real, reportagem de TV, gravação de tela, cartela, logo…) e diz se há **selo de emissora ou veículo de imprensa** na imagem. Em cima disso: **veto duro em código** — material de telejornal, vinheta de logotipo e qualquer mídia com selo de emissora saem da disputa, assim como mídia que não recebeu laudo — e uma **nota de pertinência de 1 a 5** dada pelo GPT, que mede só uma coisa: o quanto aquilo que a mídia **mostra** é o que a narração **diz** (abaixo de 3 sai; material que mostra a manchete de um veículo em vez do fato tem teto 2). Desde 2026-08-07 há também o **veto por texto na tela**: clipe **tomado por texto** — e, mais ainda, por texto **parado** (slide, cartaz, print) — sai da montagem, **a não ser** que aquele texto seja o assunto que a narração descreve. **Zero clipe aprovado aborta a execução** (o formato longo exige um piso de 3). Roda **antes do ElevenLabs**, para a reprovação não custar créditos de narração, e deixa o rastro em `auditoria_clipe.json`.
-9. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere), o pipeline **acelera a narração** conforme o formato (`VIDEO_VELOCIDADE`, 1.25x no Short; **1.0x, velocidade normal, no `--long-take`**) e **corta os silêncios**, deixando o áudio sem trechos parados. Os timestamps do alinhamento são reescalados nas duas etapas, então cortes, legendas e cartelas seguem sincronizados. O orçamento de palavras do roteiro é multiplicado pela velocidade — narração mais rápida cabe mais palavras nos mesmos segundos de tela. **Piso duro de duração, conferido aqui — só no `--long-take` desde 2026-08-28**: vídeo longo abaixo de **120s** aborta a execução sem publicar. No **Short o piso foi removido** (ver "O piso do Short foi removido"): lá o tamanho vem do material da pauta, e um vídeo curto deixou de ser defeito de roteiro. A conferência é depois da narração, e não só na faixa de palavras, porque **palavra não é segundo** — o ritmo real do TTS varia ~25% de narração para narração, e só depois de narrar e cortar os silêncios se sabe a duração de verdade. O roteirista já teve **3 tentativas** de acertar o tamanho antes disso. O teto **não** aborta (vídeo comprido é defeito de retenção, não de formato).
+9. **ElevenLabs** narra o texto (modelo `eleven_v3`, com timestamps por caractere), o pipeline aplica a velocidade do formato (`VIDEO_VELOCIDADE`, **1.05x no Short desde 2026-09-01** — era 1.25x; **1.0x, velocidade normal, no `--long-take`**) e **corta os silêncios**, deixando o áudio sem trechos parados. Os timestamps do alinhamento são reescalados nas duas etapas, então cortes, legendas e cartelas seguem sincronizados. O orçamento de palavras do roteiro é multiplicado pela velocidade — a queda para 1.05x é o que "adequa a geração de palavras", e o mesmo clipe passa a pedir ~16% menos texto. **Não há mais piso de duração em nenhum formato** (2026-09-01; ver "Não existe mais piso de duração"). O que fecha a duração são **três camadas, nesta ordem**: o orçamento de palavras (até **5** reescritas, de graça), a **velocidade medida no áudio final** (`ajustar_ao_alvo`, presa entre **1.00x e 1.15x**) e, se a faixa de velocidade não fechar, a **reescrita do texto pelo ritmo medido** com uma segunda narração (`TENTATIVAS_NARRACAO=2`). A segunda tentativa não é chute repetido: a primeira narração dá o ritmo real desta voz com este texto, e a conversão de segundos em palavras deixa de ser média e vira medida.
 10. **Cartelas de imagem nos momentos-chave** (`pipeline/cartelas.py`, **só no Short** desde 2026-08-25): a **foto do post da trend** (que o pipeline já lia e descartava) **toma a tela inteira** por ~3,6s, no instante em que a narração **nomeia** o que ela mostra — a pessoa citada, o lugar atingido, o documento assinado. A imagem entra inteira sobre um fundo feito dela mesma, ampliada e borrada, com o **crédito próprio** numa faixa na base (`Reprodução: X / @conta` ou o domínio do veículo; `Image Credit` no `-usa`). Ela não é um cartão sobreposto: entra e sai pelo **deslize do carrossel** (ver "Como funciona a tela cheia e o carrossel"). As imagens passam pela **mesma auditoria dos clipes** (visão + veto duro + nota) e o gancho fica limpo (nada entra nos 3 primeiros segundos).
 11. **ffmpeg** monta o vídeo em **tela cheia** (ver "Como funciona a tela cheia e o carrossel"). **No `--long-take` este passo é outro desde 2026-08-25**: o vídeo é montado em **quatro partes separadas e coladas** (ver "Como funciona a montagem em quatro partes"); o que segue aqui é o caminho do Short. O **fundo de cada momento é o próprio clipe daquele trecho, ampliado para cobrir o quadro e borrado**; por cima entra o **clipe nítido no maior tamanho que cabe nele, centrado** (clipe mais curto que a janela repete em loop). Os clipes **cobrem 100% da narração** (nunca há um instante sem imagem) com **crossfade curto e limpo** entre si. **Legendas** sincronizadas palavra a palavra — grandes, em **Archivo Black** branca com contorno preto, com entrada de "carimbo" editorial — são queimadas no vídeo, e o **crédito de reprodução** ("Reprodução Imagem: X" + "Conta `@usuario`" do post de origem; "Image Credit"/"Account" no modo `-usa`) fica no **canto superior direito do quadro** sobre uma tarja preta translúcida, trocando junto com o clipe e sumindo enquanto uma imagem ocupa a tela (ela traz o crédito dela). O vídeo **não tem música de fundo** (a trilha foi removida em 2026-07-30, junto com o arquivo `assets/trilha.mp3`): sobram a narração e os wooshes das transições — o formato virou análise, e música disputa atenção com a informação falada. A cauda após a narração é de **0,15s** — curta de propósito, para a CONCLUSÃO emendar na pergunta de abertura quando o Short reinicia (loop).
 12. O `.mp4` final vai para `output/`, é registrado em `videos.txt` e publicado automaticamente no **YouTube** (Data API v3), com as **tags de busca** e com a **descrição montada** em `pipeline/seo.py` — parágrafo do payload, par `P:`/`R:`, capítulos (formato longo), fontes reais e as hashtags por último. Roda sempre, independente da flag `-usa` (o horário de publicação é o do cronjob que dispara a execução).
@@ -72,8 +72,9 @@ output/
 
 ## Formato longo (`--long-take`)
 
-`--long-take` produz um **vídeo de análise em 16:9 (1920x1080), de 120 a 150
-segundos, sem legendas**, para os **dois canais** (combina com `-usa`). É o
+`--long-take` produz um **vídeo de análise em 16:9 (1920x1080), sem legendas**,
+para os **dois canais** (combina com `-usa`), com **teto** de `LONG_DURACAO`
+(máximo 150s) e **sem piso** — a duração sai do material das pautas. É o
 mesmo pipeline — mesma coleta do X, mesma tela cheia, mesmo crédito de
 reprodução no canto superior direito — com outra direção editorial:
 
@@ -166,13 +167,32 @@ reprodução no canto superior direito — com outra direção editorial:
   sobrou para o `start_time` da busca aberta por clipes e para o panorama do
   YouTube.
 
-A duração final segue a narração: o roteirista escreve dentro de uma faixa
-dura de palavras (~277 a 316 faladas, calculada a partir do ritmo real medido
-do TTS) e tem até **3 tentativas** de entrar nela. O **piso de 120s é duro**:
-narração mais curta que isso **aborta a execução sem publicar**, depois do
-corte de silêncios — palavra não é segundo, e só depois de narrar se sabe a
-duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido demais
-é defeito de retenção, não de formato.
+A duração final segue a narração, e a narração segue o **material**
+(2026-09-01). Cada uma das três pautas é encomendada do tamanho do **clipe
+dela** (`alvos_das_pautas`, config.py), a abertura fica com ~10s, e a soma é o
+alvo do vídeo — limitado por `LONG_DURACAO`. O roteirista recebe o tamanho de
+cada pauta em segundos **e em palavras** dentro do prompt, e tem até **5
+tentativas** de entrar na faixa total.
+
+É essa conta por capítulo que **tira o loop do formato longo**: como cada pauta
+recebe **um** clipe e nenhum serve a duas, uma pauta maior que o clipe dela só
+podia ser coberta repetindo o clipe. O `-stream_loop` da montagem continua no
+comando do ffmpeg, mas como **rede** contra tela preta, não como o mecanismo
+que enchia a parte.
+
+**Consequência esperada:** os vídeos longos passam a variar de tamanho e, com o
+material típico do X (clipes de ~15 a 30s), tendem a sair bem abaixo dos
+120-150s da faixa antiga — três clipes de 20s dão um vídeo de ~60s. Se a
+prioridade for o tamanho do vídeo em vez do tamanho do material, a alavanca é
+deixar uma pauta usar **mais de um clipe**, o que reverteria o desenho de
+2026-08-25 ("cada parte tem UM vídeo, do começo ao fim dela").
+
+Pisos que saíram junto: o de duração do vídeo (`LONGO_MIN_S`, 120s, que
+abortava depois da narração paga) e o de cada capítulo (`LONGO_PAUTA_MIN_S`,
+20s). O **teto de 150s** só gera aviso no log, e o **teto da abertura**
+(`LONGO_ABERTURA_MAX_S`, 16s) continua abortando: ele não é ritmo, é sincronia
+de painel — abertura longa demais deixa o índice "ainda neste vídeo" na tela
+enquanto a narração já conta a primeira pauta.
 
 ## Ajustes no .env
 
@@ -190,8 +210,8 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | `ELEVENLABS_VOICE_ID` | `czvzJwIVS2asEKnthV40` | Voz da narração em português ([voice library](https://elevenlabs.io/app/voice-library)) |
 | `ELEVENLABS_VOICE_ID_USA` | `POPWFdpTM8Mn2ZQEagyQ` | Voz da narração no modo `-usa` |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Modelo TTS (suporta português e audio tags de emoção) |
-| `VIDEO_DURACAO` | `25` | Duração-**máxima** da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%). Caiu de 60 para 25 em 2026-08-09 e deixou de ser meta em 2026-08-28: sem loop, o roteiro é dimensionado pelo material da pauta e este valor virou o teto. **O piso duro de 21s foi removido** no mesmo dia — o Short dura o que a pauta dá. O mínimo aceito aqui é 5s, e é técnico, não editorial |
-| `VIDEO_VELOCIDADE` | `1.25` | Velocidade da narração e, com ela, do ritmo do vídeo inteiro. O **Short roda acelerado**; o `--long-take` roda em `1.0` (`LONG_VELOCIDADE`). O orçamento de palavras do roteiro é multiplicado por este valor |
+| `VIDEO_DURACAO` | `25` | Duração-**máxima** da narração em segundos (a duração final segue o áudio; o corte de silêncios tira ~10%). Caiu de 60 para 25 em 2026-08-09 e deixou de ser meta em 2026-08-28: sem loop, o roteiro é dimensionado pelo material da pauta e este valor virou o teto. **Não há piso nenhum** desde 2026-09-01 — o Short dura o que a pauta dá |
+| `VIDEO_VELOCIDADE` | `1.05` | Velocidade **de base** da narração do Short e, com ela, do ritmo do vídeo inteiro. Caiu de `1.25` em 2026-09-01. O ajuste do fim pode movê-la dentro de **[1.00, 1.15]** e o valor daqui tem que estar nessa faixa; o `--long-take` roda em `1.0` (`LONG_VELOCIDADE`). O orçamento de palavras do roteiro é multiplicado por este valor — por isso a queda para 1.05x pede ~16% menos texto |
 | `VIDEO_LARGURA` | `1080` | Largura do vídeo |
 | `VIDEO_ALTURA` | `1920` | Altura do vídeo |
 | `MAX_POSTS_MIDIA` | `12` | Posts da trend consultados no lookup de mídias (a X API cobra por post lido) |
@@ -201,7 +221,7 @@ duração de verdade. O teto de 150s só gera aviso no log: vídeo comprido dema
 | `MAX_CARTELAS` | `1` | Cartelas de imagem nos momentos-chave, que tomam a tela inteira pelo deslize do carrossel (`0` desliga). Caiu de 2 para 1 com o Short de 25s: cada imagem tira ~4s de clipe da tela. É a **única** camada de imagem desde 2026-08-24, quando `MAX_FIGURAS` saiu |
 | `VETO_TEXTO_DENSO` | `1` | Barra o clipe **tomado por texto** (e, mais ainda, por texto **parado**) quando ele não é o assunto que a narração descreve. `0` aceita de volta o fundo de slide/print atrás das legendas queimadas |
 | `VETO_CLIPE_PARADO` | `1` | Barra o clipe **estático** (o mesmo quadro do começo ao fim) e o de **pessoa falando para a câmera** (entrevista, podcast, coletiva, âncora). Veto duro, sem exceção de contexto nem de formato. `0` aceita de volta o busto falante e a foto com áudio |
-| `LONG_DURACAO` | `135` | Só com `--long-take`: duração-alvo da narração (aceita 120 a 150; **abaixo de 120s o vídeo não sai**) |
+| `LONG_DURACAO` | `135` | Só com `--long-take`: **teto** da narração (máximo 150). Deixou de ser alvo em 2026-09-01 — a duração sai da soma do material das três pautas, e **não há piso** |
 | `LONG_LARGURA` / `LONG_ALTURA` | `1920` / `1080` | Só com `--long-take`: resolução 16:9 |
 | `LONG_MAX_CLIPES` | `8` | Só com `--long-take`: clipes do X usados na montagem |
 | `LONG_MAX_POSTS_MIDIA` | `16` | Só com `--long-take`: posts da trend consultados para achar os clipes |
@@ -359,6 +379,31 @@ São quatro camadas, e as quatro são necessárias porque cada uma cobre uma fal
 
 Entre 2 e 4 há ainda uma **conferência de metragem** logo depois da auditoria e **antes do TTS**: ela soma o **trecho útil** dos clipes que sobreviveram ao veto e confere se cobrem a narração encomendada. Não fechando, a candidata perde a vez pelo fallback de tema — custa notícias, roteiro e visão, nunca narração.
 
+### Não existe mais piso de duração (2026-09-01)
+
+A pedido do usuário — *"pode tirar qualquer piso que tiver"* — saíram **todos os
+pisos de tempo** que restavam:
+
+| Piso | Onde estava | O que fazia |
+| --- | --- | --- |
+| `PISO_DUR_UTIL_S` (5s) | `auditoria.py` | descartava clipe com menos de 5s de trecho útil. Depois que o piso de formato do Short saiu em 28/08, **era ele o piso efetivo do canal** |
+| `LONGO_MIN_S` (120s) | `main.py` | abortava o `--long-take` abaixo de 120s, **depois da narração já paga** |
+| `LONGO_PAUTA_MIN_S` (20s) | `manchetes.py` | abortava quando uma pauta do longo ficava curta |
+
+O argumento é o mesmo nos três casos, e é o que já tinha derrubado o piso de
+21s do Short em 28/08: enquanto o alvo era fixo e o material se esticava em
+loop para cobri-lo, vídeo curto era **defeito de roteiro** e o piso pegava
+isso. Com o material dimensionando o roteiro nos dois formatos, vídeo curto
+passou a significar "o material de hoje é curto" — fato sobre a pauta, não
+defeito. Um clipe de 3s agora rende um vídeo de 3s.
+
+**O que NÃO saiu, porque não é piso de tempo:** o mínimo de clipes **aprovados**
+(1 no curto, 3 no longo — é aritmética da montagem, e abaixo dele o vídeo sai
+sem imagem), a nota de **pertinência** do clipe, e os **tetos**. `FRACAO_MINIMA`
+também fica: é o piso *proporcional* do orçamento de palavras, que impede o
+roteiro de sair muito abaixo do alvo *daquela* pauta. `DUR_MINIMA_TECNICA_S`
+desceu de 5 para 1 e sobrou só para validar variáveis de ambiente.
+
 ### O piso do Short foi removido (2026-08-28)
 
 O Short tinha um **piso duro de 21 segundos** desde 2026-08-04: vídeo mais curto não era publicado e a execução abortava. Ele foi **removido** no mesmo dia em que o loop saiu, a pedido do usuário, e a razão é que a virada do loop o transformou em outra coisa.
@@ -373,9 +418,9 @@ O que caiu junto, por não ter mais o que proteger:
 - o **abort de duração** em `main.py`, que agora vale **só no formato longo**;
 - o **termo absoluto** do orçamento de palavras (`CURTO_MIN_S + margem`) e as constantes `CURTO_MARGEM_FRAC`/`CURTO_MARGEM_MIN_S`, que eram a folga dele. Sobrou o piso **proporcional** (`FRACAO_MINIMA`): o roteiro não pode sair muito abaixo do alvo *daquela* pauta, o que continua sendo defeito de roteiro.
 
-**O que ainda limita por baixo não é regra de formato, é material:** a auditoria descarta clipe com menos de `PISO_DUR_UTIL_S` (5s) de trecho útil, então o piso efetivo é consequência disso, não decreto. `DUR_MINIMA_TECNICA_S` (5s) existe só para o orçamento de palavras não virar zero.
+**Nada mais limita por baixo desde 2026-09-01** (ver "Não existe mais piso de duração"): o `PISO_DUR_UTIL_S` de 5s que era o piso efetivo saiu, e `DUR_MINIMA_TECNICA_S` desceu para 1, só para validar env vars.
 
-No **`--long-take` nada disso vale**: lá o alvo continua fixo (120-150s), `LONGO_MIN_S` segue abortando e o clipe ainda repete em loop.
+O **`--long-take` passou a seguir a mesma lógica em 2026-09-01**: alvo pelo material, por capítulo, sem piso — e o loop dele virou rede em vez de mecanismo.
 
 O **zoom inteligente** que recorta clipe horizontal para o quadro vertical acompanhando quem está em cena (`enquadramento.py`) **continua valendo**, sem mudança. O que mudou para ele é que o ramo `mod(t,span)` da trajetória — feito para o clipe dar a volta junto com o loop — ficou **inerte no Short**, já que ali a janela nunca é mais longa que o clipe.
 

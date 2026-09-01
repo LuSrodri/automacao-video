@@ -119,8 +119,9 @@ Fluxo:
 
 Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - padrão: Short vertical 1080x1920 de ATÉ ~25s (era 60 até 2026-08-09), com
-  legendas queimadas e narração ACELERADA (VIDEO_VELOCIDADE). Os Shorts
-  INTERCALAM temas — o macrotema do Short anterior sai da disputa da seleção.
+  legendas queimadas e narração a 1,05x (VIDEO_VELOCIDADE; era 1,25x até
+  2026-09-01). Os Shorts INTERCALAM temas — o macrotema do Short anterior sai
+  da disputa da seleção.
   O MATERIAL DIMENSIONA O ROTEIRO desde 2026-08-28 (pedido do usuário): o
   Short não repete mais clipe em loop, então os ~25s viraram um TETO e não uma
   meta — o roteiro é escrito para os segundos de clipe que a pauta tem
@@ -128,19 +129,38 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
   cobre a narração e a montagem encaixa as janelas no que existe
   (`_encaixar_no_material`, edicao.py). O ZOOM INTELIGENTE que transforma clipe
   horizontal em vertical (enquadramento.py) continua valendo.
-  SEM PISO DE DURAÇÃO desde 2026-08-28 (pedido do usuário): o piso duro de 21s
-  que valia desde 2026-08-04 foi REMOVIDO. Ele fazia sentido quando o alvo era
-  fixo e vídeo curto era defeito de ROTEIRO; depois que o material passou a
-  ditar o tamanho, ele passou a descartar a PAUTA de clipe curto — medido em 50
-  curtidas reais, 73% delas. O Short agora dura o que a pauta dá, e o que
-  limita por baixo é a auditoria (clipe com menos de 5s de trecho útil sai),
-  não uma regra de formato. No formato LONGO o piso continua (LONGO_MIN_S).
-- `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), de 120 a 150 segundos
-  (o piso de 120s é duro: abaixo dele a execução aborta), SEM legendas e em
+  A DURAÇÃO FECHA EM TRÊS CAMADAS, nesta ordem: o orçamento de PALAVRAS
+  (escritor, até 5 reescritas), a VELOCIDADE da narração depois de medir o
+  áudio (audio.ajustar_ao_alvo, presa entre 1,00x e 1,15x) e, se a faixa de
+  velocidade não fechar, a REESCRITA DO TEXTO pelo ritmo medido, com uma
+  segunda narração (TENTATIVAS_NARRACAO).
+- `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), com TETO de
+  LONG_DURACAO (máximo LONGO_MAX_S=150s) e sem piso, SEM legendas e em
   velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
   explica um acontecimento contemporâneo cobrindo EXATAMENTE 3 TÓPICOS —
   recortes diferentes do mesmo fato, tirados do próprio acontecimento (quem
   fez, quem paga, quem ganha, quem perde, o que vem depois).
+
+  O MATERIAL DIMENSIONA O LONGO TAMBÉM, e por CAPÍTULO (2026-09-01, pedido do
+  usuário: "sempre priorizar o tamanho do material" e "para evitar o loop no
+  vídeo longo, pode ser flexível a duração de cada capítulo"). Cada uma das
+  três pautas dura o que o clipe DELA dá (`alvos_das_pautas`, config.py), a
+  abertura fica com ~LONGO_ABERTURA_S, e a soma é a duração do vídeo. Como
+  cada pauta recebe UM clipe e nenhum serve a duas, é essa conta que tira o
+  loop do formato — o `-stream_loop` da montagem virou rede contra tela preta,
+  não mais o mecanismo que enchia a parte. Consequência esperada: os vídeos
+  longos passam a variar de tamanho e, com o material típico do X (clipes de
+  ~15 a 30s), tendem a sair bem abaixo dos 120-150s da faixa antiga.
+
+  NÃO HÁ MAIS PISO DE DURAÇÃO EM NENHUM FORMATO (2026-09-01, pedido do
+  usuário: "pode tirar qualquer piso que tiver"). Saíram, juntos: o piso de
+  trecho útil do clipe (PISO_DUR_UTIL_S, 5s, que era o piso EFETIVO do Short
+  desde 28/08), o piso de duração do longo (LONGO_MIN_S, 120s) e o piso de
+  cada capítulo do longo (LONGO_PAUTA_MIN_S, 20s). Os TETOS ficam — inclusive
+  o da abertura do longo (LONGO_ABERTURA_MAX_S), que é sincronia de painel e
+  não ritmo. Continuam valendo, e não são pisos de tempo: o mínimo de clipes
+  APROVADOS (1 no curto, 3 no longo — aritmética da montagem) e a nota de
+  PERTINÊNCIA do clipe.
 
   A MONTAGEM EM QUATRO PARTES (2026-08-25, desenho do usuário) é o que define
   este formato. O vídeo NÃO é um bloco corrido com sobreposições ligando e
@@ -187,12 +207,16 @@ from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
 from pipeline.classificacao import classificar_trends, filtrar_por_macrotema
 from pipeline.config import (
+    CURTO_VELOCIDADE_MAX,
+    CURTO_VELOCIDADE_MIN,
     LONGO_MAX_S,
     LONGO_MIN_CLIPES_APROVADOS,
-    LONGO_MIN_S,
+    LONGO_NUM_TRENDS,
     MATERIAL_MARGEM,
+    TENTATIVAS_NARRACAO,
     TENTATIVAS_TREND,
     alvo_pelo_material,
+    alvos_das_pautas,
     ativar_formato_longo,
     carregar_config,
     segundos_uteis,
@@ -208,7 +232,9 @@ from pipeline.edicao import (
 )
 from pipeline.montagem_longa import montar_video_longo
 from pipeline.escritor import (
+    contar_palavras_faladas,
     gerar_roteiro,
+    reescrever_para_duracao,
     selecionar_trend,
     selecionar_trends_longo,
 )
@@ -321,8 +347,9 @@ def main() -> None:
         ativar_formato_longo(cfg)
         print(
             f"[config] Formato LONGO: {cfg.video_largura}x{cfg.video_altura} "
-            f"(16:9), alvo de {cfg.video_duracao}s (faixa {LONGO_MIN_S}-"
-            f"{LONGO_MAX_S}s), até {cfg.max_clipes} clipes, sem legendas"
+            f"(16:9), teto de {cfg.video_duracao}s (máximo do formato: "
+            f"{LONGO_MAX_S}s; a duração sai do material das pautas), até "
+            f"{cfg.max_clipes} clipes, sem legendas"
         )
 
     # Leituras do canal PRIMEIRO (fail-fast): se as credenciais do YouTube
@@ -396,14 +423,15 @@ def main() -> None:
     #
     # O laço fecha ANTES do TTS de propósito: as falhas cobertas aqui são as de
     # material, e refazê-las custa notícias + roteiro + visão, nunca narração.
-    # O piso de duração continua abortando seco lá embaixo — narração curta é
-    # defeito do roteiro, e trocar de tema não conserta isso, só paga o
-    # ElevenLabs de novo.
+    # Não há mais nenhum piso de duração abortando lá embaixo (2026-09-01): o
+    # que sobra depois do TTS é o ajuste de velocidade e, se a faixa dele não
+    # fechar, a reescrita do texto pelo ritmo MEDIDO — o mesmo tema, o mesmo
+    # material, só o tamanho corrigido.
     tentadas: list[dict] = []
-    # Alvo de fábrica (VIDEO_DURACAO). No Short ele passou a ser o MÁXIMO, não
-    # a meta: cada tentativa recalcula o alvo a partir da metragem da pauta
-    # escolhida, e sem guardar o valor original a segunda tentativa herdaria o
-    # alvo encolhido da primeira.
+    # Alvo de fábrica (VIDEO_DURACAO / LONG_DURACAO). Nos DOIS formatos ele é o
+    # MÁXIMO, não a meta: cada tentativa recalcula o alvo a partir da metragem
+    # da pauta escolhida, e sem guardar o valor original a segunda tentativa
+    # herdaria o alvo encolhido da primeira.
     duracao_alvo = cfg.video_duracao
     # SEGUNDA FONTE NO LAÇO (2026-08-29, pedido do usuário: "qualquer erro ou
     # filtro nos likedposts, fallback para a lista"). Até aqui a lista só
@@ -497,9 +525,14 @@ def main() -> None:
 
         # O MATERIAL DIMENSIONA O ROTEIRO (2026-08-28, pedido do usuário: "não
         # coloque o vídeo em loop várias vezes, em vez disso, adeque o roteiro
-        # dentro do que cabe naquele vídeo selecionado da pauta"). Só no Short:
-        # o longo mantém a faixa dura de LONGO_MIN_S a LONGO_MAX_S e continua
-        # repetindo clipe.
+        # dentro do que cabe naquele vídeo selecionado da pauta").
+        #
+        # VALE NOS DOIS FORMATOS desde 2026-09-01 ("sempre priorizar o tamanho
+        # do material"). O longo era a exceção — alvo fixo na faixa de 120-150s
+        # e clipe repetido em loop para cobri-la — e agora é dimensionado pela
+        # soma das três pautas, cada uma pelo clipe DELA (`alvos_das_pautas`).
+        # É essa conta por capítulo que tira o loop do formato: pauta de clipe
+        # curto vira parte curta em vez de parte repetida.
         #
         # Vem DEPOIS da seleção porque só aqui se sabe QUAL pauta é, e ANTES do
         # roteiro porque é o roteiro que precisa nascer do tamanho certo — a
@@ -526,6 +559,7 @@ def main() -> None:
         # Candidata sem triagem (fora do teto de MAX_CANDIDATAS, download ou
         # visão falhos) cai na duração cheia, como era antes: medida faltando é
         # ignorância nossa, e não é motivo para encolher vídeo.
+        pautas_s: list[int] | None = None
         if cfg.formato == "curto":
             trend_obj = selecao["trend_obj"]
             metragem = trend_obj.get("segundos_uteis") or trend_obj.get(
@@ -540,11 +574,39 @@ def main() -> None:
                     "em loop)."
                 )
                 cfg.video_duracao = alvo
+        else:
+            # As três pautas do longo, na ordem em que virarão os tópicos.
+            # `selecoes` vem de `selecionar_trends_longo`; a lista de um
+            # elemento cobre a chamada antiga de uma trend só.
+            #
+            # A lista é COMPLETADA até LONGO_NUM_TRENDS com None de propósito:
+            # o roteiro tem sempre três tópicos, e uma lista curta aqui
+            # dimensionaria o vídeo para menos pautas do que ele vai ter. None
+            # não é medida faltando por descuido — `alvos_das_pautas` dá a ele
+            # a mediana das medidas que existem.
+            escolhidas = [
+                s["trend_obj"] for s in (selecao.get("selecoes") or [])
+            ] or [selecao["trend_obj"]]
+            metragens = [
+                t.get("segundos_uteis") or t.get("segundos_video")
+                for t in escolhidas
+            ]
+            metragens += [None] * max(0, LONGO_NUM_TRENDS - len(metragens))
+            alvo, pautas_s = alvos_das_pautas(cfg, metragens)
+            print(
+                "[material] Cada pauta dura o que o clipe dela dá: "
+                + ", ".join(
+                    f"pauta {k} ~{s}s" for k, s in enumerate(pautas_s, 1)
+                )
+                + f" (+ ~{int(alvo - sum(pautas_s))}s de abertura) = vídeo de "
+                f"~{alvo}s, teto {cfg.video_duracao}s."
+            )
+            cfg.video_duracao = alvo
 
         roteiro = gerar_roteiro(
             cfg, selecao, trends,
             videos_recentes=recentes, campeoes=campeoes, panorama=panorama,
-            apuracao=dossie,
+            apuracao=dossie, pautas_s=pautas_s,
         )
 
         marca = "_longo" if cfg.formato == "longo" else ""
@@ -656,72 +718,95 @@ def main() -> None:
             print("[fallback] Escolhendo outra trend com o material restante.")
 
     marcar_memoria("antes da narração")
-    narracao, alinhamento = gerar_narracao(
-        cfg, roteiro["texto_video"], pasta / "narracao.mp3"
-    )
-    narracao, alinhamento, dur_narracao = aparar_silencios(
-        narracao, alinhamento
-    )
 
-    # A VELOCIDADE FECHA A CONTA (2026-08-30, pedido do usuário: "calcula-se a
-    # velocidade para bater, partindo da velocidade padrão de hoje").
+    # NARRAR, MEDIR E — SE NÃO COUBE — REFAZER O TEXTO (2026-09-01, pedido do
+    # usuário: "se estourar ou ficar abaixo, coloque para refazer").
     #
-    # Até aqui o pipeline pedia o roteiro em PALAVRAS, convertia para segundos
-    # por um ritmo médio e torcia. O TTS varia ±11% em torno desse médio, e o
-    # vídeo saía do tamanho que a narração desse — o alvo era uma intenção, não
-    # um resultado. Este é o primeiro ponto do pipeline em que a duração é
-    # MEDIDA (narrada e sem os silêncios), e portanto o único em que dá para
-    # corrigir em vez de absorver.
+    # Até aqui a duração do vídeo era decidida em PALAVRAS e conferida depois
+    # dos fatos: o orçamento de palavras usava PALAVRAS_POR_SEGUNDO, que é a
+    # média de dez narrações, e o TTS varia ±11% em torno dela. Esse erro era
+    # absorvido pela velocidade, que não tinha limite — dava para esticar o
+    # áudio o quanto fosse preciso. Com a faixa de 1,00x a 1,15x pedida agora,
+    # não dá mais, e a alavanca que sobra é a certa: o TEXTO.
     #
-    # O ajuste vai para os DOIS LADOS: narração comprida acelera, narração
-    # curta desacelera. A correção é sempre pequena porque o alvo é o mesmo que
-    # o orçamento de palavras mirou — o que sobra para corrigir é o erro de
-    # ritmo, não a metragem.
+    # A segunda tentativa não é um chute repetido. A primeira narração deu o
+    # ritmo REAL desta voz com este texto (palavras / duração medida), e é por
+    # ele que o novo tamanho é encomendado — a conversão deixa de ser média e
+    # vira medida, então uma tentativa costuma bastar.
     #
-    # SÓ NO SHORT. O formato longo narra em 1.0 por decisão editorial (análise
-    # em fala apressada não é acompanhável) e tem piso duro de 120s que aborta:
-    # mexer na velocidade dele seria passar por cima das duas coisas de uma vez,
-    # e ninguém pediu isso.
-    if cfg.formato == "curto":
-        alinhamento, dur_narracao = ajustar_ao_alvo(
-            narracao, alinhamento, float(cfg.video_duracao), dur_narracao
+    # SÓ NO SHORT. O longo narra em 1.0x por decisão editorial e não tem faixa
+    # de velocidade para estourar; o tamanho dele é resolvido antes, pela
+    # duração flexível de cada capítulo.
+    for tentativa_audio in range(1, TENTATIVAS_NARRACAO + 1):
+        narracao, alinhamento = gerar_narracao(
+            cfg, roteiro["texto_video"], pasta / "narracao.mp3"
+        )
+        narracao, alinhamento, dur_narracao = aparar_silencios(
+            narracao, alinhamento
+        )
+        if cfg.formato != "curto":
+            coube = True
+            break
+
+        # A duração ANTES do ajuste é a que mede o ritmo desta voz na
+        # velocidade de BASE — depois do ajuste ela já traz a correção dentro.
+        palavras_narradas = contar_palavras_faladas(roteiro["texto_video"])
+        dur_na_base = dur_narracao
+        alinhamento, dur_narracao, coube = ajustar_ao_alvo(
+            narracao,
+            alinhamento,
+            float(cfg.video_duracao),
+            dur_narracao,
+            base=cfg.velocidade,
+            minimo=CURTO_VELOCIDADE_MIN,
+            maximo=CURTO_VELOCIDADE_MAX,
+        )
+        if coube or tentativa_audio == TENTATIVAS_NARRACAO:
+            break
+
+        # Ritmo MEDIDO, em palavras por segundo de áudio NA VELOCIDADE DE BASE.
+        # Encomendar o novo texto por ele faz a segunda narração cair no alvo
+        # já em 1,05x, sem precisar do ajuste — em vez de cair no alvo presa na
+        # borda da faixa, que é o que sairia se a medida viesse do áudio já
+        # acelerado.
+        ritmo = palavras_narradas / max(dur_na_base, 0.1)
+        roteiro = reescrever_para_duracao(
+            cfg,
+            roteiro,
+            max(1, int(cfg.video_duracao * ritmo)),
+            f"tentativa {tentativa_audio}/{TENTATIVAS_NARRACAO} de fechar "
+            f"{cfg.video_duracao}s dentro da faixa de velocidade",
+        )
+        (pasta / "roteiro.json").write_text(
+            json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    if cfg.formato == "curto" and not coube:
+        print(
+            f"[aviso] Depois de {TENTATIVAS_NARRACAO} narração(ões) o vídeo "
+            f"ficou em {dur_narracao:.1f}s contra o alvo de "
+            f"{cfg.video_duracao}s; seguindo — a MATERIAL_MARGEM da montagem "
+            "cobre a diferença."
         )
 
     largura, altura = cfg.video_largura, cfg.video_altura
     duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
-    # PISO DURO DE DURAÇÃO: vale SÓ NO FORMATO LONGO desde 2026-08-28.
+    # NÃO HÁ MAIS PISO DE DURAÇÃO EM NENHUM FORMATO (2026-09-01, pedido do
+    # usuário). O do Short saiu em 28/08; o do longo (LONGO_MIN_S=120) saía
+    # aqui, com SystemExit, DEPOIS da narração já paga — e era ele que
+    # transformava "as três pautas de hoje tinham clipe curto" em execução
+    # perdida. Com o material dimensionando o roteiro nos dois formatos, vídeo
+    # curto virou o resultado certo para um dia de material curto.
     #
-    # No Short ele foi REMOVIDO a pedido do usuário. Existia desde 2026-08-04,
-    # quando um vídeo curto era defeito de ROTEIRO — o alvo era fixo e o
-    # material se esticava para cobri-lo. Depois que o loop saiu e o material
-    # passou a ditar o tamanho, o mesmo piso deixou de medir defeito e passou a
-    # medir a PAUTA: descartava a candidata de clipe curto, que é critério que
-    # ninguém escolheu. Agora o Short dura o que a pauta dá.
-    #
-    # No LONGO nada muda: lá o alvo continua fixo (120-150s), o clipe ainda
-    # repete em loop e narração curta segue sendo defeito de roteiro. A
-    # conferência é aqui, e não só na faixa de palavras, porque palavra não é
-    # segundo: o ritmo do TTS varia ~25%, e só depois de narrar e cortar os
-    # silêncios se sabe a duração de verdade.
-    #
-    # O teto NÃO aborta: vídeo comprido demais é um defeito de retenção, não de
-    # formato, e jogar fora uma execução inteira por 3 segundos de fala a mais
-    # seria caro sem ninguém ganhar nada.
-    if cfg.formato == "longo" and duracao < LONGO_MIN_S:
-        raise SystemExit(
-            f"Narração de {duracao:.1f}s abaixo do piso de {LONGO_MIN_S}s do "
-            "formato longo — vídeo mais curto que isso está proibido; "
-            "abortando sem publicar. O roteiro saiu curto demais mesmo depois "
-            "das tentativas de ajuste: as alavancas são subir LONG_DURACAO "
-            "(alvo dentro da faixa) ou usar um TEXT_MODEL que respeite melhor "
-            "o piso de palavras."
-        )
+    # O TETO fica, e continua só avisando: vídeo comprido demais é defeito de
+    # retenção, não de formato, e jogar fora uma execução inteira por 3
+    # segundos de fala a mais seria caro sem ninguém ganhar nada.
     if cfg.formato == "longo" and duracao > LONGO_MAX_S:
         print(
             f"[aviso] Narração de {duracao:.1f}s acima do teto do formato "
-            f"longo ({LONGO_MIN_S}-{LONGO_MAX_S}s); o vídeo segue, mas vale "
-            "ajustar LONG_DURACAO se isso virar rotina."
+            f"longo ({LONGO_MAX_S}s); o vídeo segue, mas vale ajustar "
+            "LONG_DURACAO se isso virar rotina."
         )
 
     # --- Daqui para baixo o formato longo tem um caminho PRÓPRIO --------------

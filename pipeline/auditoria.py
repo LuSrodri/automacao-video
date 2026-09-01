@@ -35,11 +35,11 @@ A auditoria roda em duas etapas, sobre um pool maior do que o necessário:
 3. VETO POR FALTA DE MOVIMENTO (2026-08-09), em código: clipe PARADO (o mesmo
    quadro do começo ao fim — foto com áudio, slide, tela congelada) e clipe de
    PESSOA FALANDO para a câmera (entrevista, podcast, coletiva, depoimento,
-   'estudio_ou_podcast') saem da disputa. Desde 2026-08-23 saem também a
+   'estudio_ou_podcast') saem da disputa. Desde 2026-08-23 sai também a
    CARTELA ('cartela_ou_manchete': cartela de texto, print de manchete, motion
-   graphics) e o clipe CURTO DEMAIS para segurar a tela sem entrar em loop
-   (PISO_DUR_UTIL_S) — os dois furavam este veto por caminhos diferentes, mas
-   davam o mesmo vídeo: a tela parada do começo ao fim. É veto duro e sem exceção de
+   graphics), que furava este veto por outro caminho mas dava o mesmo vídeo: a
+   tela parada do começo ao fim. (O veto ao clipe CURTO que morava aqui saiu em
+   2026-09-01 — ver PISO_DUR_UTIL_S.) É veto duro e sem exceção de
    contexto, diferente do veto por texto: os dois casos falham pelo que o
    material É, não pelo que ele mostra. O vídeo é montado sobre movimento — o
    clipe é o que prova o fato enquanto a narração o conta —, e um quadro que
@@ -185,13 +185,19 @@ LIMITE_FALANDO = 0.5
 # Nesta camada o clipe curto só sai da disputa, e na triagem (que roda ANTES da
 # escolha da pauta) ele faz a trend perder a vez para outra candidata.
 #
-# 5s é o teto de exibição do Short (MAX_EXIBICAO = 15s) dividido por três: até
-# três voltas o loop passa por continuidade; da quarta em diante ele vira o
-# efeito de tela travada que este veto existe para evitar. A medida é
-# `dur_util_s` (a maior sequência contígua sem busto falante, em midia_x), que é
-# de centro a centro de fatia — ela já sai ~1 fatia menor que a duração real do
-# clipe, e o piso é generoso de propósito por causa disso.
-PISO_DUR_UTIL_S = 5.0
+# PISO_DUR_UTIL_S: REMOVIDO em 2026-09-01 (pedido do usuário: "pode tirar
+# qualquer piso que tiver"). Era 5,0 segundos de `dur_util_s`, e desde que o
+# piso de FORMATO do Short saiu em 28/08 era ele o piso EFETIVO do canal: como
+# o roteiro passou a ser dimensionado pelo clipe, este veto não descartava mais
+# "clipe que entraria em loop", descartava a PAUTA cujo clipe era curto — e a
+# pauta de clipe curto agora rende um vídeo curto, que é o desenho, não o
+# defeito.
+#
+# O motivo original dele — a tela travada de um clipe repetido cinco vezes —
+# morreu junto com o loop do Short em 28/08 e, no longo, morre agora com a
+# duração flexível de capítulo (`config.alvos_das_pautas`): nos dois formatos o
+# texto é encomendado do tamanho do material, então clipe curto vira parte
+# curta, não parte repetida.
 
 # O VETO A TUDO QUE NÃO É LIVE FOOTAGE FOI REMOVIDO EM 2026-08-29 — ver o item 5
 # do docstring do módulo. O que resta barrando material montado é
@@ -449,13 +455,7 @@ def _veto_parado(laudo: dict) -> str:
     tipo = laudo.get("tipo_material", "")
     if tipo in TIPOS_VETADOS_CLIPE:
         return f"material do tipo '{tipo}' (veto duro de tipo no clipe)"
-    dur_util = laudo.get("dur_util_s")
-    if dur_util is not None and float(dur_util) < PISO_DUR_UTIL_S:
-        # Laudo sem a medida não veta ninguém, como no resto do módulo.
-        return (
-            f"clipe curto demais para segurar a tela ({float(dur_util):.0f}s "
-            f"de trecho útil; a montagem o repetiria em loop)"
-        )
+    # O VETO POR CLIPE CURTO SAIU em 2026-09-01 — ver PISO_DUR_UTIL_S, acima.
     return ""
 
 

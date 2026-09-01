@@ -13,6 +13,13 @@ from .edicao import duracao_audio
 
 API_BASE = "https://api.elevenlabs.io/v1"
 
+# Quanto a duração final pode ficar longe do alvo sem que valha refazer o
+# roteiro. 5% de um Short de 20s são 1 segundo — dentro da MATERIAL_MARGEM de
+# 15% que a montagem guarda de folga de imagem, então um desvio deste tamanho
+# não deixa a tela vazia nem desperdiça clipe de forma perceptível. Acima
+# disso, refazer o texto sai mais barato que publicar um vídeo fora do desenho.
+TOLERANCIA_ALVO = 0.05
+
 # Velocidade da narração: quem manda é `cfg.velocidade` (VIDEO_VELOCIDADE para
 # o Short, LONG_VELOCIDADE para o formato longo). O Short é ACELERADO — ritmo
 # rápido é o que segura o feed — e o formato longo roda em 1.0, velocidade
@@ -86,11 +93,26 @@ def _reescalar_alinhamento(alinhamento: dict, fator: float) -> dict:
 
 
 def ajustar_ao_alvo(
-    audio: Path, alinhamento: dict, alvo_s: float, dur_s: float
-) -> tuple[dict, float]:
+    audio: Path,
+    alinhamento: dict,
+    alvo_s: float,
+    dur_s: float,
+    base: float = 1.0,
+    minimo: float | None = None,
+    maximo: float | None = None,
+) -> tuple[dict, float, bool]:
     """Muda a velocidade da narração para ela durar `alvo_s`.
 
-    Devolve (alinhamento, duração nova); o MP3 é alterado no lugar.
+    Devolve (alinhamento, duração nova, coube); o MP3 é alterado no lugar.
+    `coube` é False quando a faixa de velocidade não deu para fechar a conta e
+    a duração ficou fora de TOLERANCIA_ALVO — o sinal de que quem tem que
+    mudar é o TEXTO, não o ritmo (main.py refaz o roteiro e narra de novo).
+
+    `base` é a velocidade que a narração JÁ tem (cfg.velocidade, aplicada em
+    `gerar_narracao`), e `minimo`/`maximo` são os limites da velocidade FINAL —
+    não do fator aplicado aqui. A distinção importa: com base 1,05 e teto 1,15
+    o fator desta função pode ir no máximo a 1,095, e é isso que o clamp
+    calcula.
 
     POR QUE EXISTE (2026-08-30, pedido do usuário). O roteiro é encomendado em
     PALAVRAS e o TTS entrega o segundo que entrega — o ritmo variou ±11% nas
@@ -112,27 +134,51 @@ def ajustar_ao_alvo(
     alvo, o que se absorve é o ERRO do TTS e a margem segue sendo o que sempre
     foi — folga de imagem no fim.
 
-    SEM TETO, de propósito. Um teto faria falta se o ajuste tivesse que cobrir
-    a metragem inteira; cobrindo só o erro de ritmo, a correção nasce pequena e
-    um teto só serviria para reprovar execução que ia dar certo.
+    GANHOU TETO E PISO em 2026-09-01 (pedido do usuário: a narração do Short
+    fica em 1,05x, "com limite mínimo de 1x e máximo de 1,15x"). Não tinha
+    nenhum, e o argumento era que a correção nasce pequena — o que continua
+    verdade, mas deixou de bastar: a velocidade virou um número que o usuário
+    escolheu ouvir, e não um parâmetro livre para o pipeline fechar contas. Se
+    a faixa não fecha a conta, o erro está no TAMANHO DO TEXTO, e é o texto que
+    é refeito.
 
     Custa um segundo encode do MP3 (o primeiro é a aceleração do formato). A
     montagem reencoda o áudio depois, então não é este passo que decide a
     qualidade final.
     """
     if alvo_s <= 0 or dur_s <= 0:
-        return alinhamento, dur_s
+        return alinhamento, dur_s, True
+
     fator = dur_s / alvo_s
+    # O clamp é sobre a velocidade FINAL (base * fator), que é o que o
+    # espectador ouve; o fator é só como se chega lá.
+    if minimo is not None:
+        fator = max(fator, minimo / base)
+    if maximo is not None:
+        fator = min(fator, maximo / base)
+
     if not _acelerar_audio(audio, fator):
-        return alinhamento, dur_s
+        # Fator dentro do ruído (ou ffmpeg ausente): nada a fazer, e a duração
+        # que já está aí é a resposta.
+        coube = abs(dur_s - alvo_s) <= alvo_s * TOLERANCIA_ALVO
+        return alinhamento, dur_s, coube
+
     alinhamento = _reescalar_alinhamento(alinhamento, fator)
     nova = duracao_audio(audio)
     verbo = "acelerada" if fator > 1 else "desacelerada"
     print(
-        f"[audio] Narração {verbo} em {fator:.3f}x para bater o alvo: "
+        f"[audio] Narração {verbo} em {fator:.3f}x para bater o alvo "
+        f"(velocidade final {base * fator:.3f}x): "
         f"{dur_s:.1f}s -> {nova:.1f}s (alvo {alvo_s:.1f}s)."
     )
-    return alinhamento, nova
+    coube = abs(nova - alvo_s) <= alvo_s * TOLERANCIA_ALVO
+    if not coube:
+        print(
+            f"[audio] A faixa de velocidade ({minimo}x a {maximo}x) não fechou "
+            f"o alvo: sobraram {nova - alvo_s:+.1f}s. Quem tem que mudar é o "
+            "texto."
+        )
+    return alinhamento, nova, coube
 
 
 def gerar_narracao(cfg: Config, texto: str, destino: Path) -> tuple[Path, dict]:
