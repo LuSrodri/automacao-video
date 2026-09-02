@@ -28,9 +28,9 @@ Duas etapas:
 2. `gerar_roteiro` — com a trend escolhida e os posts do X, escreve o
    roteiro em enquadramento de ANÁLISE/EDUCACIONAL (formato explicativo), em
    tom adulto e inteligente (ritmo de fala natural, vocabulário preciso de
-   telejornal, estrutura PREVIEW → CONTEXTUALIZAÇÃO → ACONTECIMENTO →
-   CONSEQUÊNCIA → CONCLUSÃO, com a conclusão entregando o que o preview
-   prometeu e emendando de volta nele no reinício — o loop), SEMPRE
+   telejornal, estrutura CONTEXTUALIZAÇÃO → FATO no Short, terminando em CORTE
+   SECO no último detalhe factual — é o corte que emenda no reinício do loop),
+   SEMPRE
    citando as fontes (as contas do X que trouxeram o fato, e o veículo que elas
    citam), dentro de uma FAIXA dura de palavras (piso e teto derivados de
    VIDEO_DURACAO — o teto sozinho deixava o vídeo sair com metade da
@@ -52,16 +52,29 @@ frase autossuficiente que a descrição publica num par P:/R:, para ser citável
 por buscador com IA). No formato longo cada tópico ganha ainda uma `citacao`
 literal, que vira o carimbo de tempo dos capítulos.
 
-O SHORT ABRE COM PREVIEW, não mais com pergunta (2026-08-25, a pedido do
-usuário). A PERGUNTA ESQUISITA saiu da narração do Short pelo mesmo caminho
-que já tinha feito na do longo: ela continua existindo como campo `pergunta`,
-mas só alimenta o par P:/R: da descrição — ninguém a ouve. No lugar dela entrou
-o `preview`: uma frase de até 14 palavras que diz, na cara, o que o vídeo vai
-entregar, SEM dar o número e a fonte que o bloco do ACONTECIMENTO dá — preview
-que entrega tudo na primeira frase deixa o resto do vídeo sem motivo. A ordem
-passou a ser PREVIEW → CONTEXTUALIZAÇÃO → ACONTECIMENTO, e o resto do formato
-não mudou: consequência única, conclusão em disputa e o LOOP, que agora emenda
-de volta no preview. A faixa de duração e a de palavras seguem as mesmas.
+O SHORT É CONTEXTUALIZAÇÃO → FATO, E ACABA EM CORTE SECO (2026-09-02, desenho
+do usuário: "Contextualização -> Fato. [Corte seco]"). O formato tinha CINCO
+blocos — preview, contextualização, acontecimento, consequência, conclusão — e
+ficou com DOIS: o vídeo abre pelo assunto e termina no último detalhe factual,
+sem nada depois.
+
+Saíram JUNTOS, porque eram o mesmo desenho, os três blocos que embrulhavam o
+fato: o PREVIEW da abertura (2026-08-25, que por sua vez tinha substituído a
+pergunta esquisita), a CONSEQUÊNCIA única e a CONCLUSÃO em disputa que emendava
+de volta no preview. Com eles saíram os campos `preview` e `consequencia` do
+esquema — o roteiro não tem mais onde guardar uma promessa nem um "isso
+significa que...".
+
+O LOOP CONTINUA, por outro mecanismo: o Shorts reinicia sozinho, e o que emenda
+no reinício deixou de ser a conclusão fechando na promessa e passou a ser o
+corte no meio do assunto. Fecho arredondado é justamente a licença para
+deslizar. Por isso "não escrever fecho" virou regra dura em três lugares — no
+esquema, no prompt e na auditoria pró-leigo —, e não uma preferência: o modelo
+tende a arredondar sozinho.
+
+A `pergunta` segue existindo como campo e segue NÃO sendo narrada: ela só
+alimenta o par P:/R: da descrição. A faixa de duração e a de palavras não
+mudaram — o vídeo continua sendo dimensionado pelo material.
 
 FORMATO LONGO (`--long-take`, cfg.formato == "longo"): as duas etapas trocam
 de prompt e de esquema, mantendo a mesma mecânica. A seleção passa a exigir
@@ -398,28 +411,6 @@ ESQUEMA_ROTEIRO = {
                 "type": "string",
                 "description": "A trend/tema do vídeo.",
             },
-            "preview": {
-                "type": "string",
-                "description": (
-                    "O PREVIEW de abertura (0-2s): a frase que diz, na cara, o "
-                    "que este vídeo vai entregar — o assunto e o que está em "
-                    "jogo nele, em coisa concreta (gente, dinheiro, ação). "
-                    "'A empresa mais valiosa do mundo perdeu uma fábrica "
-                    "inteira numa noite.' 'Um robô de contratação saiu do ar e "
-                    "travou meio milhão de currículos.' Máximo 14 palavras. Ele "
-                    "PROMETE sem ENTREGAR: o número exato, a data e a fonte são "
-                    "do bloco do ACONTECIMENTO, e antecipá-los aqui deixa o "
-                    "resto do vídeo sem motivo para existir. PROIBIDO: pergunta "
-                    "de qualquer tipo; preâmbulo de youtuber ('neste vídeo você "
-                    "vai ver', 'vamos falar sobre', 'fica até o final'); "
-                    "promessa abstrata, sem coisa concreta dentro ('nada será "
-                    "como antes'); cauda de suspense ('e o que veio depois muda "
-                    "tudo'); e abrir por data, contexto ou nome de "
-                    "instituição. A primeira frase de texto_video DEVE ser "
-                    "exatamente esta (copiada palavra por palavra, antes de "
-                    "qualquer audio tag)."
-                ),
-            },
             "pergunta": {
                 "type": "string",
                 "description": (
@@ -427,14 +418,6 @@ ESQUEMA_ROTEIRO = {
                     "P:/R: que os buscadores com IA extraem) — NÃO é falada na "
                     "narração. Concreta e específica, no máximo 14 palavras, "
                     "respondida por `resposta_curta`."
-                ),
-            },
-            "consequencia": {
-                "type": "string",
-                "description": (
-                    "A CONSEQUÊNCIA concreta que o vídeo entrega — o que muda "
-                    "para quem trabalha, investe ou usa aquilo ('isso significa "
-                    "que...'). Uma só, decidida antes de escrever o texto_video."
                 ),
             },
             "titulo": {
@@ -483,29 +466,26 @@ ESQUEMA_ROTEIRO = {
                     "citação de fonte obrigatória: o fato central é atribuído "
                     "nominalmente ao veículo ou à conta do X de onde veio "
                     "(somente fontes das listas recebidas). "
-                    "Estrutura obrigatória em CINCO blocos: "
-                    "1) PREVIEW (a primeira frase = campo preview) "
-                    "→ 2) CONTEXTUALIZAÇÃO (o que é isso e por que o preview "
-                    "faz sentido; se o assunto for de nicho, é aqui que ele é "
-                    "amarrado em algo que o leigo conhece — 'a empresa por trás "
-                    "do ChatGPT') → 3) ACONTECIMENTO (o que aconteceu de "
-                    "fato, com número, nome e mecanismo, na fonte citada) → "
-                    "4) CONSEQUÊNCIA (o que isso muda para quem trabalha, "
-                    "investe ou usa aquilo) → 5) CONCLUSÃO (a ENTREGA do que o "
-                    "preview prometeu, em uma frase seca — sem moral da "
-                    "história e sem CTA falado). A conclusão é o CORTE: ela "
-                    "fecha de um jeito que emenda de volta no preview "
-                    "quando o vídeo reinicia (o Short roda em loop). A última "
-                    "frase deve ser NOVA: é PROIBIDO repetir o preview (ou "
-                    "qualquer frase anterior) palavra por palavra — quem "
-                    "repete o preview é o reinício do loop, não o texto. Essa "
-                    "última frase carrega A DISPUTA: um FATO do próprio vídeo "
-                    "que deixa duas leituras defensáveis em pé (quem está "
-                    "certo, quem paga a conta, se valeu a pena), de modo que "
-                    "quem assiste termine com uma opinião na ponta da língua. "
-                    "PROIBIDO virar isca: nada de pergunta ao espectador "
-                    "('você concorda?'), nada de opinião do canal, nada de "
-                    "pedir comentário — é fato com tensão, não convite."
+                    "Estrutura obrigatória em DOIS blocos: "
+                    "1) CONTEXTUALIZAÇÃO (a primeira frase JÁ ENTRA no "
+                    "assunto: o que é essa empresa, esse mercado, esse "
+                    "número, e o que estava em jogo — o mínimo para o fato "
+                    "aterrissar em quem nunca ouviu falar disso; se o assunto "
+                    "for de nicho, é aqui que ele é amarrado em algo que o "
+                    "leigo conhece, 'a empresa por trás do ChatGPT') → "
+                    "2) FATO (o miolo E o fim do vídeo: o que aconteceu, com "
+                    "número, nome e mecanismo, atribuído à fonte, em ordem de "
+                    "coisa concreta primeiro e detalhe depois). "
+                    "O VÍDEO ACABA NO FATO, EM CORTE SECO: a última frase é o "
+                    "último detalhe factual e nada mais. É PROIBIDO qualquer "
+                    "fecho depois dela — conclusão, síntese, moral da "
+                    "história, 'isso significa que', consequência, projeção do "
+                    "que vem, recado ao espectador, pergunta, CTA ou frase de "
+                    "encerramento. O texto para no meio do assunto, e é o "
+                    "corte seco que emenda no reinício (o Short roda em loop). "
+                    "PROIBIDO também na abertura: preview, promessa do que o "
+                    "vídeo vai entregar, pergunta e preâmbulo de youtuber "
+                    "('neste vídeo você vai ver') — comece pela coisa."
                 ),
             },
             "resposta_curta": RESPOSTA_CURTA_PROPRIEDADE,
@@ -513,9 +493,7 @@ ESQUEMA_ROTEIRO = {
         },
         "required": [
             "tema",
-            "preview",
             "pergunta",
-            "consequencia",
             "titulo",
             "descricao",
             "resposta_curta",
@@ -861,18 +839,19 @@ DESCRIÇÃO:
 NARRAÇÃO:
 5. Jargão técnico ou sigla de nicho sem explicação de meia frase REPROVA
    (audio tags entre colchetes não são jargão).
-6. A PRIMEIRA frase é o PREVIEW: em no máximo 14 palavras, e com coisa
-   concreta dentro (número, gente, dinheiro, ação), ela diz o que o vídeo vai
-   entregar. REPROVAM: abrir por PERGUNTA de qualquer tipo; preâmbulo de
-   youtuber ("neste vídeo você vai ver", "vamos falar sobre", "fica até o
-   final"); promessa abstrata, sem coisa concreta ("nada será como antes");
-   cauda de suspense ("e o que veio depois muda tudo"); e abrir por data,
-   contexto ou nome de instituição.
-7. A narração ENTREGA o que o preview prometeu antes de acabar, com o fato
-   concreto. Promessa que fica sem entrega no texto REPROVA — e REPROVA
-   também o preview que já entrega tudo (número exato, data e fonte na
-   primeira frase), porque ele deixa o resto do vídeo sem motivo.
-8. Bloco de CONTEXTUALIZAÇÃO logo depois do preview: se o assunto CENTRAL é de
+6. A PRIMEIRA frase JÁ ENTRA NO ASSUNTO (é contextualização, não anúncio),
+   com coisa concreta dentro (número, gente, dinheiro, ação). REPROVAM: abrir
+   por PREVIEW ou promessa do que o vídeo vai entregar ("esse vídeo mostra por
+   que...", "o que veio depois muda tudo"); abrir por PERGUNTA de qualquer
+   tipo; preâmbulo de youtuber ("neste vídeo você vai ver", "vamos falar
+   sobre", "fica até o final"); frase abstrata, sem coisa concreta ("nada será
+   como antes"); e abrir por data ou por nome de instituição.
+7. A narração ACABA NO FATO, em CORTE SECO: a última frase é o último detalhe
+   factual. REPROVA qualquer fecho depois dela — conclusão, síntese, moral da
+   história, "isso significa que...", consequência, projeção do que vem,
+   frase de analista, recado ao espectador, pergunta a ele, opinião do canal
+   ou pedido de comentário/like/compartilhamento.
+8. Bloco de CONTEXTUALIZAÇÃO abrindo a narração: se o assunto CENTRAL é de
    nicho, ele precisa ser ancorado em algo que o leigo conhece ("a empresa por
    trás do ChatGPT"); sem âncora REPROVA. Assunto universalmente conhecido não
    precisa de âncora.
@@ -1233,10 +1212,10 @@ ENQUADRAMENTO — SEMPRE análise ou educacional, em formato EXPLICATIVO: o víd
 explica o que aconteceu, como funciona e por que importa — nunca é um grito de
 manchete sem explicação, nunca é opinião militante. O espectador tem que sair
 do vídeo SABENDO alguma coisa que não sabia: um mecanismo, um número, uma
-relação de causa e efeito. A estrutura em cinco blocos abaixo é justamente o
-formato explicativo em ordem de aula bem dada — preview, contexto,
-acontecimento, consequência, fecho. Explicar NÃO é palestrar: o tom
-continua de jornalista afiado, não de professor.
+relação de causa e efeito. A estrutura em DOIS blocos abaixo é o formato
+explicativo reduzido ao osso — contexto e fato, sem preâmbulo na frente e sem
+fecho atrás. Explicar NÃO é palestrar: o tom continua de jornalista afiado,
+não de professor.
 
 FONTES — OBRIGATÓRIO citar a fonte na narração: todo fato central do vídeo é
 atribuído a quem o publicou — a conta do X que trouxe o fato ("no post de
@@ -1278,65 +1257,41 @@ conceito que exige formação para entender. Se o fato depende de um conceito
 (tarifa, benchmark, protocolo), não o infantilize: entregue o efeito concreto
 em meia frase ("tarifa — o imposto que encarece o produto importado") e siga.
 
-ESTRUTURA OBRIGATÓRIA — CINCO BLOCOS (narração de ~{duracao}s):
-1. PREVIEW (0-2s): abra DIZENDO o que este vídeo vai entregar. Uma frase que
-   nomeia o assunto e o que está em jogo nele, em coisa concreta — gente,
-   dinheiro, ação.
-   "A empresa mais valiosa do mundo perdeu uma fábrica inteira numa noite."
-   "Um robô de contratação saiu do ar e travou meio milhão de currículos."
-   "Desligar um data center por um dia agora tem preço, e ele veio numa fatura."
-   O gancho é a PROMESSA, não o estranhamento: metade do público desliza no
-   primeiro segundo, e quem fica só fica porque já sabe o que ganha ficando.
-   Por isso o preview PROMETE e NÃO ENTREGA: o número exato, a data e a fonte
-   são do bloco 3, e antecipá-los aqui tira o motivo de assistir ao resto.
-   REGRAS DURAS: máximo 14 palavras; sempre uma coisa concreta dentro (gente,
-   dinheiro, ação, número redondo), nunca promessa abstrata ("o mercado nunca
-   mais vai ser o mesmo"); PROIBIDO pergunta de qualquer tipo, preâmbulo de
-   youtuber ("neste vídeo você vai ver", "vamos falar sobre", "fica até o
-   final"), cauda de suspense ("e o que veio depois muda tudo") e abrir por
-   data, contexto ou nome de instituição. O que o preview promete precisa
-   estar REALMENTE no material recebido — promessa sem lastro é clickbait.
-2. CONTEXTUALIZAÇÃO (2 a 3 frases): o mínimo que o leigo precisa para o
-   preview fazer sentido — o que é essa empresa, esse mercado, esse número.
+ESTRUTURA OBRIGATÓRIA — DOIS BLOCOS (narração de ~{duracao}s):
+CONTEXTUALIZAÇÃO -> FATO. [CORTE SECO]
+
+1. CONTEXTUALIZAÇÃO: o mínimo que o leigo precisa para o fato aterrissar — o
+   que é essa empresa, esse mercado, esse número, e o que estava em jogo. A
+   PRIMEIRA FRASE JÁ ENTRA NO ASSUNTO, pela coisa concreta (gente, dinheiro,
+   ação), e é ela que decide o "viewed vs swiped":
+   "A empresa mais valiosa do mundo tem uma fábrica só que faz o chip dela."
+   "Meio milhão de currículos passam por um robô antes de chegar num RH."
    Se o assunto CENTRAL não é universalmente conhecido (empresa, modelo de IA,
    app, pessoa de nicho), é AQUI que ele é amarrado em algo que o espectador já
    conhece: "a empresa por trás do ChatGPT", "a dona do Instagram". Meia frase
    embutida na narrativa, NUNCA tom de aula ou de glossário. Assunto que todo
    mundo conhece (Google, iPhone, Nubank) leva contexto curtíssimo — contexto
    desnecessário é preâmbulo, e preâmbulo derruba retenção.
-3. ACONTECIMENTO (o miolo, o bloco mais longo): o que aconteceu de fato, em
-   ordem "coisa concreta primeiro, detalhe depois", com número, nome e o
-   MECANISMO (como funciona, por que isso produz aquilo). É aqui que a fonte é
-   citada nominalmente. Cada frase mostra uma cena que dá para VER de olhos
-   fechados.
-4. CONSEQUÊNCIA: UMA única consequência concreta ("isso significa que...") —
-   o que muda para quem trabalha, investe ou usa aquilo. Só uma: duas
-   consequências confundem e a pessoa desliza.
-5. CONCLUSÃO (últimos 2-3s): a ENTREGA do que o preview prometeu, fechada em
-   uma frase seca. Sem moral da história, sem CTA falado, sem frase de
-   encerramento.
-   O Shorts REINICIA sozinho: a conclusão tem que desembocar naturalmente no
-   preview quando o vídeo recomeça — quem fecha e emenda de volta na promessa
-   da abertura faz a pessoa assistir de novo sem perceber, e replay multiplica
-   a distribuição. FECHAR NÃO É REPETIR: é PROIBIDO copiar o preview (ou
-   qualquer frase já dita) no final do texto.
-   O LOOP VEM PRIMEIRO, mas dentro dele a conclusão tem um segundo trabalho:
-   carregar A DISPUTA do assunto. Feche com o fato do vídeo sobre o qual
-   duas pessoas razoáveis brigariam — quem está certo, quem paga a conta, se
-   valeu a pena, quem saiu ganhando. É isso que faz a pessoa comentar e mandar
-   o vídeo para alguém: ela termina com uma opinião formada e um interlocutor
-   em mente. Exemplos do que é e do que não é:
-   - suspense (fraco, ninguém comenta): "E a próxima empresa pode ser a maior
-     de todas."
-   - disputa (forte): "A conta foi de 2 bilhões, e quem pagou foram os 8 mil
-     demitidos."
-   O teste: se a frase não dá para discordar dela ou de quem ela responsabiliza,
-   ela é só suspense — reescreva.
-   PROIBIDO, e isto é regra dura: pergunta dirigida ao espectador ("você
-   concorda?", "o que você faria?"), opinião do canal, e qualquer pedido de
-   comentário, like ou compartilhamento. A disputa nasce do FATO estar na mesa,
-   nunca de convite. Pedido explícito quebra o loop e derruba a retenção, que é
-   a métrica que sustenta tudo.
+   PROIBIDO ABRIR COM: PREVIEW ou promessa do que o vídeo vai entregar ("o que
+   veio depois muda tudo", "esse vídeo mostra por que..."); pergunta de
+   qualquer tipo; preâmbulo de youtuber ("neste vídeo você vai ver", "vamos
+   falar sobre", "fica até o final"); e abrir por data ou por nome de
+   instituição. O vídeo não anuncia o que vai fazer — ele faz.
+2. FATO (o miolo E o fim): o que aconteceu, em ordem "coisa concreta primeiro,
+   detalhe depois", com número, nome e o MECANISMO (como funciona, por que
+   isso produz aquilo). É aqui que a fonte é citada nominalmente. Cada frase
+   mostra uma cena que dá para VER de olhos fechados.
+
+O VÍDEO ACABA NO FATO, EM CORTE SECO. A última frase da narração é o último
+detalhe factual — e acabou. É PROIBIDO, e isto é regra dura, escrever qualquer
+coisa depois dela: conclusão, síntese, moral da história, "isso significa
+que...", consequência, projeção do que vem pela frente, frase de analista,
+recado ao espectador, pergunta dirigida a ele ("você concorda?"), opinião do
+canal e qualquer pedido de comentário, like ou compartilhamento.
+Não é esquecimento: é o desenho. O Shorts REINICIA sozinho, e o corte no meio
+do assunto é o que emenda no reinício — fecho arredondado dá licença para
+deslizar, e é ele que derruba o replay. Se você sentiu vontade de "amarrar" o
+vídeo no fim, corte a frase e pare no fato.
 
 PROIBIDO NO TEXTO:
 - Frases de analista vazias: "no cenário atual", "especialistas afirmam", "o
@@ -1349,10 +1304,10 @@ PROIBIDO NO TEXTO:
   o segundo nome obscuro vira "um chefe da empresa", "um fundo americano", "o
   dono do site".
 
-PAYLOAD OBRIGATÓRIO: o roteiro entrega o que o preview prometeu com 1 fato real
-e 1 consequência. Clickbait sem payload é PROIBIDO — o título promete
-exatamente o que o vídeo entrega, e o preview promete um fato que precisa
-realmente vir.
+PAYLOAD OBRIGATÓRIO: o roteiro entrega 1 fato real, concreto e atribuído — é
+ele o vídeo inteiro. Clickbait sem payload é PROIBIDO: o título promete
+exatamente o fato que a narração entrega, e nada que o material recebido não
+sustente.
 
 TÍTULO — medido nos números do canal: título autossuficiente rende o DOBRO de
 views do título com nome de nicho, e os 10 maiores vídeos do canal têm título
@@ -1376,17 +1331,18 @@ DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 {palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
 colchetes não contam). Os DOIS limites são DUROS: estourar alonga o vídeo e
 derruba a retenção; ficar abaixo do mínimo entrega um vídeo raso e curto
-demais, que o algoritmo distribui menos. Se faltar espaço, corte detalhes do
-ACONTECIMENTO — nunca o preview, a consequência única nem a conclusão. Se
-sobrar espaço, acrescente um detalhe concreto ao ACONTECIMENTO (número, nome,
-mecanismo) — nunca encha linguiça.
+demais, que o algoritmo distribui menos. Se faltar espaço, corte detalhe
+secundário do FATO e encurte a contextualização — nunca ganhe espaço tirando a
+âncora que o leigo precisa. Se sobrar espaço, acrescente um detalhe concreto ao
+FATO (número, nome, mecanismo) — nunca encha linguiça, e JAMAIS preencha com
+fecho, conclusão ou consequência: o vídeo termina no fato, mesmo que sobre.
 
 MATERIAL VISUAL — o corpo do vídeo é montado SOMENTE com os clipes de vídeo
 anexados aos posts do X da trend (nada de foto estática ocupando a tela). Você
 não escolhe os clipes — um editor de cortes casa cada um com a narração depois
 — mas escreva o texto SABENDO disso: descreva cenas que os posts da trend
-documentam em vídeo, e lembre que o primeiro clipe + o preview de abertura
-decidem o "viewed vs swiped".
+documentam em vídeo, e lembre que o primeiro clipe + a primeira frase da
+contextualização decidem o "viewed vs swiped".
 A TELA NÃO EXPLICA NADA POR VOCÊ. O vídeo é clipe do X, e mais nada — não
 existe gráfico, tabela nem cartaz sobreposto (as figuras geradas saíram em
 2026-08-24). Então todo dado tem que estar DITO: sempre que houver um número,
@@ -2502,13 +2458,14 @@ def reescrever_para_duracao(
         f"ele não cabe no tempo de imagem que a pauta tem. Reescreva o JSON "
         f"completo com {piso} a {teto} palavras faladas em texto_video "
         + (
-            "cortando detalhes do ACONTECIMENTO"
+            "cortando detalhes secundários do FATO"
             if atual > teto
-            else "acrescentando detalhes CONCRETOS ao ACONTECIMENTO (número, "
-            "nome, mecanismo), sem encher linguiça"
+            else "acrescentando detalhes CONCRETOS ao FATO (número, nome, "
+            "mecanismo), sem encher linguiça e sem inventar fecho"
         )
-        + " — mantenha o assunto, o preview de abertura, a consequência única "
-        "e a conclusão em tensão. Esta contagem foi medida no áudio real, "
+        + " — mantenha o assunto, a abertura pela contextualização e o CORTE "
+        "SECO no fim do fato (nada de conclusão, consequência ou frase de "
+        "encerramento). Esta contagem foi medida no áudio real, "
         "não estimada: respeite-a."
     )
 
@@ -2582,12 +2539,19 @@ def _aparar_hook_final(roteiro: dict) -> None:
     final da narração, ela fica duplicada e o trecho da última imagem passa a
     existir duas vezes no texto, desalinhando os cortes.
 
-    A abertura FALADA é o `preview` no Short e a `pauta_falada` no longo. O
-    campo `pergunta` deixou de ser narrado nos dois formatos (longo em
-    2026-08-24, Short em 2026-08-25) — ele só alimenta o par P:/R: da
-    descrição, e mirar nele aqui deixava a duplicação real passar.
+    A abertura FALADA é a `pauta_falada`, e SÓ EXISTE NO FORMATO LONGO. No
+    Short ela era o `preview`, que saiu em 2026-09-02 junto com a estrutura de
+    cinco blocos: o Short passou a abrir pela contextualização, que é texto
+    corrido sem campo próprio, e não há mais frase de abertura para o modelo
+    duplicar no fim. Aqui isso aparece como um retorno imediato — sem hook, não
+    há o que aparar —, e o cuidado com a duplicação do Short virou a regra de
+    CORTE SECO no prompt (o texto não fecha, então não tem por onde repetir).
+
+    O campo `pergunta` nunca é narrado nos dois formatos (longo em 2026-08-24,
+    Short em 2026-08-25) — ele só alimenta o par P:/R: da descrição, e mirar
+    nele aqui deixava a duplicação real passar.
     """
-    hook = (roteiro.get("preview") or roteiro.get("pauta_falada") or "").strip()
+    hook = (roteiro.get("pauta_falada") or "").strip()
     texto = (roteiro.get("texto_video") or "").rstrip()
     if not hook or not texto:
         return
@@ -2944,23 +2908,24 @@ def gerar_roteiro(
             "batidas (contexto, fato e análise), as frases de virada "
             "e o fecho com a síntese e o que observar"
             if longo
-            else "mantenha o preview de abertura, a consequência única e a "
-            "conclusão em tensão que emenda de volta no preview"
+            else "mantenha a abertura pela contextualização, a âncora do "
+            "leigo e o corte seco no fim do fato"
         )
         cortar = (
             "cortando detalhe secundário da contextualização geral e da "
             "batida de contexto das pautas (sem eliminar nenhum tópico e sem "
             "tocar na análise de nenhum deles)"
             if longo
-            else "cortando detalhes do ACONTECIMENTO"
+            else "cortando detalhes secundários do FATO"
         )
         acrescentar = (
             "acrescentando dado CONCRETO do material recebido (número, nome, "
             f"empresa, prazo) aos {TOPICOS_MAX} tópicos que já existem (NÃO "
             "acrescente tópico novo)"
             if longo
-            else "acrescentando detalhes CONCRETOS ao ACONTECIMENTO (número, "
-            "nome, mecanismo)"
+            else "acrescentando detalhes CONCRETOS ao FATO (número, nome, "
+            "mecanismo) — nunca um fecho, uma conclusão ou uma consequência "
+            "para preencher"
         )
         pedido = (
             (
@@ -3025,9 +2990,10 @@ def gerar_roteiro(
                 "precisam estar no texto, e o vídeo fecha "
                 "com o próximo marco a observar, sem CTA. "
                 if longo
-                else "; a narração abre com o PREVIEW (o que o vídeo vai "
-                "entregar, sem dar o número e a fonte) e entrega isso antes de "
-                "acabar, e assunto de nicho ganha âncora na contextualização. "
+                else "; a narração abre pela CONTEXTUALIZAÇÃO (o assunto "
+                "direto, sem preview, promessa nem pergunta) e ACABA no fato, "
+                "em corte seco, sem fecho de nenhum tipo; assunto de nicho "
+                "ganha âncora na contextualização. "
             )
             + "Mantenha o texto_video na faixa de "
             f"{minimo} a {limite} palavras faladas.\nProblemas:\n- "
@@ -3088,14 +3054,10 @@ def gerar_roteiro(
         print(f"[roteiro] Tags: {', '.join(roteiro['tags'])}")
     else:
         print("[aviso] O roteiro saiu sem tags aproveitáveis; o vídeo sobe sem elas.")
-    if roteiro.get("preview"):
-        print(f"[roteiro] Preview da abertura: {roteiro['preview']}")
     if roteiro.get("pauta_falada"):
         print(f"[roteiro] Pauta falada na abertura: {roteiro['pauta_falada']}")
     if roteiro.get("pergunta"):
         print(f"[roteiro] Pergunta (P:/R: da descrição): {roteiro['pergunta']}")
-    if roteiro.get("consequencia"):
-        print(f"[roteiro] Consequência: {roteiro['consequencia']}")
     if roteiro.get("tese"):
         print(f"[roteiro] Tese: {roteiro['tese']}")
     if roteiro.get("topicos"):
