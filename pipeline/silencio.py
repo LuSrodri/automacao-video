@@ -17,7 +17,7 @@ para o segundo errado.
    então a narração recomeça.
 
    Desde 2026-08-25 essa pausa é MAIS que um respiro: ela é o ponto em que o
-   vídeo é CORTADO em quatro partes (montagem_longa.py). Por isso a função
+   vídeo é CORTADO em partes (montagem_longa.py). Por isso a função
    passou a devolver ONDE cada silêncio ficou no áudio novo — a montagem corta
    exatamente ali, em vez de recalcular a borda pela citação e errar por
    frações de segundo.

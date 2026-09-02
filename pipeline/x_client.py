@@ -31,12 +31,15 @@ corte é feito aqui, sobre `expansions=attachments.media_keys` +
 chamada extra. Os filtros das duas fontes moram num lugar só (`_filtrar_posts`)
 justamente para não divergirem.
 
-NO SHORT ENTRA UM TETO DE DURAÇÃO (2026-08-28): post cujo menor clipe passa de
-CURTO_MAX_DUR_CLIPE segundos não vira pauta. Ele é a contrapartida do fim do
+CADA FORMATO TEM UMA FAIXA DE DURAÇÃO DE CLIPE (`config.faixa_de_clipe`): 15 a
+30s no Short, 30 a 90s no longo. Post que não traz NENHUM clipe dentro da faixa
+do formato não vira pauta. O teto é de 2026-08-28 e é a contrapartida do fim do
 loop na montagem — sem repetir clipe, o material é o teto do vídeo, e clipe
-comprido demais é clipe do qual só se usaria o começo. A duração vem de
-`duration_ms`, no mesmo envelope, e é ela também que dimensiona o roteiro (o
-campo `segundos_video` de cada trend; ver `_montar_trends`).
+comprido demais é clipe do qual só se usaria o começo. O piso é de 2026-09-02 e
+é curadoria: clipe curto demais não sustenta nem o Short nem um capítulo do
+longo. A duração vem de `duration_ms`, no mesmo envelope, e é ela também que
+dimensiona o roteiro (o campo `segundos_video` de cada trend; ver
+`_montar_trends`).
 
 O QUE NÃO É FILTRADO AQUI, de propósito: TIPO DE MATERIAL e MACROTEMA. Os dois
 já existem no pipeline e custam o que esta camada não pode pagar — o tipo do
@@ -106,7 +109,13 @@ from datetime import datetime, timedelta, timezone
 import requests
 from openai import OpenAI
 
-from .config import AVISO_DADOS_EXTERNOS, RAIZ, Config
+from .config import (
+    AVISO_DADOS_EXTERNOS,
+    RAIZ,
+    Config,
+    clipe_cabe,
+    faixa_de_clipe,
+)
 
 TOKEN_ENDPOINT = "https://api.x.com/oauth2/token"
 SEARCH_ENDPOINT = "https://api.x.com/2/tweets/search/recent"
@@ -199,9 +208,9 @@ def _normalizar_posts(dados: dict) -> list[dict]:
     }
     # DURAÇÃO de cada clipe, em segundos (2026-08-28). Vem de
     # `media.fields=duration_ms` no MESMO envelope da coleta, sem chamada nem
-    # custo extra — e é o que permite ao Short escolher a pauta já sabendo se o
-    # clipe cabe no teto de CURTO_MAX_DUR_CLIPE e se sobra material para a
-    # narração inteira. `animated_gif` costuma vir SEM o campo: duração
+    # custo extra — e é o que permite escolher a pauta já sabendo se o clipe
+    # cabe na faixa do formato (`config.faixa_de_clipe`) e se sobra material
+    # para a narração inteira. `animated_gif` costuma vir SEM o campo: duração
     # desconhecida é None, e None nunca veta (só não conta como material).
     dur_midia = {
         m.get("media_key"): (
@@ -890,17 +899,15 @@ def _token_de_usuario(cfg: Config, renovando: bool = False) -> str | None:
     return CACHE_TOKEN_USUARIO["access"] or None
 
 
-def _teto_de_clipe(cfg: Config) -> float | None:
-    """Duração máxima do clipe da pauta, em segundos; None quando não há teto.
+def _rotulo_da_faixa(cfg: Config) -> str:
+    """"clipe fora de 15-30s", para a linha de descarte da coleta.
 
-    SÓ O SHORT tem teto (2026-08-28, pedido do usuário: "para vídeos curtos, só
-    escolha vídeos que tenham até 30 segundos no máximo"). Ele anda de par com
-    o fim do loop na montagem: sem repetir clipe, quem decide o tamanho do
-    vídeo é o material, e um clipe de 4 minutos não é material melhor que um de
-    25 segundos — é um clipe do qual só se usa o começo. O formato longo segue
-    sem teto: lá cada pauta ocupa uma parte inteira e clipe comprido é ganho.
+    O rótulo é montado do Config e não escrito à mão em cada `print` porque as
+    duas coletas (curtidas e lista) imprimem a mesma contagem, e um número
+    desatualizado numa delas mentiria sobre por que a pauta sumiu.
     """
-    return float(cfg.curto_max_dur_clipe_s) if cfg.formato == "curto" else None
+    piso, teto = faixa_de_clipe(cfg)
+    return f"clipe fora de {piso:.0f}-{teto:.0f}s"
 
 
 # Id numérico de um post do X dentro de uma URL. Mesmo desenho do padrão de
@@ -968,7 +975,8 @@ def _filtrar_posts(
     1. CONTA VETADA (CONTAS_VETADAS): quem só publica recorte de emissora.
     2. REPOST: casca sem `attachments` e com o texto truncado em "RT @fulano:".
     3. SEM CLIPE: o vídeo do canal é montado só com clipe do X.
-    4. CLIPE LONGO DEMAIS: só no Short, ver `_teto_de_clipe`.
+    4. CLIPE FORA DA FAIXA DO FORMATO: 15-30s no Short, 30-90s no longo — ver
+       `config.faixa_de_clipe`. Era só um teto, e só no Short, até 2026-09-02.
 
     O que NÃO está aqui, de propósito: TIPO DE MATERIAL e MACROTEMA, os outros
     dois filtros pedidos junto com este. Os dois já existem no pipeline e custam
@@ -979,7 +987,7 @@ def _filtrar_posts(
     lidos aqui custaria mais que o vídeo inteiro para decidir a mesma coisa que
     já se decide adiante, de graça.
     """
-    teto = _teto_de_clipe(cfg)
+    faixa = faixa_de_clipe(cfg)
     usados = ja_usados or set()
     aprovados = []
     for post in lote:
@@ -996,14 +1004,20 @@ def _filtrar_posts(
         if not post.get("video"):
             contagem["sem_clipe"] = contagem.get("sem_clipe", 0) + 1
             continue
-        if teto is not None:
-            durs = post.get("dur_videos_s") or []
-            # Basta UM clipe do post caber: o post pode trazer o corte de 20s e
-            # a íntegra de 6 minutos, e é o de 20s que o Short vai usar.
-            # Duração desconhecida (GIF animado) não veta — ver `_normalizar_posts`.
-            if durs and min(durs) > teto:
-                contagem["clipe_longo"] = contagem.get("clipe_longo", 0) + 1
-                continue
+        durs = post.get("dur_videos_s") or []
+        # Basta UM clipe do post caber na faixa: o post pode trazer o corte de
+        # 20s e a íntegra de 6 minutos, e é o de 20s que o Short vai usar.
+        # Duração desconhecida (GIF animado) não veta — ver `clipe_cabe`.
+        #
+        # Com o PISO (2026-09-02) o teste deixou de ser `min(durs) > teto`: com
+        # faixa dos dois lados não existe um clipe "mais fácil de caber", então
+        # a pergunta passa a ser se ALGUM cabe, e o post que só traz clipe curto
+        # demais sai aqui pelo mesmo motivo que o que só traz clipe comprido.
+        if durs and not any(clipe_cabe(d, faixa) for d in durs):
+            contagem["clipe_fora_da_faixa"] = (
+                contagem.get("clipe_fora_da_faixa", 0) + 1
+            )
+            continue
         aprovados.append(post)
     return aprovados
 
@@ -1144,8 +1158,8 @@ def _coletar_curtidos(
                 ("repost", contagem.get("repost", 0)),
                 ("sem mídia nativa", contagem.get("sem_clipe", 0)),
                 (
-                    f"clipe acima de {cfg.curto_max_dur_clipe_s}s",
-                    contagem.get("clipe_longo", 0),
+                    _rotulo_da_faixa(cfg),
+                    contagem.get("clipe_fora_da_faixa", 0),
                 ),
                 ("de conta vetada", contagem.get("conta_vetada", 0)),
             )
@@ -1248,8 +1262,8 @@ def _coletar_da_lista(
             ("repost", contagem.get("repost", 0)),
             ("sem mídia nativa", contagem.get("sem_clipe", 0)),
             (
-                f"clipe acima de {cfg.curto_max_dur_clipe_s}s",
-                contagem.get("clipe_longo", 0),
+                _rotulo_da_faixa(cfg),
+                contagem.get("clipe_fora_da_faixa", 0),
             ),
             ("de conta vetada", contagem.get("conta_vetada", 0)),
         )
@@ -1314,7 +1328,9 @@ def buscar_posts_com_video(cfg: Config, consulta: str) -> list[str]:
     return [p["url"] for p in posts]
 
 
-def _listar_posts(posts: list[dict], teto: float | None = None) -> str:
+def _listar_posts(
+    posts: list[dict], faixa: tuple[float, float] | None = None
+) -> str:
     linhas = []
     for p in posts:
         texto = " ".join(p["texto"].split())[:MAX_TEXTO_POST]
@@ -1323,14 +1339,15 @@ def _listar_posts(posts: list[dict], teto: float | None = None) -> str:
         # vídeo, e o curador precisa enxergar isso para não concentrar a trend
         # em posts de clipe curto.
         #
-        # A duração anunciada respeita o TETO do formato: um post com um corte
+        # A duração anunciada respeita a FAIXA do formato: um post com um corte
         # de 20s e a íntegra de 6 minutos vale 20 segundos para o Short, não
         # 360 — a íntegra nem chega a ser baixada (ver `_baixar_midias` em
         # midia_x.py), e anunciá-la faria o curador achar que a trend tem
-        # material que ela não vai ter.
+        # material que ela não vai ter. Pelo mesmo motivo, desde o piso de
+        # 2026-09-02, o clipe curto demais também não conta: ele não vai ao ar.
         cabem = [
             d for d in (p.get("dur_videos_s") or [])
-            if teto is None or d <= teto
+            if faixa is None or clipe_cabe(d, faixa)
         ]
         video = " | COM VÍDEO" if p.get("video") else ""
         if video and cabem:
@@ -1516,7 +1533,7 @@ def _resumir_trends(cfg: Config, posts: list[dict]) -> list[dict]:
                 "role": "user",
                 "content": AVISO_DADOS_EXTERNOS
                 + "\n\nPosts coletados:\n"
-                + _listar_posts(posts, _teto_de_clipe(cfg)),
+                + _listar_posts(posts, faixa_de_clipe(cfg)),
             },
         ],
         response_format={"type": "json_schema", "json_schema": ESQUEMA_TRENDS},
@@ -1657,10 +1674,9 @@ def coletar_trends(
             "ESGOTADA — as curtidas do histórico já viraram vídeo, e a saída é "
             "curtir post novo."
             + (
-                f" No Short entra ainda o teto de "
-                f"{cfg.curto_max_dur_clipe_s}s por clipe."
-                if cfg.formato == "curto"
-                else ""
+                " Entra ainda a faixa de duração do clipe deste formato: "
+                f"{faixa_de_clipe(cfg)[0]:.0f} a {faixa_de_clipe(cfg)[1]:.0f}s. "
+                "Tudo descartado por ela é o dia sem clipe do tamanho certo."
             )
         )
 
@@ -1692,12 +1708,12 @@ def _montar_trends(cfg: Config, posts: list[dict]) -> list[dict]:
     # não repete mais clipe em loop, então a soma disto é o TETO de quanto
     # vídeo a pauta consegue segurar na tela — e é ela que dimensiona o roteiro
     # (ver `segundos_video` abaixo e `_alvo_do_material` em main.py).
-    teto = _teto_de_clipe(cfg)
+    faixa = faixa_de_clipe(cfg)
     dur_por_url: dict[str, float] = {}
     for post in posts:
         cabem = [
             d for d in (post.get("dur_videos_s") or [])
-            if teto is None or d <= teto
+            if clipe_cabe(d, faixa)
         ]
         if cabem:
             # O mais LONGO que cabe: é o que a montagem vai preferir, e contar

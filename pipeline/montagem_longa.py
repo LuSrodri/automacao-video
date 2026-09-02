@@ -1,4 +1,4 @@
-"""Montagem do vídeo LONGO: quatro partes renderizadas separadas e coladas.
+"""Montagem do vídeo LONGO: as partes renderizadas separadas e coladas.
 
 POR QUE ESTE MÓDULO EXISTE (2026-08-25, pedido do usuário). O formato longo era
 montado como o Short: UM grafo de filtros do ffmpeg com todos os clipes, todas
@@ -27,11 +27,11 @@ não um intervalo dentro de um arquivo.
 
 Três passos:
 
-1. CADA PARTE É UM MP4 SEM ÁUDIO. A abertura mostra os três clipes do vídeo em
+1. CADA PARTE É UM MP4 SEM ÁUDIO. A abertura mostra os clipes das pautas em
    sequência (é o "ainda neste vídeo" em imagem: o espectador vê o que foi
    prometido) e cada pauta mostra um clipe só, o dela. O painel de texto entra
    deslizando e FICA — a parte inteira tem manchete na tela.
-2. CONCATENAÇÃO por demuxer, sem recodificar: as quatro partes saem do mesmo
+2. CONCATENAÇÃO por demuxer, sem recodificar: as partes saem do mesmo
    encoder, com o mesmo tamanho, fps e pix_fmt, então colar é copiar.
 3. ÁUDIO POR CIMA do vídeo colado: a narração INTEIRA, de uma vez, mais o woosh
    em cada virada. Cortar o áudio em quatro e recolar traria o priming do AAC
@@ -97,7 +97,7 @@ T_ENTRA = 0.40  # painel da parte nova entrando pela esquerda
 ATRASO_ABERTURA = 0.25
 T_ENTRA_ABERTURA = 0.45
 
-# Crossfade entre os três clipes da abertura. Só a abertura tem: nas pautas o
+# Crossfade entre os clipes da abertura. Só a abertura tem: nas pautas o
 # clipe é um só, do começo ao fim.
 CROSSFADE = 0.3
 
@@ -151,7 +151,7 @@ def _tempos_da_troca(pausa: float) -> tuple[float, float]:
 def _quadro(t: float) -> float:
     """Arredonda um instante para o quadro mais próximo.
 
-    As quatro partes são coladas por concatenação: se a duração de uma delas
+    As partes são coladas por concatenação: se a duração de uma delas
     não for múltipla de 1/FPS, o ffmpeg arredonda por conta própria e a soma
     das partes deixa de bater com a narração — o vídeo inteiro desliza alguns
     quadros contra a fala, e o erro se acumula a cada emenda.
@@ -606,7 +606,7 @@ def montar_video_longo(
     """Monta o vídeo longo inteiro: renderiza as partes, cola e soma a narração.
 
     `partes` vem de `manchetes.planejar_partes`; `clipes_por_parte` traz os
-    clipes de cada uma, na mesma ordem — três na abertura (a prévia do que vem)
+    clipes de cada uma, na mesma ordem — todos na abertura (a prévia do que vem)
     e um em cada pauta. A regra que o usuário pediu — "para cada pauta é
     obrigatório o vídeo, e um mesmo vídeo não pode servir para duas pautas" —
     é garantida aqui: parte sem clipe aborta, e clipe repetido entre duas
@@ -639,7 +639,7 @@ def montar_video_longo(
                 + ", ".join(Path(c["caminho"]).name for c in estaticas)
             )
         # A abertura é a PRÉVIA das pautas: ela mostra de propósito os mesmos
-        # três clipes, então só as pautas entram no controle de repetição.
+        # clipes, então só as pautas entram no controle de repetição.
         if parte["indice"] == 0:
             continue
         for clipe in clipes:

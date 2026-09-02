@@ -69,7 +69,7 @@ gpt-image-2 (figuras.py) em 2026-08-24, por custo — a tela não tem mais "big
 number" nenhum; não reintroduzir nem um nem outro sem pedido explícito.
 
 ESTE MÓDULO É O DO SHORT desde 2026-08-25. O formato longo saiu daqui para
-montagem_longa.py, onde ele é montado em quatro partes separadas e coladas — a
+montagem_longa.py, onde ele é montado em partes separadas e coladas — a
 mudança que o desenho do usuário pediu. O que ficou para trás junto: a camada
 de MANCHETES, que só o longo usava, e o parâmetro `formato`, que agora só
 escolhe a tolerância de tempo de cada clipe na tela. As constantes de crédito,

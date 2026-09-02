@@ -65,7 +65,7 @@ de volta no preview. A faixa de duração e a de palavras seguem as mesmas.
 
 FORMATO LONGO (`--long-take`, cfg.formato == "longo"): as duas etapas trocam
 de prompt e de esquema, mantendo a mesma mecânica. A seleção passa a exigir
-pauta que renda EXATAMENTE TOPICOS_MAX tópicos (três recortes diferentes do
+pauta que renda EXATAMENTE TOPICOS_MAX tópicos (recortes diferentes do
 mesmo fato, tipicamente pelas quatro óticas do canal — tecnologia/IA,
 negócios, mercado de trabalho, mercado financeiro), e prefere trends com mais
 posts com clipe; e a auditoria ganha regras próprias (fontes nominais, os
@@ -74,13 +74,13 @@ repetição) compara só com os vídeos LONGOS já publicados — Short e análi
 conteúdos diferentes.
 
 O ROTEIRO LONGO É O DESENHO DA MONTAGEM (2026-08-25). O vídeo passou a ser
-montado em QUATRO PARTES separadas, coladas no ffmpeg (montagem_longa.py):
-abertura + uma parte por pauta. Isso torna DURAS três coisas que antes eram
+montado em PARTES separadas, coladas no ffmpeg (montagem_longa.py): abertura +
+uma parte por pauta. Isso torna DURAS três coisas que antes eram
 preferências do prompt, e as três são conferidas em código antes de a narração
 ser paga (`_conferir_estrutura_longa`):
 
-  - EXATAMENTE três tópicos. Não é mais uma faixa: três tópicos são três
-    partes, três manchetes e três clipes distintos.
+  - EXATAMENTE TOPICOS_MAX tópicos (4 desde 2026-09-02; era 3). Não é mais uma
+    faixa: cada tópico é uma parte, uma manchete e um clipe distinto.
   - a `citacao` de CADA tópico existe LITERALMENTE em `texto_video`. Ela deixou
     de ser só o carimbo do capítulo: é o ponto em que o vídeo é PARTIDO. Sem
     ela não há onde cortar, e o roteiro volta para reescrita.
@@ -101,7 +101,7 @@ contextualização geral ela forma a ABERTURA, a primeira parte do vídeo, que
 tem que caber em ~10 segundos — MEDIDOS desde 26/08, aqui em palavras e em
 `manchetes.planejar_partes` em segundos do áudio final; (2) TRÊS BATIDAS por
 pauta — contextualização, acontecimento factual e ANÁLISE (campo `analise`),
-que é a batida que não pode faltar; (3) o FECHO como SÍNTESE (campo `sintese`), costurando as três análises
+que é a batida que não pode faltar; (3) o FECHO como SÍNTESE (campo `sintese`), costurando as análises das pautas
 em vez de repetir uma delas. A frase de VIRADA entre pautas ganhou peso:
 o pipeline abre uma PAUSA de silêncio antes dela (ver silencio.py), corta o
 vídeo ali e troca manchete e clipe, então ela precisa ser autossuficiente.
@@ -237,21 +237,43 @@ JANELA_REPETICAO_HORAS_LONGO = 72
 # qualquer valor nessa janela separa os dois formatos sem ambiguidade, e 90
 # ainda reconhece como longos os vídeos publicados na faixa antiga (90-120s).
 DURACAO_MINIMA_LONGO = 90
-# TÓPICOS do formato longo: EXATAMENTE TRÊS (2026-08-25, desenho do usuário).
+# TÓPICOS do formato longo: EXATAMENTE LONGO_NUM_TRENDS (2026-08-25, desenho do
+# usuário; o número foi de 3 para 4 em 2026-09-02, a pedido dele).
 #
 # Deixou de ser uma faixa (era 3 a 5, de 2026-08-04) porque o vídeo longo passou
-# a ter uma ESTRUTURA FIXA DE QUATRO PARTES, montadas separadamente e coladas no
-# ffmpeg (ver montagem_longa.py): a abertura mais uma parte por pauta. Quatro
-# partes são três trocas de manchete e três clipes distintos — um por pauta —, e
-# nada disso admite um número variável de tópicos. Roteiro que não vier com três
+# a ter uma ESTRUTURA FIXA DE PARTES, montadas separadamente e coladas no ffmpeg
+# (ver montagem_longa.py): a abertura mais uma parte por pauta. Cada tópico é
+# uma troca de manchete e um clipe distinto — um por pauta —, e nada disso
+# admite um número variável de tópicos. Roteiro que não vier com o número exato
 # é reescrito; se insistir, a execução aborta antes de pagar a narração.
+#
+# É uma CÓPIA de LONGO_NUM_TRENDS, e não um número próprio: a seleção escolhe
+# uma trend por pauta e o roteiro escreve um tópico por pauta. Os dois já
+# tiveram valores independentes, e um roteiro de 3 tópicos sobre 4 trends
+# escolhidas é um vídeo que promete quatro assuntos e conta três.
 #
 # As quatro óticas do canal (tecnologia/IA, negócios, trabalho, mercado)
 # continuam sendo a fonte natural dos tópicos — nunca foram uma cota.
-# TOPICOS_MIN sumiu junto com a faixa: com três fixos, mínimo e máximo eram o
-# mesmo número, e manter dois nomes para ele só criaria a chance de um dia
-# divergirem.
-TOPICOS_MAX = 3
+# TOPICOS_MIN sumiu junto com a faixa: com o número fixo, mínimo e máximo eram o
+# mesmo, e manter dois nomes para ele só criaria a chance de um dia divergirem.
+TOPICOS_MAX = LONGO_NUM_TRENDS
+# Os mesmos números por extenso, para os prompts. Escrever "três" à mão nas
+# instruções foi o que quase deixou a mudança pela metade: o esquema pedia
+# EXATAMENTE 4 tópicos numa linha e "um número diferente de três QUEBRA a
+# montagem" na seguinte, e o modelo obedece ao texto, não à constante.
+_POR_EXTENSO = {
+    1: "um", 2: "dois", 3: "três", 4: "quatro", 5: "cinco", 6: "seis",
+    7: "sete", 8: "oito",
+}
+TOPICOS_EXTENSO = _POR_EXTENSO.get(TOPICOS_MAX, str(TOPICOS_MAX))
+# Partes da montagem: a abertura mais uma por pauta.
+PARTES_MAX = TOPICOS_MAX + 1
+PARTES_EXTENSO = _POR_EXTENSO.get(PARTES_MAX, str(PARTES_MAX))
+# Teto de palavras da PAUTA FALADA (a lista de assuntos dita na abertura). São
+# ~6 palavras por assunto — o espaço de nomear cada um pela coisa concreta.
+# Era 18 fixo, com 3 pautas; agora acompanha o número de pautas, senão a quarta
+# entraria espremendo as outras três em menos palavras do que elas precisam.
+PAUTA_FALADA_MAX_PALAVRAS = TOPICOS_MAX * 6
 # RODÍZIO DE TEMAS DOS SHORTS REMOVIDO (2026-08-29, pedido do usuário:
 # "remova completamente o rodizio de temas"). Ele existiu de 2026-08-04 a
 # 2026-08-29 e tirava da disputa as candidatas do macrotema do Short anterior,
@@ -518,15 +540,17 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "type": "string",
                 "description": (
                     "A PAUTA DO VÍDEO, dita em voz alta na abertura: a lista "
-                    "do que o vídeo vai tratar, em NO MÁXIMO 18 palavras (cerca "
-                    "de 6 segundos de fala). Nomeia os tópicos na MESMA ORDEM "
+                    f"do que o vídeo vai tratar, em NO MÁXIMO "
+                    f"{PAUTA_FALADA_MAX_PALAVRAS} palavras. "
+                    "Nomeia os tópicos na MESMA ORDEM "
                     "em que aparecem, cada um pela coisa concreta ('drones a "
                     "1.900 quilômetros, um navio sem tripulação que atirou, e o "
                     "gás que o Irã achou'). É a PRIMEIRA COISA de texto_video, "
                     "copiada caractere por caractere, antes de qualquer audio "
                     "tag. PROIBIDO 'neste vídeo você vai ver', 'vamos falar "
                     "sobre', 'fique até o final' — comece pela coisa. Enquanto "
-                    "ela é falada, um painel na tela lista os três títulos."
+                    f"ela é falada, um painel na tela lista os "
+                    f"{TOPICOS_EXTENSO} títulos."
                 ),
             },
             "pergunta": {
@@ -551,8 +575,9 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "description": (
                     f"EXATAMENTE {TOPICOS_MAX} TÓPICOS que o vídeo cobre, "
                     "na ordem em que aparecem na narração — nem mais, nem "
-                    "menos: o vídeo é montado em quatro partes (abertura + uma "
-                    "por tópico) e um número diferente de três QUEBRA a "
+                    f"menos: o vídeo é montado em {PARTES_EXTENSO} partes "
+                    "(abertura + uma por tópico) e um número diferente de "
+                    f"{TOPICOS_EXTENSO} QUEBRA a "
                     "montagem. Cada tópico é um recorte DIFERENTE do mesmo "
                     "acontecimento, com dado próprio — não é uma repetição do "
                     "anterior com outras palavras. As quatro óticas do canal "
@@ -634,9 +659,10 @@ ESQUEMA_ROTEIRO_LONGO = {
                 "type": "string",
                 "description": (
                     "O FECHO do vídeo, em 1 a 2 frases: a linha que une as "
-                    "análises dos três tópicos numa só — o que a soma deles "
+                    f"análises dos {TOPICOS_MAX} tópicos numa só — o que a "
+                    "soma deles "
                     "diz sobre o que está mudando. NÃO repete a análise de um "
-                    "tópico: costura as três. Nada de conselho genérico de "
+                    "tópico: costura todas. Nada de conselho genérico de "
                     "coach ('se reinvente', 'esteja preparado') e nada de "
                     "leitura de preço, salário ou conta do espectador."
                 ),
@@ -657,7 +683,7 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "segundos, então o título tem que prometer a MESMA coisa "
                     "que a capa — capa anunciando um assunto e título "
                     "anunciando outro entrega um vídeo diferente do que a "
-                    "pessoa clicou. Os outros dois tópicos entram depois, na "
+                    "pessoa clicou. Os outros tópicos entram depois, na "
                     "ordem, se couberem. Direto e factual: ator + ação "
                     "concreta, com "
                     "pelo menos uma coisa palpável (número, pessoa, dinheiro, "
@@ -690,13 +716,14 @@ ESQUEMA_ROTEIRO_LONGO = {
                     "Texto/roteiro narrado do vídeo, no idioma definido nas "
                     "instruções, seguindo a ESTRUTURA das instruções: PAUTA "
                     "FALADA (o campo `pauta_falada`, copiado como início do "
-                    "texto) → CONTEXTUALIZAÇÃO GERAL → AS TRÊS PAUTAS, cada uma "
+                    f"texto) → CONTEXTUALIZAÇÃO GERAL → AS {TOPICOS_MAX} "
+                    "PAUTAS, cada uma "
                     "com CONTEXTUALIZAÇÃO + ACONTECIMENTO FACTUAL + ANÁLISE (o "
                     "campo `analise` do tópico), separadas por uma FRASE DE "
                     "VIRADA → FECHO (a `sintese` mais o que observar). A "
                     "abertura (pauta falada + contextualização geral) tem que "
                     "caber em CERCA DE 10 SEGUNDOS de fala, porque ela é a "
-                    "primeira das quatro partes do vídeo. Ritmo de fala natural (frases de 8 a 18 "
+                    "primeira parte do vídeo. Ritmo de fala natural (frases de 8 a 18 "
                     "palavras, teto 22), vocabulário preciso de telejornal, "
                     "tom adulto de analista que respeita o espectador. Toda "
                     "afirmação central atribuída nominalmente à fonte "
@@ -909,7 +936,7 @@ NARRAÇÃO:
    pipeline abre uma pausa de silêncio antes dela. REPROVAM: virar de assunto
    no meio de um parágrafo, sem nenhuma marca; virada que não diz do que se
    trata ("mas tem mais", "e não para por aí"); e numerar em voz alta
-   ("segundo ponto", "tópico três", "primeiro", "por último").
+   ("segundo ponto", "terceiro tópico", "primeiro", "por último").
 8c. AS TRÊS BATIDAS: cada pauta traz contextualização, depois o acontecimento
    factual com número e fonte, depois a análise do que muda — nesta ordem.
    REPROVA a pauta que pula a contextualização e começa no número.
@@ -917,10 +944,11 @@ NARRAÇÃO:
    gráfico") — as manchetes na tela só repetem o que a narração já disse, e o
    vídeo não tem legendas.
 10. A ABERTURA é a PAUTA FALADA: as primeiras palavras da narração dizem, em
-   no máximo 18 palavras, o que o vídeo vai tratar, nomeando os assuntos na
+   no máximo {pauta_falada_palavras} palavras, o que o vídeo vai tratar,
+   nomeando os {topicos_max} assuntos na
    mesma ordem em que eles aparecem depois. Somada à contextualização geral,
    ela tem que caber em {abertura_palavras} palavras faladas (~{abertura_s:.0f}
-   segundos) — é a primeira das quatro partes do vídeo, e o que vem depois dela
+   segundos) — é a primeira parte do vídeo, e o que vem depois dela
    já é a primeira pauta. CONTE as palavras da abertura antes de julgar.
    REPROVAM: abrir por outra coisa; preâmbulo de youtuber
    ("neste vídeo você vai ver", "vamos falar sobre", "fica até o final"); ordem
@@ -930,13 +958,14 @@ NARRAÇÃO:
    fecho que só repete a análise de uma das pautas.
 12. O TÍTULO ABRE PELO TÓPICO 1. A capa do vídeo é montada a partir da pauta 1
    e do clipe dela, então um título que abre por outro tópico promete uma coisa
-   e a capa promete outra. REPROVA o título que começa pelo tópico 2 ou 3, ou
-   que não nomeia o tópico 1 em lugar nenhum.
+   e a capa promete outra. REPROVA o título que começa por qualquer tópico que
+   não seja o 1, ou que não nomeia o tópico 1 em lugar nenhum.
 
 Liste em "problemas" cada violação com o termo/frase exato citado. NÃO invente
 problema: o que segue as regras passa, e "aprovado" = true com zero problemas.\
 """.format(
     topicos_max=TOPICOS_MAX,
+    pauta_falada_palavras=PAUTA_FALADA_MAX_PALAVRAS,
     abertura_palavras=ABERTURA_MAX_PALAVRAS,
     abertura_s=LONGO_ABERTURA_S,
 )
@@ -1448,31 +1477,36 @@ produto importado"). Sem a tradução, não use o nome.
 
 ESTRUTURA OBRIGATÓRIA — a PAUTA FALADA e depois UMA PAUTA DE CADA VEZ:
 
-1. PAUTA FALADA (0-6s, a primeira coisa do vídeo): diga em voz alta o que o
+1. PAUTA FALADA (a primeira coisa do vídeo): diga em voz alta o que o
    vídeo vai tratar — o campo `pauta_falada`, copiado palavra por palavra como
-   INÍCIO de texto_video. No máximo 18 palavras, nomeando os tópicos na mesma
+   INÍCIO de texto_video. No máximo {pauta_falada_palavras} palavras, nomeando
+   os {topicos_max} tópicos na mesma
    ordem em que eles virão, cada um pela coisa concreta: "drones a 1.900
    quilômetros, um navio sem tripulação que atirou, e o gás que o Irã achou".
    PROIBIDO preâmbulo de youtuber ("neste vídeo você vai ver", "vamos falar
    sobre", "fica até o final") — comece pela coisa. Enquanto você fala isso, os
    títulos dos tópicos aparecem na tela, um a um; por isso a ordem tem que
    bater com a de `topicos`.
-2. CONTEXTUALIZAÇÃO GERAL (UMA frase): a frase que amarra os três — o que eles
+2. CONTEXTUALIZAÇÃO GERAL (UMA frase): a frase que amarra os {topicos_max} —
+   o que eles
    têm a ver entre si e por que valem juntos hoje. É a sua TESE dita em voz
    alta. Ela FECHA a abertura: a pauta falada mais esta frase são a primeira
-   das quatro partes do vídeo, e juntas não passam de {abertura_palavras}
+   parte do vídeo, e juntas não passam de {abertura_palavras}
    palavras faladas (~{abertura_s:.0f} segundos de fala) — o pipeline MEDE isso
    e devolve o roteiro para reescrita se estourar. A frase seguinte já é o
    tópico 1, e é ela que você copia na `citacao` dele.
 3. AS PAUTAS (o corpo do vídeo): cubra EXATAMENTE {topicos_max} TÓPICOS, os
-   mesmos que você listou no campo `topicos` e na mesma ordem. Três, nem mais
-   nem menos: o vídeo é montado em QUATRO PARTES separadas (esta abertura mais
-   uma parte por pauta), cada pauta com o seu próprio clipe e a sua própria
-   manchete na tela, e um número diferente de três não tem onde caber.
-   QUANDO O MATERIAL TRAZ MAIS DE UM ACONTECIMENTO (a seleção manda três, e
+   mesmos que você listou no campo `topicos` e na mesma ordem.
+   {topicos_max}, nem mais
+   nem menos: o vídeo é montado em {partes_max} PARTES separadas (esta abertura
+   mais uma parte por pauta), cada pauta com o seu próprio clipe e a sua própria
+   manchete na tela, e um número diferente de {topicos_max} não tem onde caber.
+   QUANDO O MATERIAL TRAZ MAIS DE UM ACONTECIMENTO (a seleção manda
+   {topicos_max}, e
    eles vêm numerados no resumo): cada acontecimento é UM TÓPICO, na ordem em
    que aparecem. Não force conexão factual entre eles — eles não são o mesmo
-   fato —, mas encontre a LINHA que faz os três valerem juntos no mesmo vídeo:
+   fato —, mas encontre a LINHA que faz os {topicos_max} valerem juntos no
+   mesmo vídeo:
    o que eles dizem, somados, sobre a semana de quem assiste. É essa linha que
    vira a sua TESE, e é ela que a abertura promete e a conclusão fecha.
    QUANDO O MATERIAL TRAZ UM ACONTECIMENTO SÓ: tópico é um recorte DIFERENTE
@@ -1514,10 +1548,10 @@ ESTRUTURA OBRIGATÓRIA — a PAUTA FALADA e depois UMA PAUTA DE CADA VEZ:
    precisa ser autossuficiente — quem voltar a prestar atenção ali tem que
    saber do que se trata. Ela vira a `citacao` do tópico, copiada
    LITERALMENTE do texto. PROIBIDO virar de assunto no meio de um parágrafo, sem aviso — e
-   PROIBIDO numerar em voz alta ("segundo ponto", "tópico três"): a virada é
+   PROIBIDO numerar em voz alta ("segundo ponto", "terceiro tópico"): a virada é
    editorial, não é sumário falado.
 4. FECHO (últimos ~12s): a SÍNTESE do campo `sintese` — a linha que une as
-   análises das três pautas numa só, dita em uma ou duas frases secas —,
+   análises das {topicos_max} pautas numa só, dita em uma ou duas frases secas —,
    mais uma frase apontando o PRÓXIMO MARCO concreto a acompanhar (decisão,
    balanço, data, número que sai em breve). NÃO repita a análise de uma pauta:
    o fecho costura, não recapitula. Sem CTA, sem pedido de inscrição, sem
@@ -1557,15 +1591,15 @@ frase de analista vazia.
 DURAÇÃO — a narração deve PREENCHER {duracao} segundos: escreva entre
 {palavras_min} e {palavras} palavras faladas no texto_video (audio tags entre
 colchetes não contam). Esse número NÃO é o formato do canal, é o MATERIAL DE
-HOJE: ele foi calculado somando os segundos de clipe que as três pautas
-trouxeram. Os dois limites são DUROS e o pipeline devolve o roteiro para
+HOJE: ele foi calculado somando os segundos de clipe que as {topicos_max}
+pautas trouxeram. Os dois limites são DUROS e o pipeline devolve o roteiro para
 reescrita fora deles. Estourar deixa a tela sem imagem no fim de uma parte;
 ficar abaixo joga clipe fora. Se faltar espaço, corte detalhe secundário da
 contextualização geral ou encurte a batida (a) de um tópico — nunca a pauta
 falada, nunca a batida (c) de nenhuma pauta (a análise), nunca o fecho, e nunca
 menos nem mais que {topicos_max} tópicos. Se sobrar espaço, acrescente dado
 concreto do material recebido (número, nome, cena) às pautas que você já tem —
-NÃO acrescente um quarto tópico, e nunca encha linguiça.{pautas_orcamento}
+NÃO acrescente um tópico a mais, e nunca encha linguiça.{pautas_orcamento}
 
 MATERIAL VISUAL — o corpo do vídeo é montado SOMENTE com os clipes de vídeo
 anexados aos posts do X da trend (até {max_clipes} clipes, nada de foto
@@ -2004,14 +2038,15 @@ def selecionar_trends_longo(
     passava: em 2026-08-18, com 57 clipes coletados, as 10 candidatas ficaram de
     fora. Vídeo do X se espalha por assuntos; não se concentra num.
 
-    A troca (ideia do usuário) é cobrir TRÊS acontecimentos, um por tópico. Cada
-    trend precisa trazer só o próprio clipe, e o piso de 3 aprovados passa a ser
-    somado entre elas. A seleção de cada uma reusa `selecionar_trend` inteira —
-    régua de audiência e anti-repetição seguem valendo, e cada escolha entra na
-    lista de exclusão da seguinte.
+    A troca (ideia do usuário) é cobrir VÁRIOS acontecimentos, um por tópico —
+    LONGO_NUM_TRENDS deles, que era 3 e virou 4 em 2026-09-02. Cada trend
+    precisa trazer só o próprio clipe, e o piso de LONGO_MIN_CLIPES_APROVADOS
+    passa a ser somado entre elas. A seleção de cada uma reusa
+    `selecionar_trend` inteira — régua de audiência e anti-repetição seguem
+    valendo, e cada escolha entra na lista de exclusão da seguinte.
 
     O retorno tem a forma de uma seleção comum (o resto do pipeline não muda),
-    com `trend_obj` juntando os posts das três e `selecoes` guardando as
+    com `trend_obj` juntando os posts de todas e `selecoes` guardando as
     originais para o roteiro saber quais são os assuntos.
     """
     escolhidas: list[dict] = []
@@ -2195,7 +2230,7 @@ def selecionar_trend(
                 "Nenhuma candidata de hoje tem os "
                 f"{LONGO_MIN_POSTS_VIDEO} posts com clipe que o formato longo "
                 "precisa para chegar ao piso da auditoria — o vídeo não teria "
-                "clipe nenhum para as três pautas; "
+                f"clipe nenhum para as {LONGO_NUM_TRENDS} pautas; "
                 "abortando antes de gastar "
                 "roteiro e narração. Se isso virar rotina, a alavanca é a "
                 "própria lista do X: contas que publiquem VÍDEO. X_MAX_POSTS "
@@ -2573,7 +2608,7 @@ def _aparar_hook_final(roteiro: dict) -> None:
 
 
 # Quantas reescritas o roteiro longo ganha para entregar a ESTRUTURA que a
-# montagem em quatro partes exige (três tópicos, citação literal em cada um).
+# montagem em partes exige (TOPICOS_MAX tópicos, citação literal em cada um).
 # Duas: a primeira costuma ser um tópico a mais ou uma citação parafraseada, e
 # o modelo corrige com o erro na mão; passar disso é jogar dinheiro em um
 # roteiro que não vai fechar.
@@ -2581,15 +2616,15 @@ TENTATIVAS_ESTRUTURA_LONGA = 2
 
 
 def _falhas_de_estrutura(roteiro: dict) -> list[str]:
-    """O que impede o roteiro longo de virar as quatro partes da montagem.
+    """O que impede o roteiro longo de virar as partes da montagem.
 
     TRÊS conferências, e as três são DURAS porque a montagem depende delas
-    (montagem_longa.py): o vídeo é partido em quatro (abertura + uma parte por
-    pauta), e o ponto de corte de cada parte é o primeiro caractere da
+    (montagem_longa.py): o vídeo é partido em PARTES_MAX (abertura + uma parte
+    por pauta), e o ponto de corte de cada parte é o primeiro caractere da
     `citacao` do tópico, localizada por busca LITERAL no texto narrado.
 
-      1. exatamente TOPICOS_MAX tópicos — dois tópicos dariam três partes, e
-         quatro dariam cinco: não há montagem para nenhum dos dois casos;
+      1. exatamente TOPICOS_MAX tópicos — um tópico a menos ou a mais muda o
+         número de partes, e não há montagem para nenhum dos dois casos;
       2. a `citacao` de cada tópico existe no `texto_video`, ignorando as audio
          tags entre colchetes (que a narração não fala e o alinhamento não
          traz) e em ordem CRESCENTE — citação que aparece antes da do tópico
@@ -2617,8 +2652,9 @@ def _falhas_de_estrutura(roteiro: dict) -> list[str]:
     if len(topicos) != TOPICOS_MAX:
         problemas.append(
             f"o roteiro trouxe {len(topicos)} tópico(s) e o formato monta "
-            f"EXATAMENTE {TOPICOS_MAX} (o vídeo é cortado em quatro partes: a "
-            f"abertura e uma por tópico) — entregue {TOPICOS_MAX} tópicos"
+            f"EXATAMENTE {TOPICOS_MAX} (o vídeo é cortado em {PARTES_MAX} "
+            f"partes: a abertura e uma por tópico) — entregue {TOPICOS_MAX} "
+            "tópicos"
         )
 
     texto = roteiro.get("texto_video") or ""
@@ -2676,12 +2712,12 @@ def _conferir_estrutura_longa(
     instrucoes: str,
     conteudo: str,
 ) -> dict:
-    """Devolve um roteiro longo que a montagem em quatro partes consegue cortar.
+    """Devolve um roteiro longo que a montagem em partes consegue cortar.
 
     Pede a reescrita enquanto houver falha, até TENTATIVAS_ESTRUTURA_LONGA, e
     ABORTA se ela sobreviver — de propósito, e antes do ElevenLabs. Este é o
-    único defeito de roteiro que não tem degradação possível: sem os três
-    pontos de corte não existe vídeo de quatro partes, e o que sairia é o bloco
+    único defeito de roteiro que não tem degradação possível: sem os pontos de
+    corte não existe vídeo em partes, e o que sairia é o bloco
     corrido de 135 segundos que o usuário rejeitou. Falhar aqui custa o texto
     já pago; falhar depois custaria narração, visão e montagem, e ainda
     publicaria o vídeo errado.
@@ -2691,13 +2727,14 @@ def _conferir_estrutura_longa(
         if not problemas:
             return roteiro
         print(
-            f"[roteiro] Estrutura das quatro partes reprovada "
+            f"[roteiro] Estrutura das {PARTES_MAX} partes reprovada "
             f"({tentativa}/{TENTATIVAS_ESTRUTURA_LONGA}):"
         )
         for problema in problemas:
             print(f"  - {problema}")
         pedido = (
-            "O roteiro não pode ser montado. O vídeo é cortado em QUATRO "
+            f"O roteiro não pode ser montado. O vídeo é cortado em "
+            f"{PARTES_MAX} "
             "PARTES — a abertura e uma parte por tópico —, e o ponto de corte "
             "de cada parte é a `citacao` do tópico, localizada por busca "
             "LITERAL dentro de texto_video. Repare no que isso significa para "
@@ -2731,7 +2768,8 @@ def _conferir_estrutura_longa(
             roteiro, problemas = corrigido, restantes
     if problemas:
         raise SystemExit(
-            "O roteiro do formato longo não fecha a estrutura de quatro partes "
+            f"O roteiro do formato longo não fecha a estrutura de "
+            f"{PARTES_MAX} partes "
             f"depois de {TENTATIVAS_ESTRUTURA_LONGA} reescritas, e sem ela o "
             "vídeo sairia como o bloco corrido que o formato deixou de ser; "
             "abortando antes da narração.\nProblemas:\n- "
@@ -2853,11 +2891,13 @@ def gerar_roteiro(
     if longo:
         formatacao["max_clipes"] = cfg.max_clipes
         formatacao["topicos_max"] = TOPICOS_MAX
+        formatacao["partes_max"] = PARTES_MAX
+        formatacao["pauta_falada_palavras"] = PAUTA_FALADA_MAX_PALAVRAS
         formatacao["abertura_palavras"] = ABERTURA_MAX_PALAVRAS
         formatacao["abertura_s"] = LONGO_ABERTURA_S
         # O TAMANHO DE CADA CAPÍTULO, em palavras, vai para o prompt
-        # (2026-09-01). Sem isto o modelo distribui o texto como quiser entre as
-        # três pautas, e a pauta que ganhar mais texto do que o clipe dela
+        # (2026-09-01). Sem isto o modelo distribui o texto como quiser entre
+        # as pautas, e a pauta que ganhar mais texto do que o clipe dela
         # comporta volta a precisar de loop — que é justamente o que a duração
         # flexível de capítulo veio tirar.
         formatacao["pautas_orcamento"] = _orcamento_das_pautas(cfg, pautas_s)
@@ -3021,12 +3061,12 @@ def gerar_roteiro(
             print("[roteiro] Reescrita aprovada pela auditoria pró-leigo.")
         palavras = _contar_palavras(roteiro["texto_video"])
 
-    # ESTRUTURA DAS QUATRO PARTES (só no longo, 2026-08-25): três tópicos e uma
+    # ESTRUTURA DAS PARTES (só no longo, 2026-08-25): TOPICOS_MAX tópicos e uma
     # citação literal em cada um. Por último de propósito — a reescrita da
     # faixa de palavras e a da auditoria pró-leigo devolvem um JSON inteiro e
     # podem QUEBRAR a citação que já estava certa, então quem confere tem que
     # ser o último a falar. Aborta se não fechar: sem os pontos de corte não
-    # existe o vídeo de quatro partes.
+    # existe o vídeo em partes.
     if longo:
         roteiro = _conferir_estrutura_longa(
             cliente, cfg, roteiro, instrucoes, conteudo

@@ -17,8 +17,9 @@ Fluxo:
    todas as candidatas lá no passo 7, que é quando o laço de fallback lê a
    lista e recomeça em vez de abortar. Curtir um
    post no X é a forma mais barata de mexer na pauta; pôr ou tirar alguém da
-   lista continua sendo a segunda. Só sobe post com clipe de vídeo nativo, e no
-   Short só clipe de até CURTO_MAX_DUR_CLIPE segundos. O GPT sumariza os posts
+   lista continua sendo a segunda. Só sobe post com clipe de vídeo nativo, e só
+   clipe dentro da FAIXA DE DURAÇÃO do formato (`config.faixa_de_clipe`): 15 a
+   30s no Short, 30 a 90s no longo. O GPT sumariza os posts
    nas 10 trends mais quentes, ordenadas pelo VALOR DA INFORMAÇÃO (vazamento,
    exclusivo, urgência, número inédito) antes do engajamento. Falhar nas DUAS
    fontes aborta a execução, em vez de deixar o vídeo sair de uma pauta pior
@@ -93,7 +94,7 @@ Fluxo:
     do post da trend, auditada igual aos clipes, tomando a TELA INTEIRA quando a
     narração nomeia o que ela mostra.
 11. Daqui em diante os DOIS FORMATOS SE SEPARAM (2026-08-25). O FORMATO LONGO
-    passou a ser montado em QUATRO PARTES separadas, coladas no ffmpeg — ver o
+    passou a ser montado em PARTES separadas, coladas no ffmpeg — ver o
     bloco do formato longo mais abaixo e pipeline/montagem_longa.py. O que segue
     nos itens 12 e 13 é o caminho do SHORT.
 12. ffmpeg monta o vídeo em TELA CHEIA (2026-08-16, pedido do usuário): o
@@ -137,20 +138,23 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), com TETO de
   LONG_DURACAO (máximo LONGO_MAX_S=150s) e sem piso, SEM legendas e em
   velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
-  explica um acontecimento contemporâneo cobrindo EXATAMENTE 3 TÓPICOS —
-  recortes diferentes do mesmo fato, tirados do próprio acontecimento (quem
-  fez, quem paga, quem ganha, quem perde, o que vem depois).
+  explica os acontecimentos do dia cobrindo EXATAMENTE 4 PAUTAS
+  (LONGO_NUM_TRENDS; eram 3 até 2026-09-02) — uma trend por pauta, cada uma com
+  o seu clipe, ou recortes diferentes do mesmo fato quando o material só traz
+  um (quem fez, quem paga, quem ganha, quem perde, o que vem depois).
 
   O MATERIAL DIMENSIONA O LONGO TAMBÉM, e por CAPÍTULO (2026-09-01, pedido do
   usuário: "sempre priorizar o tamanho do material" e "para evitar o loop no
   vídeo longo, pode ser flexível a duração de cada capítulo"). Cada uma das
-  três pautas dura o que o clipe DELA dá (`alvos_das_pautas`, config.py), a
+  pautas dura o que o clipe DELA dá (`alvos_das_pautas`, config.py), a
   abertura fica com ~LONGO_ABERTURA_S, e a soma é a duração do vídeo. Como
   cada pauta recebe UM clipe e nenhum serve a duas, é essa conta que tira o
   loop do formato — o `-stream_loop` da montagem virou rede contra tela preta,
   não mais o mecanismo que enchia a parte. Consequência esperada: os vídeos
-  longos passam a variar de tamanho e, com o material típico do X (clipes de
-  ~15 a 30s), tendem a sair bem abaixo dos 120-150s da faixa antiga.
+  longos passam a variar de tamanho. Desde 2026-09-02 o clipe do longo é
+  obrigado a ter 30 a 90s, então a variação passou a ser para CIMA: quatro
+  pautas de clipe no piso já somam ~116s, e material acima disso é encolhido
+  proporcionalmente para caber no teto de LONG_DURACAO.
 
   NÃO HÁ MAIS PISO DE DURAÇÃO EM NENHUM FORMATO (2026-09-01, pedido do
   usuário: "pode tirar qualquer piso que tiver"). Saíram, juntos: o piso de
@@ -162,33 +166,40 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
   APROVADOS (1 no curto, 3 no longo — aritmética da montagem) e a nota de
   PERTINÊNCIA do clipe.
 
-  A MONTAGEM EM QUATRO PARTES (2026-08-25, desenho do usuário) é o que define
-  este formato. O vídeo NÃO é um bloco corrido com sobreposições ligando e
-  desligando: são quatro arquivos renderizados sozinhos e colados no ffmpeg
-  (pipeline/montagem_longa.py).
+  O PISO SAIU DO VÍDEO, NÃO DO MATERIAL. Em 2026-09-02 entrou uma FAIXA DE
+  DURAÇÃO DO CLIPE por formato (15-30s no Short, 30-90s no longo), a pedido do
+  usuário. Ela age na COLETA, sobre o insumo, e não sobre o produto: não há
+  vídeo abortado por ser curto — há material que não entra por não ter o
+  tamanho que o formato usa. O efeito prático é que o vídeo herda o piso do
+  material que sobrou.
 
-      +--------------+ +----------+ +----------+ +----------+
-      |   3 clipes   | | clipe 1  | | clipe 2  | | clipe 3  |
-      | [AINDA NESTE | | [MANCHETE| | [MANCHETE| | [MANCHETE|
-      |    VÍDEO]    | |    1]    | |    2]    | |    3]    |
-      +--------------+ +----------+ +----------+ +----------+
-           ~10s       ^           ^            ^         fade
-                    pausa       pausa        pausa       out 3s
-                    0,7s        0,7s         0,7s
+  A MONTAGEM EM PARTES (2026-08-25, desenho do usuário) é o que define
+  este formato. O vídeo NÃO é um bloco corrido com sobreposições ligando e
+  desligando: são a abertura mais uma parte por pauta, cada uma renderizada
+  sozinha e coladas no ffmpeg (pipeline/montagem_longa.py).
+
+      +--------------+ +--------+ +--------+ +--------+ +--------+
+      |   4 clipes   | |clipe 1 | |clipe 2 | |clipe 3 | |clipe 4 |
+      | [AINDA NESTE | |[MANCHE-| |[MANCHE-| |[MANCHE-| |[MANCHE-|
+      |    VÍDEO]    | | TE 1]  | | TE 2]  | | TE 3]  | | TE 4]  |
+      +--------------+ +--------+ +--------+ +--------+ +--------+
+           ~12s       ^          ^         ^          ^      fade
+                    pausa      pausa     pausa      pausa   out 3s
+                    0,7s       0,7s      0,7s       0,7s
 
   As regras que a estrutura torna DURAS, e que antes eram só preferências de
   prompt:
     - O PAINEL DE TEXTO NUNCA SAI DA TELA. Cada parte tem o seu do primeiro ao
       último quadro; a troca acontece dentro da pausa de silêncio da virada, o
-      painel velho saindo pela esquerda e o novo entrando. Três trocas no vídeo
-      inteiro. Antes a manchete durava 4,2s e sumia.
+      painel velho saindo pela esquerda e o novo entrando. Uma troca por pauta
+      a partir da segunda. Antes a manchete durava 4,2s e sumia.
     - CADA PAUTA TEM O SEU CLIPE, e um clipe não serve a duas. Quem casa clipe
       e pauta é `cortes.atribuir_clipes`, e a montagem ABORTA se um repetir.
-      A abertura mostra os três em sequência — é a prévia do que foi prometido.
-    - As três CITAÇÕES de virada são conferidas ANTES da narração
+      A abertura mostra todos em sequência — é a prévia do que foi prometido.
+    - As CITAÇÕES de virada são conferidas ANTES da narração
       (escritor._conferir_estrutura_longa): sem elas não há onde cortar.
-  Usa até 8 clipes do X (3 entram na montagem), NÃO usa cartelas, e a descrição
-  sai com a lista de fontes reais.
+  Usa até 10 clipes do X (4 entram na montagem), NÃO usa cartelas, e a
+  descrição sai com a lista de fontes reais.
 
 Idioma: o canal decide, nunca o modelo. Canal brasileiro publica TUDO em
 português (título, descrição, narração, capa); canal americano (`-usa`), TUDO
@@ -348,7 +359,9 @@ def main() -> None:
         print(
             f"[config] Formato LONGO: {cfg.video_largura}x{cfg.video_altura} "
             f"(16:9), teto de {cfg.video_duracao}s (máximo do formato: "
-            f"{LONGO_MAX_S}s; a duração sai do material das pautas), até "
+            f"{LONGO_MAX_S}s; a duração sai do material das pautas), "
+            f"{LONGO_NUM_TRENDS} pautas, clipe de "
+            f"{cfg.longo_min_dur_clipe_s}-{cfg.longo_max_dur_clipe_s}s, até "
             f"{cfg.max_clipes} clipes, sem legendas"
         )
 
@@ -470,7 +483,7 @@ def main() -> None:
             tentadas = []
             tentativa = 1
         cfg.video_duracao = duracao_alvo
-        # O LONGO cobre TRÊS acontecimentos (2026-08-18, pedido do usuário),
+        # O LONGO cobre LONGO_NUM_TRENDS acontecimentos (2026-08-18, pedido do usuário),
         # um por tópico: exigir 4 posts com clipe de um mesmo fato nunca
         # passava, e com três assuntos cada um só precisa do próprio clipe.
         # A seleção ABORTA quando as regras duras zeram as candidatas (todas
@@ -530,7 +543,7 @@ def main() -> None:
         # VALE NOS DOIS FORMATOS desde 2026-09-01 ("sempre priorizar o tamanho
         # do material"). O longo era a exceção — alvo fixo na faixa de 120-150s
         # e clipe repetido em loop para cobri-la — e agora é dimensionado pela
-        # soma das três pautas, cada uma pelo clipe DELA (`alvos_das_pautas`).
+        # soma das pautas, cada uma pelo clipe DELA (`alvos_das_pautas`).
         # É essa conta por capítulo que tira o loop do formato: pauta de clipe
         # curto vira parte curta em vez de parte repetida.
         #
@@ -575,12 +588,12 @@ def main() -> None:
                 )
                 cfg.video_duracao = alvo
         else:
-            # As três pautas do longo, na ordem em que virarão os tópicos.
+            # As pautas do longo, na ordem em que virarão os tópicos.
             # `selecoes` vem de `selecionar_trends_longo`; a lista de um
             # elemento cobre a chamada antiga de uma trend só.
             #
             # A lista é COMPLETADA até LONGO_NUM_TRENDS com None de propósito:
-            # o roteiro tem sempre três tópicos, e uma lista curta aqui
+            # o roteiro tem sempre LONGO_NUM_TRENDS tópicos, e uma lista curta aqui
             # dimensionaria o vídeo para menos pautas do que ele vai ter. None
             # não é medida faltando por descuido — `alvos_das_pautas` dá a ele
             # a mediana das medidas que existem.
@@ -704,7 +717,7 @@ def main() -> None:
         if not recusa:
             break
 
-        # Descarta TODAS as escolhidas da rodada: no longo são três, e repetir
+        # Descarta TODAS as escolhidas da rodada: no longo são várias, e repetir
         # uma delas na tentativa seguinte gastaria material já reprovado.
         if selecao.get("selecoes"):
             tentadas.extend(s["trend_obj"] for s in selecao["selecoes"])
@@ -795,7 +808,7 @@ def main() -> None:
     # NÃO HÁ MAIS PISO DE DURAÇÃO EM NENHUM FORMATO (2026-09-01, pedido do
     # usuário). O do Short saiu em 28/08; o do longo (LONGO_MIN_S=120) saía
     # aqui, com SystemExit, DEPOIS da narração já paga — e era ele que
-    # transformava "as três pautas de hoje tinham clipe curto" em execução
+    # transformava "as pautas de hoje tinham clipe curto" em execução
     # perdida. Com o material dimensionando o roteiro nos dois formatos, vídeo
     # curto virou o resultado certo para um dia de material curto.
     #
@@ -812,8 +825,8 @@ def main() -> None:
     # --- Daqui para baixo o formato longo tem um caminho PRÓPRIO --------------
     #
     # O longo deixou de ser "o Short com outros parâmetros" em 2026-08-25: ele
-    # é montado em QUATRO PARTES separadas, coladas no ffmpeg
-    # (montagem_longa.py). O que muda:
+    # é montado em PARTES separadas (a abertura mais uma por pauta), coladas
+    # no ffmpeg (montagem_longa.py). O que muda:
     #   - as pausas de virada não são mais um respiro editorial, são os PONTOS
     #     DE CORTE das partes, e `inserir_pausas` devolve onde cada uma ficou;
     #   - o planejador de cortes por citação sai de cena: cada pauta recebe UM
@@ -836,14 +849,14 @@ def main() -> None:
         )
         duracao = duracao_audio(narracao) + RESPIRO_FINAL
 
-        # As quatro partes, com o painel de texto de cada uma. Aborta se a
+        # As partes, com o painel de texto de cada uma. Aborta se a
         # divisão não fechar — sem ela o vídeo sairia como o bloco corrido que
         # o formato deixou de ser.
         partes = planejar_partes(
             cfg, roteiro, pausas, duracao, pasta, tela=(largura, altura)
         )
 
-        # UM CLIPE POR PAUTA, sem repetir. A abertura mostra os três em
+        # UM CLIPE POR PAUTA, sem repetir. A abertura mostra todos em
         # sequência: ela é o "ainda neste vídeo" em imagem, a prévia do que foi
         # prometido no painel.
         midias = [
@@ -1012,9 +1025,9 @@ def main() -> None:
     # montado traz o painel — e a capa é uma montagem em cima desse frame, com
     # recorte e desfoque, então o painel entraria dentro da capa.
     #
-    # A CAPA ANUNCIA A PAUTA 1, e não uma das três (2026-08-26, pedido do
-    # usuário). O vídeo longo cobre três assuntos sem relação entre si; dando
-    # ao modelo da capa a narração inteira e os três clipes, ele escolhia o
+    # A CAPA ANUNCIA A PAUTA 1, e não uma qualquer (2026-08-26, pedido do
+    # usuário). O vídeo longo cobre vários assuntos sem relação entre si; dando
+    # ao modelo da capa a narração inteira e todos os clipes, ele escolhia o
     # material mais forte, que não é o que o título anuncia. Em 26/08 saiu a
     # capa "NEPAL LANDSLIDE KILLS 7" sobre o título "Flávio Bolsonaro Calls
     # Rally as Video Access Opens and Nepal Reports Deaths". Agora ele recebe

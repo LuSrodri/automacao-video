@@ -1,6 +1,7 @@
-"""As quatro partes do vídeo longo e o painel de texto que nomeia cada uma.
+"""As partes do vídeo longo e o painel de texto que nomeia cada uma.
 
-DESENHO DO USUÁRIO (2026-08-25). O vídeo longo tem QUATRO PARTES, montadas
+DESENHO DO USUÁRIO (2026-08-25). O vídeo longo tem PARTES (a abertura mais uma
+por pauta: cinco desde 2026-09-02, quando as pautas foram a 4), montadas
 separadamente e coladas no ffmpeg (montagem_longa.py):
 
     +--------------+ +----------+ +----------+ +----------+
@@ -20,9 +21,9 @@ vídeo publicado e disse que "ainda ficou uma merda":
    espectador está — que é justamente o problema que a camada existia para
    resolver. Agora o painel da parte fica de ponta a ponta dela, e o que
    acontece na virada é uma TROCA: o painel velho sai deslizando e o novo
-   entra, dentro da pausa de silêncio. Três trocas no vídeo inteiro, uma por
+   entra, dentro da pausa de silêncio. Uma troca por pauta a partir da 2ª, uma por
    virada de pauta.
-2. O ÍNDICE É UM PAINEL SÓ, com os três títulos listados. Antes eram três
+2. O ÍNDICE É UM PAINEL SÓ, com todos os títulos listados. Antes eram vários
    painéis piscando um de cada vez (1/3, 2/3, 3/3) dentro dos ~6s da pauta
    falada — tempo de ver que algo piscou, não de ler.
 3. AS PARTES SÃO O CORTE DO VÍDEO, não uma sobreposição sobre um vídeo corrido.
@@ -34,7 +35,7 @@ vídeo sem manchetes; agora ela devolve a divisão do vídeo, e falhar aqui é
 falhar a montagem inteira — `planejar_partes` levanta SystemExit em vez de
 devolver lista vazia. O que protege a execução é a conferência de estrutura no
 escritor (`_conferir_estrutura_longa`), que roda ANTES da narração e garante os
-três tópicos com citação literal.
+os tópicos com citação literal.
 
 AS DURAÇÕES DO DESENHO SÃO CONFERIDAS AQUI (2026-08-26). O ~10s da abertura e o
 tamanho das pautas eram texto de prompt e nada mais: as bordas das partes saem
@@ -86,14 +87,14 @@ MARGEM_X_FRAC = 0.052
 BASE_FRAC = 0.880
 LARGURA_MAX_FRAC = 0.62
 TITULO_FRAC = 0.050  # tamanho da fonte do título, fração da altura do quadro
-# As linhas do índice são menores que a manchete de uma pauta: são três, e o
+# As linhas do índice são menores que a manchete de uma pauta: são várias, e o
 # painel inteiro tem que caber acima da etiqueta de representação.
 INDICE_FRAC = 0.033
 KICKER_FRAC = 0.020
 PAD_FRAC = 0.020
 FUNDO_ALFA = 232
 ENTRELINHA = 1.14
-ENTRELINHA_INDICE = 1.42  # respiro maior: três linhas coladas viram parágrafo
+ENTRELINHA_INDICE = 1.42  # respiro maior: linhas coladas viram parágrafo
 TRACKING_FRAC = 0.34  # espaçamento do kicker, fração do tamanho da fonte
 
 # A duração mínima de uma parte era PARTE_CURTA_S = 6.0 e só imprimia aviso.
@@ -163,7 +164,7 @@ def _painel_pauta(
     inteira custaria memória de overlay em cada frame da janela sem desenhar
     nada nas bordas, e este é um formato que já estourou o container.
 
-    `altura_minima` iguala a altura dos três painéis de pauta. Sem isso, um
+    `altura_minima` iguala a altura dos painéis de pauta. Sem isso, um
     título que quebra em duas linhas gera um painel mais alto que o do vizinho,
     e como o painel é ancorado pela BASE, a troca vira solavanco em vez de
     deslize. Com a altura fixa, o título ganha o espaço que sobra centrado.
@@ -247,13 +248,13 @@ def _painel_indice(
     largura_max: int,
     cor: tuple,
 ) -> tuple[Path, int, int]:
-    """Painel da abertura: a rubrica e os três títulos LISTADOS de uma vez.
+    """Painel da abertura: a rubrica e os títulos das pautas LISTADOS de uma vez.
 
-    Um painel, não três. Na versão anterior os títulos entravam um a um dentro
-    dos ~6 segundos da pauta falada, o que dava menos de dois segundos por item
-    — tempo de ver que algo piscou, não de ler. Aqui os três ficam juntos na
+    Um painel, não um por título. Na versão anterior os títulos entravam um a um
+    dentro dos segundos da pauta falada, o que dava menos de dois segundos por
+    item — tempo de ver que algo piscou, não de ler. Aqui todos ficam juntos na
     tela durante a abertura inteira, numerados, e o espectador lê no ritmo dele
-    enquanto a narração diz os mesmos três assuntos na mesma ordem.
+    enquanto a narração diz os mesmos assuntos na mesma ordem.
     """
     medidor = _medidor()
     pad = round(altura_quadro * PAD_FRAC)
@@ -271,7 +272,7 @@ def _painel_indice(
     col_num = round(medidor.textlength("00", font=f_num) + tam_num * 0.75)
 
     util_max = largura_max - 2 * pad - col_num
-    # Uma fonte só para as três linhas: tamanhos diferentes entre itens leriam
+    # Uma fonte só para todas as linhas: tamanhos diferentes entre itens leriam
     # como hierarquia que não existe. Cai até a MAIS LONGA caber em uma linha.
     tam = round(altura_quadro * INDICE_FRAC)
     minimo = max(14, round(altura_quadro * 0.021))
@@ -368,7 +369,7 @@ def planejar_partes(
     pasta: Path,
     tela: tuple[int, int],
 ) -> list[dict]:
-    """As quatro partes do vídeo, com o painel de texto de cada uma.
+    """As partes do vídeo, com o painel de texto de cada uma.
 
     `pausas` são os silêncios abertos por `silencio.inserir_pausas`, já em
     coordenadas do áudio FINAL: (início, fim) de cada um. São eles que definem
@@ -381,15 +382,15 @@ def planejar_partes(
     {"imagem", "x", "y", "largura", "altura"} — a posição é o canto superior
     esquerdo em repouso; o deslize até lá é do ffmpeg (montagem_longa.py).
 
-    Levanta SystemExit se a divisão não fechar: sem as quatro partes não existe
+    Levanta SystemExit se a divisão não fechar: sem as partes não existe
     o vídeo que o usuário desenhou, e o que sairia é o bloco corrido que ele
     rejeitou. Também levanta se as partes existirem mas com as DURAÇÕES
-    erradas — abertura acima de LONGO_ABERTURA_MAX_S —, porque quatro partes na
+    erradas — abertura acima de LONGO_ABERTURA_MAX_S —, porque as partes na
     proporção errada são o mesmo vídeo errado com outra aparência.
     """
     topicos = roteiro.get("topicos") or []
     # Uma pausa por VIRADA de pauta, e uma parte a mais que as pausas (a
-    # abertura): três tópicos são três pausas e quatro partes.
+    # abertura): N tópicos são N pausas e N+1 partes.
     if len(pausas) != len(topicos):
         raise SystemExit(
             f"O roteiro tem {len(topicos)} tópico(s) e a narração recebeu "
@@ -419,7 +420,7 @@ def planejar_partes(
     cor = ident.DESTAQUES[0]  # uma cor por canal, estável em todo o vídeo
     rubrica = RUBRICAS.get(cfg.publico, RUBRICAS["brasil"])
 
-    # Os três painéis de pauta são desenhados duas vezes: a primeira mede, a
+    # Os painéis de pauta são desenhados duas vezes: a primeira mede, a
     # segunda iguala a altura de todos. Painel de altura variável faz a troca
     # saltar, porque a âncora é a base.
     def _desenhar_pautas(altura_minima: int) -> list[tuple[Path, int, int]]:

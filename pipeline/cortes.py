@@ -406,15 +406,15 @@ def planejar_cortes(
 # UM CLIPE POR PAUTA (formato longo, 2026-08-25)
 # =============================================================================
 # O planejador de cortes acima continua sendo o do SHORT. No formato longo ele
-# deixou de ser usado: lá o vídeo virou quatro partes fechadas
+# deixou de ser usado: lá o vídeo virou partes fechadas
 # (montagem_longa.py) e a pergunta mudou de "em que segundo cada clipe entra"
-# para "qual clipe é o da pauta 1, qual é o da 2 e qual é o da 3".
+# para "qual clipe é o da pauta 1, qual é o da 2, e assim por diante".
 #
 # O usuário foi explícito: "para cada pauta, é obrigatório o vídeo. Um mesmo
 # vídeo não pode servir para duas pautas." Por citação isso nunca teve garantia
 # — o modelo casava o clipe com o trecho e o mesmo arquivo atravessava duas
 # pautas —, então a atribuição virou um problema de PAREAMENTO, com o resultado
-# conferido em código: três pautas, três arquivos, todos diferentes.
+# conferido em código: uma pauta, um arquivo, todos diferentes.
 
 ESQUEMA_ATRIBUICAO = {
     "name": "clipes_por_pauta",

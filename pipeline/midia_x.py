@@ -36,7 +36,7 @@ from pathlib import Path
 import requests
 from openai import OpenAI
 
-from .config import AVISO_DADOS_EXTERNOS, Config
+from .config import AVISO_DADOS_EXTERNOS, Config, clipe_cabe, faixa_de_clipe
 from .edicao import duracao_audio
 from .x_client import obter_bearer
 
@@ -221,32 +221,39 @@ def baixar_midias_posts(
         }
 
     brutos = [m for m in midias if m.get("type") in ("video", "animated_gif")]
-    # TETO DE DURAÇÃO DO CLIPE NO SHORT (2026-08-28, pedido do usuário: "só
-    # escolha vídeos que tenham até 30 segundos no máximo"). A coleta já
-    # descartou o POST cujo menor clipe passa do teto (x_client), mas um post
-    # aprovado pode trazer os dois — o corte de 20s e a íntegra de 6 minutos —,
-    # e é aqui que a íntegra fica de fora. Ganho duplo: ela não ocupa vaga no
-    # pool e não gasta banda, porque o corte acontece ANTES do download.
+    # FAIXA DE DURAÇÃO DO CLIPE, uma por formato (`config.faixa_de_clipe`): 15
+    # a 30s no Short, 30 a 90s no longo. A coleta já descartou o POST que não
+    # trazia nenhum clipe na faixa (x_client), mas um post aprovado pode trazer
+    # os dois — o corte de 20s e a íntegra de 6 minutos —, e é aqui que a
+    # íntegra fica de fora. Ganho duplo: ela não ocupa vaga no pool e não gasta
+    # banda, porque o corte acontece ANTES do download.
     #
-    # O formato longo não tem teto: lá o clipe ocupa uma parte inteira do vídeo
-    # e a montagem continua repetindo em loop, então clipe comprido é ganho.
-    if cfg.formato == "curto":
-        teto_ms = float(cfg.curto_max_dur_clipe_s) * 1000.0
-        cabem = [
-            m for m in brutos
-            # Duração desconhecida (o X não a informa para GIF animado) não
-            # veta: sem medida não há teto a aplicar, e vetar por falta de dado
-            # jogaria fora material bom.
-            if not isinstance(m.get("duration_ms"), (int, float))
-            or float(m["duration_ms"]) <= teto_ms
-        ]
-        if len(cabem) < len(brutos):
-            print(
-                f"[midia-x] {len(brutos) - len(cabem)} clipe(s) acima do teto "
-                f"de {cfg.curto_max_dur_clipe_s}s do Short fora do pool "
-                f"(o Short não repete clipe, então só entra o que cabe inteiro)"
-            )
-        brutos = cabem
+    # VALE NOS DOIS FORMATOS desde 2026-09-02 (pedido do usuário). Até então só
+    # o Short tinha teto e o longo baixava clipe de qualquer tamanho; agora o
+    # longo tem faixa própria, mais alta, porque lá cada clipe ocupa um capítulo
+    # inteiro — clipe de 12s não o sustenta e clipe de 6 minutos entra no pool
+    # sem que o vídeo mostre nem um sexto dele.
+    piso, teto = faixa_de_clipe(cfg)
+    cabem = [
+        m for m in brutos
+        # Duração desconhecida (o X não a informa para GIF animado) não veta:
+        # sem medida não há faixa a aplicar, e vetar por falta de dado jogaria
+        # fora material bom — ver `clipe_cabe`.
+        if clipe_cabe(
+            float(m["duration_ms"]) / 1000.0
+            if isinstance(m.get("duration_ms"), (int, float))
+            else None,
+            (piso, teto),
+        )
+    ]
+    if len(cabem) < len(brutos):
+        print(
+            f"[midia-x] {len(brutos) - len(cabem)} clipe(s) fora da faixa de "
+            f"{piso:.0f}-{teto:.0f}s do formato {cfg.formato} fora do pool "
+            "(a montagem não repete clipe, então só entra o que cabe inteiro "
+            "e dá material para a parte que vai preencher)"
+        )
+    brutos = cabem
     if not brutos:
         print("[midia-x] Nenhum clipe de vídeo anexado nos posts consultados")
 

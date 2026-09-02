@@ -208,6 +208,47 @@ CURTO_VELOCIDADE_MAX = 1.15
 DUR_MINIMA_TECNICA_S = 1
 
 
+def faixa_de_clipe(cfg: "Config") -> tuple[float, float]:
+    """(piso, teto) de duração do clipe da pauta, em segundos, para o formato.
+
+    UMA FAIXA POR FORMATO (2026-09-02, pedido do usuário): 15 a 30s no Short,
+    30 a 90s no longo. É o ÚNICO lugar em que essa regra é lida — coleta
+    (`x_client._filtrar_posts`), inventário de material da trend
+    (`x_client._montar_trends`) e download (`midia_x`) chamam esta função em vez
+    de comparar campos do Config, para não haver como as pontas divergirem.
+
+    Antes disto (2026-08-28 a 2026-09-01) existia só o teto, e só no Short: o
+    longo devolvia `None` e aceitava clipe de qualquer tamanho. O piso é o que
+    mudou a natureza da regra — ela deixou de ser "não desperdice material" e
+    passou a ser CURADORIA: no Short um clipe de 6s virava um Short de 5s, e no
+    longo um clipe de 12s virava um capítulo que não sustenta uma pauta.
+
+    A comparação é feita contra a duração CHEIA do clipe informada pela X API,
+    que é o único número disponível na coleta (o aproveitável, `segundos_uteis`,
+    só existe depois do download e da visão). Ou seja: o piso é medido no
+    material bruto e um clipe de 16s com 4s de busto falante passa por ele.
+    Apertar o piso para o trecho útil exigiria baixar tudo antes de filtrar, que
+    é o custo que este corte existe para evitar.
+    """
+    if cfg.formato == "curto":
+        return float(cfg.curto_min_dur_clipe_s), float(cfg.curto_max_dur_clipe_s)
+    return float(cfg.longo_min_dur_clipe_s), float(cfg.longo_max_dur_clipe_s)
+
+
+def clipe_cabe(dur_s: float | None, faixa: tuple[float, float]) -> bool:
+    """O clipe cabe na faixa do formato?
+
+    Duração DESCONHECIDA (None) passa: o X não informa `duration_ms` para GIF
+    animado, e vetar por falta de dado jogaria fora material bom. É a mesma
+    escolha que o teto sozinho já fazia desde 2026-08-28 — o piso não a muda,
+    porque a ignorância continua sendo nossa e não do material.
+    """
+    if dur_s is None:
+        return True
+    piso, teto = faixa
+    return piso <= float(dur_s) <= teto
+
+
 def alvo_pelo_material(cfg: "Config", segundos_video: float | None) -> int:
     """Duração-alvo do roteiro dada a metragem da pauta, em segundos.
 
@@ -335,8 +376,18 @@ LONGO_MAX_S = 150  # teto duro pedido para o formato
 LONGO_DURACAO_PADRAO = 135  # teto de trabalho (LONG_DURACAO no .env)
 LONGO_LARGURA = 1920
 LONGO_ALTURA = 1080
-LONGO_MAX_CLIPES = 8  # clipes do X por vídeo (3 seguram mal 2 minutos de tela)
-LONGO_MAX_POSTS_MIDIA = 16  # posts da trend consultados p/ achar esses clipes
+# Pool de clipes BAIXADOS por vídeo, de onde a auditoria tira os
+# LONGO_MIN_CLIPES_APROVADOS que a montagem exige. A folga é o que absorve a
+# reprovação: era 8 para 3 pautas (~2,7 clipes baixados por pauta), e subiu para
+# 10 quando as pautas foram a 4 (2026-09-02), para manter a mesma folga POR
+# PAUTA. Sem isso, a quarta pauta seria a que fica sem clipe e aborta o vídeo —
+# ainda mais agora que a faixa de 30-90s estreitou o que entra no pool.
+LONGO_MAX_CLIPES = 10
+# Posts da trend consultados p/ achar esses clipes. Subiu de 16 para 20 pelo
+# mesmo motivo e é o único item da mudança que custa: leitura da X API a ~US$
+# 0,005/post, 4 posts a mais por vídeo longo — ~US$ 0,02 por execução, 3x por
+# semana em 2 canais, ~US$ 0,5/mês.
+LONGO_MAX_POSTS_MIDIA = 20
 # CARTELAS FORA DO FORMATO LONGO (2026-08-25, desenho do usuário). A cartela é
 # uma FOTO que toma o quadro inteiro no meio de uma pauta — ou seja, um pedaço
 # da pauta em que o vídeo daquela pauta não está na tela. O desenho é explícito:
@@ -354,8 +405,8 @@ LONGO_VELOCIDADE = 1.0
 LONGO_PAUSA_PAUTA = 0.7
 # ABERTURA E PAUTAS: FAIXA DURA DE DURAÇÃO (2026-08-26).
 #
-# A primeira das quatro partes é a PAUTA FALADA mais a contextualização geral, e
-# o desenho do usuário lhe dá ~10 segundos. Só que ela não tem duração PRÓPRIA:
+# A primeira parte é a PAUTA FALADA mais a contextualização geral. Só que ela
+# não tem duração PRÓPRIA:
 # a borda dela é a `citacao` do tópico 1, e TUDO que estiver antes dessa citação
 # vira abertura. Enquanto o único requisito da citação foi "existir literalmente
 # e em ordem crescente", ela podia pousar no meio do bloco do próprio tópico 1 —
@@ -372,8 +423,14 @@ LONGO_PAUSA_PAUTA = 0.7
 # Daqui em diante mede. O teto tem 60% de folga sobre o alvo para absorver a
 # variação de ritmo do TTS sem reprovar roteiro bom; o que ele barra é a ordem
 # de grandeza errada, não o segundo a mais.
-LONGO_ABERTURA_S = 10.0  # alvo do desenho
-LONGO_ABERTURA_MAX_S = 16.0  # teto DURO, medido no áudio final
+# O alvo era 10s enquanto a abertura anunciava TRÊS pautas (~6s de pauta falada
+# + ~4s de contextualização). Com a quarta pauta (2026-09-02) há um título a
+# mais para dizer em voz alta e uma linha a mais no painel de índice, então o
+# alvo e o teto sobem os ~2s desse item — o teto mantendo os mesmos ~60% de
+# folga sobre o alvo. Não subir seria pedir quatro títulos no orçamento de
+# palavras de três, e o que cederia é a contextualização geral.
+LONGO_ABERTURA_S = 12.0  # alvo do desenho
+LONGO_ABERTURA_MAX_S = 19.0  # teto DURO, medido no áudio final
 # PISO DE CADA PAUTA: REMOVIDO em 2026-09-01, no mesmo pedido que tirou os
 # outros. Era LONGO_PAUTA_MIN_S=20.0, medido no áudio final, e abortava.
 #
@@ -382,11 +439,14 @@ LONGO_ABERTURA_MAX_S = 16.0  # teto DURO, medido no áudio final
 # clipe de 14s, não uma distribuição ruim do texto. O que o piso protegia — a
 # manchete da pauta aparecendo depois de a história ter sido contada — deixa de
 # ser risco quando o texto da pauta é encomendado do tamanho do clipe dela.
-# Piso de clipes APROVADOS na auditoria para o formato longo: cada uma das três
+# Piso de clipes APROVADOS na auditoria para o formato longo: cada uma das
 # pautas é obrigada a ter o SEU clipe, e nenhum pode servir a duas (desenho do
-# usuário, 2026-08-25) — então três é o piso ARITMÉTICO da montagem, não uma
-# preferência. Abaixo disso a candidata sai da disputa (fallback de tema).
-LONGO_MIN_CLIPES_APROVADOS = 3
+# usuário, 2026-08-25) — então o piso é ARITMÉTICO, é o próprio número de
+# pautas, e não uma preferência. Abaixo disso a candidata sai da disputa
+# (fallback de tema). Deriva de LONGO_NUM_TRENDS para os dois não divergirem:
+# em 2026-09-02 as pautas foram de 3 para 4 e um número solto aqui teria
+# deixado a quarta pauta sem clipe obrigatório.
+LONGO_MIN_CLIPES_APROVADOS = 4
 # Posts com vídeo que UMA candidata precisa ter para disputar o formato longo.
 #
 # Era LONGO_MIN_CLIPES_APROVADOS + 1 = 4, exigindo que um mesmo acontecimento
@@ -394,14 +454,23 @@ LONGO_MIN_CLIPES_APROVADOS = 3
 # coleta, as 10 candidatas foram barradas — o vídeo do X se espalha por muitos
 # assuntos e quase nunca se concentra num só.
 #
-# Agora o longo monta o vídeo com TRÊS TRENDS (ideia do usuário: "em vez de
-# escolher uma trend com 3 vídeos, escolha 3 trends"), então cada uma só precisa
-# trazer o próprio clipe. O piso de aprovados continua sendo
-# LONGO_MIN_CLIPES_APROVADOS, agora somando as três.
+# Agora o longo monta o vídeo com uma TREND POR PAUTA (ideia do usuário: "em vez
+# de escolher uma trend com 3 vídeos, escolha 3 trends"), então cada uma só
+# precisa trazer o próprio clipe. O piso de aprovados continua sendo
+# LONGO_MIN_CLIPES_APROVADOS, agora somando todas.
 LONGO_MIN_POSTS_VIDEO = 1
-# Quantos acontecimentos DIFERENTES o vídeo longo cobre. Casa com
-# LONGO_MIN_CLIPES_APROVADOS=3: um clipe aprovado por assunto.
-LONGO_NUM_TRENDS = 3
+# Quantos acontecimentos DIFERENTES o vídeo longo cobre — é o número de PAUTAS,
+# de tópicos do roteiro, de manchetes na tela e de clipes distintos, todos ao
+# mesmo tempo. Subiu de 3 para 4 em 2026-09-02, a pedido do usuário.
+#
+# É O ÚNICO NÚMERO A MEXER: tudo daqui para a frente é parametrizado nele.
+# `escritor.TOPICOS_MAX` o copia, `manchetes.planejar_partes` e
+# `cortes.atribuir_clipes` contam `len(topicos)`, e a montagem recebe uma parte
+# a mais sem saber que mudou (`montagem_longa`). O que NÃO é automático e subiu
+# junto: LONGO_MIN_CLIPES_APROVADOS (piso aritmético), LONGO_MAX_CLIPES e
+# LONGO_MAX_POSTS_MIDIA (o pool precisa da mesma folga por pauta que tinha), e
+# a ABERTURA (mais um título a anunciar em voz alta — LONGO_ABERTURA_S).
+LONGO_NUM_TRENDS = 4
 
 # O curto NÃO tem portão de quantidade. Um exigindo 2 posts com clipe foi
 # testado e removido no mesmo dia (2026-08-17): ele estreitava a disputa — numa
@@ -765,22 +834,34 @@ class Config:
     # só teria como resultado abortar o vídeo.
     pool_extra_clipes: int = 3
     max_fotos: int = 4  # fotos dos posts baixadas para as cartelas (cartelas.py)
-    # TETO DE DURAÇÃO DO CLIPE, em segundos, SÓ NO SHORT (2026-08-28, pedido do
-    # usuário: "para vídeos curtos, só escolha vídeos que tenham até 30
-    # segundos no máximo"). Post cujo menor clipe passa disto é descartado
-    # ainda na coleta, e clipe acima do teto não entra no pool nem na conta de
-    # material da trend.
+    # FAIXA DE DURAÇÃO DO CLIPE, em segundos, UMA POR FORMATO (2026-09-02,
+    # pedido do usuário: "piso de 15 segundos e teto de 30 para os clipes
+    # selecionados do X para os shorts; para vídeos longos, no mínimo 30s e no
+    # máximo 90s"). Post que não traz NENHUM clipe dentro da faixa do formato é
+    # descartado ainda na coleta, e clipe fora dela não entra no pool nem na
+    # conta de material da trend.
     #
-    # Ele existe por causa do fim do loop na montagem, no mesmo pedido: sem
+    # O TETO existe desde 2026-08-28, por causa do fim do loop na montagem: sem
     # repetir clipe, o material é que define o tamanho do vídeo, e clipe de
     # quatro minutos não é material melhor que um de 25 segundos — é um clipe
-    # do qual só se usaria o começo, escolhido às cegas. Com o teto, o pool do
-    # Short é feito de clipes que o vídeo consegue mostrar por inteiro.
+    # do qual só se usaria o começo, escolhido às cegas. Com o teto, o pool é
+    # feito de clipes que o vídeo consegue mostrar por inteiro.
     #
-    # O formato LONGO não tem teto (o valor fica aqui, mas `_teto_de_clipe` só
-    # o aplica no curto): lá cada pauta ocupa uma parte inteira do vídeo, o
-    # loop continua valendo e clipe comprido é ganho, não estorvo.
+    # O PISO é a contrapartida, e chegou junto com a faixa do longo. Ele NÃO é
+    # o piso de duração de VÍDEO que saiu em 2026-09-01 (aquele media o produto
+    # final e abortava execução já paga; ver o bloco de `alvo_pelo_material`).
+    # Este mede o INSUMO e age na COLETA, antes de qualquer gasto: é um critério
+    # de curadoria de material, não uma cobrança sobre o roteiro. O efeito
+    # colateral aceito é que o vídeo herda o piso do material — um Short nasce
+    # de pelo menos 15s de clipe, e cada pauta do longo, de pelo menos 30s.
+    #
+    # O formato LONGO tem faixa PRÓPRIA e mais alta porque lá cada pauta ocupa
+    # uma parte inteira do vídeo: clipe de 12s não sustenta um capítulo, e clipe
+    # de 6 minutos entra inteiro no pool sem que o vídeo mostre nem um sexto.
+    curto_min_dur_clipe_s: int = 15
     curto_max_dur_clipe_s: int = 30
+    longo_min_dur_clipe_s: int = 30
+    longo_max_dur_clipe_s: int = 90
     # Imagens que tomam o quadro pelo deslize do carrossel, por vídeo.
     # Caiu de 2 para 1 em 2026-08-09, junto com o Short de 25 segundos: cada
     # imagem tira ~4s de clipe da tela, e duas deixariam a maior parte do Short
@@ -879,7 +960,10 @@ def carregar_config(exige_lista: bool = True) -> Config:
         x_list_id=(os.getenv("X_LIST_ID", "") or "").strip(),
         x_curtidos=os.getenv("X_CURTIDOS", "1").strip() not in ("0", "false", "False"),
         x_curtidos_min=int(os.getenv("X_CURTIDOS_MIN", "5")),
+        curto_min_dur_clipe_s=int(os.getenv("CURTO_MIN_DUR_CLIPE", "15")),
         curto_max_dur_clipe_s=int(os.getenv("CURTO_MAX_DUR_CLIPE", "30")),
+        longo_min_dur_clipe_s=int(os.getenv("LONG_MIN_DUR_CLIPE", "30")),
+        longo_max_dur_clipe_s=int(os.getenv("LONG_MAX_DUR_CLIPE", "90")),
         x_oauth_client_id=(os.getenv("X_OAUTH_CLIENT_ID", "") or "").strip(),
         x_oauth_client_secret=(os.getenv("X_OAUTH_CLIENT_SECRET", "") or "").strip(),
         x_oauth_refresh_token=(os.getenv("X_OAUTH_REFRESH_TOKEN", "") or "").strip(),
@@ -979,14 +1063,37 @@ def carregar_config(exige_lista: bool = True) -> Config:
             f"{CURTO_VELOCIDADE_MAX} (1.0 = velocidade normal; base do canal: "
             f"{CURTO_VELOCIDADE}; recebido: {cfg.velocidade})."
         )
-    # Teto de clipe do Short. O limite de baixo deixou de ser o piso duro do
-    # formato (removido em 2026-08-28) e passou a ser o mesmo limite técnico do
-    # alvo: um teto abaixo disso descartaria todo clipe aproveitável.
-    if not DUR_MINIMA_TECNICA_S <= cfg.curto_max_dur_clipe_s <= 600:
-        raise SystemExit(
-            f"CURTO_MAX_DUR_CLIPE deve estar entre {DUR_MINIMA_TECNICA_S} e "
-            f"600 segundos (recebido: {cfg.curto_max_dur_clipe_s})."
-        )
+    # FAIXA DE CLIPE DOS DOIS FORMATOS. O que se confere aqui é que ela seja
+    # uma faixa de verdade: piso não-negativo, teto acima do limite técnico e
+    # piso abaixo do teto. Faixa invertida (piso > teto) não descartaria "quase
+    # tudo" — descartaria TUDO, e a execução morreria lá na frente sem material
+    # dizendo "nenhuma das duas fontes devolveu post com clipe".
+    for nome_min, nome_max, piso, teto in (
+        (
+            "CURTO_MIN_DUR_CLIPE",
+            "CURTO_MAX_DUR_CLIPE",
+            cfg.curto_min_dur_clipe_s,
+            cfg.curto_max_dur_clipe_s,
+        ),
+        (
+            "LONG_MIN_DUR_CLIPE",
+            "LONG_MAX_DUR_CLIPE",
+            cfg.longo_min_dur_clipe_s,
+            cfg.longo_max_dur_clipe_s,
+        ),
+    ):
+        if piso < 0:
+            raise SystemExit(f"{nome_min} não pode ser negativo (recebido: {piso}).")
+        if not DUR_MINIMA_TECNICA_S <= teto <= 600:
+            raise SystemExit(
+                f"{nome_max} deve estar entre {DUR_MINIMA_TECNICA_S} e 600 "
+                f"segundos (recebido: {teto})."
+            )
+        if piso > teto:
+            raise SystemExit(
+                f"{nome_min} ({piso}s) não pode passar de {nome_max} ({teto}s) "
+                "— nenhum clipe caberia na faixa e a coleta voltaria vazia."
+            )
     cfg.output_dir.mkdir(exist_ok=True)
     return cfg
 
