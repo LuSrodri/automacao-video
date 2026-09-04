@@ -140,7 +140,7 @@ from urllib.parse import urlparse
 
 from openai import OpenAI
 
-from .apresentadora import PALAVRAS_POR_SEGUNDO_WAN
+from .influencer import PALAVRAS_POR_SEGUNDO_WAN
 from .apuracao import resumo_para_prompt as resumo_da_apuracao
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import (
@@ -185,7 +185,7 @@ def ritmo_da_voz(cfg: Config) -> float:
     OS DOIS FORMATOS DEIXARAM DE TER A MESMA VOZ em 2026-09-03. O longo segue
     narrado pela ElevenLabs, e lá a conta é a de sempre: a média medida vezes a
     velocidade em que o MP3 é tocado. O Short passou a ser falado pela
-    APRESENTADORA que o Wan gera, e ela fala mais devagar — 2,00 palavras/s
+    INFLUENCER que o Wan gera, e ela fala mais devagar — 2,00 palavras/s
     medidas contra as 2,90 da ElevenLabs a 1,05x.
 
     A diferença não é detalhe de conversão: um Short de 25s cai de ~72 para ~50
@@ -193,7 +193,7 @@ def ritmo_da_voz(cfg: Config) -> float:
     tempo, e o modelo de vídeo resolveria o excesso do jeito dele — atropelando
     a fala para caber nos 25 segundos pedidos, que é o único jeito que ele tem.
     A `velocidade` não entra aqui porque no Short não há mais o que acelerar: o
-    áudio está preso aos lábios dela (ver apresentadora.extrair_audio).
+    áudio está preso aos lábios dela (ver influencer.extrair_audio).
     """
     if getattr(cfg, "formato", "curto") == "curto":
         return PALAVRAS_POR_SEGUNDO_WAN
@@ -1375,7 +1375,7 @@ narração precisa se sustentar de olhos fechados: NUNCA escreva "como você vê
 gráfico", "veja a tabela" nem qualquer referência ao que está na tela.
 
 NARRAÇÃO EXPRESSIVA — NÃO use audio tags entre colchetes ([excited], [sighs] e
-afins). Quem narra este formato é uma APRESENTADORA em vídeo, e as tags não
+afins). Quem narra este formato é uma INFLUENCER em vídeo, e as tags não
 existem para ela: seriam apenas descartadas. A entrega é guiada pela ESCRITA —
 frases curtas, verbo forte, reticências para suspense e MAIÚSCULAS para ênfase
 pontual.\
@@ -2412,7 +2412,7 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     a narração acelerada cabe proporcionalmente mais palavras no mesmo tempo de
     tela, e sem isso o vídeo sairia mais curto que a duração pedida — que foi
     exatamente o bug do piso de palavras em 2026-07-16, por outro caminho. No
-    SHORT não há mais velocidade a considerar: quem fala é a apresentadora do
+    SHORT não há mais velocidade a considerar: quem fala é a influencer do
     Wan, o áudio dela não pode ser acelerado sem descolar dos lábios, e o ritmo
     é o dela (PALAVRAS_POR_SEGUNDO_WAN).
 

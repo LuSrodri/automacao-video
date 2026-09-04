@@ -1,7 +1,7 @@
-"""Apresentadora do Short: o vídeo dela, gerado pelo Wan, em chroma key verde.
+"""Influencer do Short: o vídeo dela, gerado pelo Wan, em chroma key verde.
 
 DESENHO (2026-09-03, pedido do usuário). Até aqui o Short era narração da
-ElevenLabs sobre clipe do X. Agora ele tem uma APRESENTADORA no rodapé,
+ElevenLabs sobre clipe do X. Agora ele tem uma INFLUENCER no rodapé,
 recortada por chroma key, e é ELA QUEM FALA: o áudio do Short deixa de ser TTS
 e passa a ser o áudio que o `wan3.0-video-prime` gera junto com a imagem dela.
 A ElevenLabs continua narrando o FORMATO LONGO, que não mudou.
@@ -43,9 +43,9 @@ from .config import Config
 RAIZ = Path(__file__).resolve().parent.parent
 
 # A FOTO DELA é o primeiro quadro do vídeo gerado — é o que amarra a identidade
-# visual da apresentadora de um Short para o outro. Fundo verde de estúdio, já
+# visual da influencer de um Short para o outro. Fundo verde de estúdio, já
 # quadrada (1254x1254), que é a proporção em que o vídeo é pedido.
-IMAGEM = RAIZ / "apresentadora.png"
+IMAGEM = RAIZ / "influencer.png"
 
 API_BASE = "https://dashscope-intl.aliyuncs.com/api/v1"
 ROTA_GERAR = "/services/aigc/video-generation/video-synthesis"
@@ -72,7 +72,7 @@ PALAVRAS_POR_SEGUNDO_WAN = 2.00
 # medido nos cantos de 4 quadros ao longo dos 25s: (56,175,51) com desvio de
 # 5,6 no canal verde — fundo estável do começo ao fim. A varredura de
 # similaridade × mistura mostrou uma janela larga em que o fundo zera o alpha e
-# a apresentadora fica opaca (255) em todos os pontos de teste; 0,10/0,05 fica
+# a influencer fica opaca (255) em todos os pontos de teste; 0,10/0,05 fica
 # no meio dela, com folga dos dois lados. Acima de 0,15/0,05 o filtro começa a
 # comer a pele dela (alpha 164 no rosto), que era o defeito da 1ª tentativa.
 CHROMA_COR = "0x38AF33"
@@ -86,7 +86,7 @@ CHROMA_MISTURA = 0.05
 # a cor de uma peça de roupa por ela seria péssimo negócio.
 
 # TAMANHO E LUGAR NO QUADRO. A fração é do LADO do quadrado sobre a LARGURA do
-# vídeo: 0,72 de 1080 são 778px, e a apresentadora recortada ocupa ~435px de
+# vídeo: 0,72 de 1080 são 778px, e a influencer recortada ocupa ~435px de
 # largura, com o topo da cabeça em ~61% da altura. Isso a deixa no terço de
 # baixo, abaixo da legenda (centralizada na vertical, estilo "Centro" do
 # legendas.py) e sem cobrir o miolo do clipe.
@@ -127,19 +127,38 @@ def _prompt(texto: str, publico: str) -> str:
     assim que o teste de 2026-09-03 saiu palavra por palavra igual ao roteiro —
     a transcrição do áudio devolveu as 50 palavras do texto, na ordem.
 
+    O REGISTRO É DE INFLUENCER, NÃO DE APRESENTADORA (2026-09-04, pedido do
+    usuário: "deveria ser um pouco mais descontraída"). A primeira versão pedia
+    "apresentadora de um canal de tecnologia" que "fala com energia", e o
+    modelo entregou exatamente isso: postura de telejornal, queixo alto, gesto
+    simétrico. O que se pede agora é o oposto disso em cada eixo — ombros
+    soltos, sorriso que vem e vai, peso do corpo mudando de perna, gesto
+    assimétrico, cabeça inclinando, como quem conta uma novidade para um amigo
+    e não como quem lê um teleprompter. O nome do papel foi trocado junto: a
+    palavra "apresentadora" carrega a formalidade que se está tentando tirar.
+
     O fundo verde é pedido de novo aqui, em vez de confiado à foto: o modelo
     reencena os segundos inteiros, e um fundo que mudasse no meio quebraria o
     chroma key. Pedir "liso, uniforme, sem sombras" é o que segurou o desvio do
-    verde em 5,6 ao longo do vídeo.
+    verde em 5,6 ao longo do vídeo. Nada do que muda o registro dela pode
+    mexer nisso — daí o fundo e a câmera continuarem descritos palavra por
+    palavra como estavam.
     """
     idioma = "inglês americano" if publico == "usa" else "português do Brasil"
     return (
-        "A mesma mulher da imagem de referência, apresentadora de um canal de "
-        "tecnologia, enquadrada da cintura para cima, em pé diante de um fundo "
-        "CHROMA KEY VERDE liso, uniforme e totalmente sem textura, sem sombras "
-        "e sem objetos. Câmera fixa, sem zoom, sem corte e sem movimento de "
-        "câmera. Iluminação de estúdio suave. Ela olha direto para a câmera e "
-        "fala com energia, gesticulando naturalmente com as mãos. Ela fala em "
+        "A mesma mulher da imagem de referência, uma influencer jovem e "
+        "carismática gravando um vídeo casual para as redes sociais dela, "
+        "enquadrada da cintura para cima, diante de um fundo CHROMA KEY VERDE "
+        "liso, uniforme e totalmente sem textura, sem sombras e sem objetos. "
+        "Câmera fixa, sem zoom, sem corte e sem movimento de câmera. "
+        "Iluminação de estúdio suave. O clima é DESCONTRAÍDO e espontâneo, "
+        "nada de apresentadora de telejornal: ela fala olhando para a câmera "
+        "como quem conta uma novidade para um amigo, com os ombros soltos e a "
+        "postura relaxada, sorrindo de leve e naturalmente entre as frases, "
+        "levantando as sobrancelhas, inclinando a cabeça de vez em quando e "
+        "gesticulando de um jeito solto e assimétrico com as mãos, mudando o "
+        "peso do corpo de um pé para o outro. Expressão viva e informal, sem "
+        "rigidez e sem gesto ensaiado. Ela fala em "
         f'{idioma}, exatamente estas palavras e nada mais: "{texto}"'
     )
 
@@ -157,14 +176,14 @@ def _cabecalhos(cfg: Config, assincrono: bool) -> dict:
 def _abortar(motivo: str) -> None:
     """Falha de credencial ou de API aborta a execução (diretriz de 2026-07-15).
 
-    A apresentadora não tem plano B: ela É a narração do Short desde
+    A influencer não tem plano B: ela É a narração do Short desde
     2026-09-03. Seguir sem ela publicaria um vídeo mudo.
     """
-    raise SystemExit(f"[apresentadora] {motivo}")
+    raise SystemExit(f"[influencer] {motivo}")
 
 
 def gerar(cfg: Config, texto: str, duracao_s: float, destino: Path) -> Path:
-    """Gera o vídeo da apresentadora falando `texto` em `duracao_s` segundos.
+    """Gera o vídeo da influencer falando `texto` em `duracao_s` segundos.
 
     Devolve o caminho do MP4 (632x632, 30fps, com áudio), pronto para o chroma
     key da montagem. A duração pedida é a duração entregue: o modelo ajusta o
@@ -173,18 +192,18 @@ def gerar(cfg: Config, texto: str, duracao_s: float, destino: Path) -> Path:
     if not cfg.qwen_api_key:
         _abortar(
             "QWEN_API_KEY ausente — sem ela o Short sairia sem voz e sem "
-            "apresentadora."
+            "influencer."
         )
     if not IMAGEM.is_file():
         _abortar(
-            f"Foto da apresentadora ausente ({IMAGEM}) — é ela que fixa a "
+            f"Foto da influencer ausente ({IMAGEM}) — é ela que fixa a "
             "identidade dela de um vídeo para o outro."
         )
 
     dur = int(round(max(DUR_MIN_S, min(DUR_MAX_S, duracao_s))))
     if abs(dur - duracao_s) > 0.6:
         print(
-            f"[apresentadora] aviso: duração pedida de {duracao_s:.1f}s "
+            f"[influencer] aviso: duração pedida de {duracao_s:.1f}s "
             f"ajustada para {dur}s (o modelo aceita {DUR_MIN_S}-{DUR_MAX_S}s "
             "inteiros)."
         )
@@ -220,7 +239,7 @@ def gerar(cfg: Config, texto: str, duracao_s: float, destino: Path) -> Path:
     }
 
     print(
-        f"[apresentadora] Gerando {dur}s de apresentadora com {MODELO} "
+        f"[influencer] Gerando {dur}s de influencer com {MODELO} "
         f"({RESOLUCAO}, {PROPORCAO}, {len(falado.split())} palavras)..."
     )
     try:
@@ -231,7 +250,7 @@ def gerar(cfg: Config, texto: str, duracao_s: float, destino: Path) -> Path:
             timeout=180,
         )
     except requests.RequestException as e:
-        _abortar(f"Falha de rede ao pedir o vídeo da apresentadora: {e}")
+        _abortar(f"Falha de rede ao pedir o vídeo da influencer: {e}")
     if resp.status_code in (401, 403):
         _abortar(
             f"QWEN_API_KEY recusada pelo QwenCloud (HTTP {resp.status_code}): "
@@ -249,7 +268,7 @@ def gerar(cfg: Config, texto: str, duracao_s: float, destino: Path) -> Path:
 
     url = _esperar(cfg, tarefa)
     _baixar(url, destino)
-    print(f"[apresentadora] Vídeo da apresentadora salvo em {destino}")
+    print(f"[influencer] Vídeo da influencer salvo em {destino}")
     return destino
 
 
@@ -277,7 +296,7 @@ def _esperar(cfg: Config, tarefa: str) -> str:
             if not url:
                 _abortar(f"Tarefa {tarefa} concluída sem video_url.")
             print(
-                f"[apresentadora] Pronta em {time.time() - t0:.0f}s "
+                f"[influencer] Pronta em {time.time() - t0:.0f}s "
                 f"(tarefa {tarefa})."
             )
             return url
@@ -300,12 +319,12 @@ def _baixar(url: str, destino: Path) -> None:
         resp = requests.get(url, timeout=300)
         resp.raise_for_status()
     except requests.RequestException as e:
-        _abortar(f"Falha ao baixar o vídeo da apresentadora: {e}")
+        _abortar(f"Falha ao baixar o vídeo da influencer: {e}")
     destino.parent.mkdir(parents=True, exist_ok=True)
     destino.write_bytes(resp.content)
     tamanho = destino.stat().st_size
     if tamanho < 10_000:
-        _abortar(f"Vídeo da apresentadora veio vazio ({tamanho} bytes).")
+        _abortar(f"Vídeo da influencer veio vazio ({tamanho} bytes).")
 
 
 def extrair_audio(video: Path, destino: Path) -> Path:
@@ -332,10 +351,10 @@ def extrair_audio(video: Path, destino: Path) -> Path:
     proc = subprocess.run(comando, capture_output=True, text=True)
     if proc.returncode != 0 or not destino.is_file():
         _abortar(
-            "ffmpeg não conseguiu separar o áudio da apresentadora: "
+            "ffmpeg não conseguiu separar o áudio da influencer: "
             f"{(proc.stderr or '')[-400:]}"
         )
-    print(f"[apresentadora] Narração (voz dela) em {destino}")
+    print(f"[influencer] Narração (voz dela) em {destino}")
     return destino
 
 

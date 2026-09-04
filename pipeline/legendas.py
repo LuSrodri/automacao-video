@@ -17,6 +17,7 @@ da fonte, as margens laterais e a altura da faixa inferior. Entre 2026-08-09 e
 sumiu, e o quadro voltou a ser a área útil — como era antes das molduras.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -30,6 +31,19 @@ MIN_EXIBICAO = 0.35  # segundos
 # sem perder a força de manchete (que vem da largura e do peso, não da altura).
 # Abaixo de ~88 a fonte começa a parecer distorcida em vez de condensada.
 ESCALA_Y = 92
+
+# TAMANHO DA PALAVRA como fração da largura do quadro. Os dois primeiros são os
+# de sempre — legenda de manchete, o elemento de leitura principal de um Short
+# assistido no mudo.
+FRAC_CENTRO = 0.165
+FRAC_INFERIOR = 0.135
+# COM A INFLUENCER NA TELA é outra conta (2026-09-04, pedido do usuário: "a
+# legenda tem que ficar centralizada e bem menor"). Não é preferência de
+# tipografia, é falta de espaço: ela ocupa o terço de baixo do quadro, e a
+# palavra de manchete no corpo antigo (178px em 1080) passava por cima do rosto
+# dela. Menor também porque a legenda deixou de ser o único elemento de leitura
+# do vídeo — quem carrega a atenção agora é ela.
+FRAC_CENTRO_INFLUENCER = float(os.getenv("LEGENDA_FRAC_INFLUENCER", "0.085"))
 
 # Animação de entrada (carimbo editorial): a palavra surge 12% maior e ASSENTA
 # no tamanho final em 100 ms, com um fade rápido — entrada de manchete, sem o
@@ -169,6 +183,7 @@ def gerar_legendas(
     altura: int,
     destino: Path,
     intervalos_imagens: list[tuple[float, float]] | None = None,
+    com_influencer: bool = False,
 ) -> Path:
     """Gera o .ass das legendas sincronizadas e devolve seu caminho.
 
@@ -186,8 +201,10 @@ def gerar_legendas(
     # leitura principal do vídeo — palavra grande segura a atenção no mudo.
     # Estes valores NÃO mudaram em 2026-08-04: o pedido foi manter o tamanho da
     # tipografia e baixar só a altura, que é o ScaleY (ESCALA_Y) do estilo.
-    tam_centro = max(48, round(area_l * 0.165))
-    tam_inferior = max(36, round(area_l * 0.135))
+    tam_centro = max(48, round(area_l * FRAC_CENTRO))
+    tam_inferior = max(36, round(area_l * FRAC_INFERIOR))
+    if com_influencer:
+        tam_centro = max(28, round(area_l * FRAC_CENTRO_INFLUENCER))
     # Margens laterais: as bordas da área útil mais o respiro de sempre (40px).
     margem_l = area_x + 40
     margem_r = largura - (area_x + area_l) + 40
@@ -208,7 +225,16 @@ def gerar_legendas(
 
     linhas = []
     for ev in eventos:
-        central = not _tem_imagem(ev["inicio"], ev["fim"], intervalos)
+        # COM A INFLUENCER, SEMPRE CENTRALIZADA. A escolha por
+        # `intervalos_imagens` só fazia sentido quando o rodapé estava livre: a
+        # legenda descia para lá enquanto houvesse clipe na tela. Só que o
+        # clipe cobre 100% do Short (`intervalos_imagens` devolve "o vídeo
+        # todo"), então na prática TODA legenda ia para o rodapé — que é
+        # exatamente onde a influencer passou a ficar. Foi o que saiu nos dois
+        # primeiros vídeos publicados, com a palavra em cima do rosto dela.
+        central = com_influencer or not _tem_imagem(
+            ev["inicio"], ev["fim"], intervalos
+        )
         estilo = "Centro" if central else "Inferior"
         palavra = ev["texto"].replace("{", "(").replace("}", ")").upper()
         tam_base = tam_centro if central else tam_inferior

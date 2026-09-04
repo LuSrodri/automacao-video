@@ -87,8 +87,8 @@ Fluxo:
    X e recomeça com a pauta dela (2026-08-29) — só depois de as duas fontes
    falharem é que a execução aborta.
 8. A VOZ DEPENDE DO FORMATO desde 2026-09-03. No SHORT quem fala é a
-   APRESENTADORA: o Wan (wan3.0-video-prime) gera, a partir de
-   apresentadora.png, um vídeo quadrado dela em chroma key verde falando o
+   INFLUENCER: o Wan (wan3.0-video-prime) gera, a partir de
+   influencer.png, um vídeo quadrado dela em chroma key verde falando o
    roteiro, e o áudio que vem junto É a narração — nada de TTS, e nada de
    acelerar ou aparar depois, porque o áudio está preso aos lábios dela. O
    alinhamento, que a ElevenLabs entregava de graça, é reconstruído casando o
@@ -138,8 +138,8 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
   cobre a narração e a montagem encaixa as janelas no que existe
   (`_encaixar_no_material`, edicao.py). O ZOOM INTELIGENTE que transforma clipe
   horizontal em vertical (enquadramento.py) continua valendo.
-  QUEM FALA NO SHORT É A APRESENTADORA (2026-09-03): o vídeo dela, gerado
-  pelo Wan a partir de apresentadora.png, entra recortado por chroma key no
+  QUEM FALA NO SHORT É A INFLUENCER (2026-09-03): o vídeo dela, gerado
+  pelo Wan a partir de influencer.png, entra recortado por chroma key no
   rodapé, e o áudio que vem junto É a narração — a ElevenLabs ficou só com o
   formato longo. Com isso a DURAÇÃO deixou de ser fechada em camadas de
   correção (velocidade + reescrita, que mediam o resultado do TTS depois do
@@ -224,8 +224,8 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-from pipeline.apresentadora import extrair_audio as extrair_audio_apresentadora
-from pipeline.apresentadora import gerar as gerar_apresentadora
+from pipeline.influencer import extrair_audio as extrair_audio_influencer
+from pipeline.influencer import gerar as gerar_influencer
 from pipeline.audio import alinhar_por_transcricao, gerar_narracao
 from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
@@ -364,14 +364,14 @@ def main() -> None:
 
     # A CHAVE DO WAN É CONFERIDA AQUI, e não no `carregar_config`, porque só
     # agora se sabe o formato: ela é obrigatória no SHORT (é a voz e a imagem
-    # da apresentadora) e desnecessária no LONGO, que segue com a ElevenLabs.
+    # da influencer) e desnecessária no LONGO, que segue com a ElevenLabs.
     # Conferir agora é o que faz a falta dela custar zero — a alternativa era
     # descobrir na hora de narrar, com a coleta do X e o roteiro do GPT já
     # pagos (diretriz de fail-fast de 2026-07-15).
     if not args.long_take and not cfg.qwen_api_key:
         raise SystemExit(
             "QWEN_API_KEY ausente no .env — desde 2026-09-03 quem narra o "
-            "Short é a apresentadora gerada pelo Wan, e sem a chave o vídeo "
+            "Short é a influencer gerada pelo Wan, e sem a chave o vídeo "
             "sairia sem voz. (O formato longo, --long-take, não precisa dela.)"
         )
 
@@ -761,7 +761,7 @@ def main() -> None:
     # a duração saía do texto, com ±11% de erro de ritmo, e só depois se
     # descobria se tinha dado certo.
     #
-    # No Short esse problema deixou de existir junto com o TTS. A apresentadora
+    # No Short esse problema deixou de existir junto com o TTS. A influencer
     # do Wan recebe a duração como PARÂMETRO e entrega aquilo — não há erro de
     # ritmo para absorver, nem faixa de velocidade para estourar, nem segunda
     # tentativa a encomendar. O que se paga em troca é a impossibilidade de
@@ -770,7 +770,7 @@ def main() -> None:
     #
     # O formato longo não mudou nada.
     if cfg.formato == "curto":
-        # QUEM NARRA O SHORT É A APRESENTADORA (2026-09-03, pedido do usuário:
+        # QUEM NARRA O SHORT É A INFLUENCER (2026-09-03, pedido do usuário:
         # "será totalmente Wan; ElevenLabs fica para os vídeos longos"). O
         # vídeo dela vem com a fala junto, e é essa fala que vira a narração —
         # não há TTS no caminho do Short.
@@ -787,14 +787,14 @@ def main() -> None:
         #     0,0s → 24,84s dos 25s pedidos, sem cortar nada.
         # Em troca, o orçamento de palavras passou a ser convertido pelo ritmo
         # DELA (escritor.ritmo_da_voz), que é mais lento que o do TTS.
-        video_apresentadora = gerar_apresentadora(
+        video_influencer = gerar_influencer(
             cfg,
             roteiro["texto_video"],
             float(cfg.video_duracao),
-            pasta / "apresentadora.mp4",
+            pasta / "influencer.mp4",
         )
-        narracao = extrair_audio_apresentadora(
-            video_apresentadora, pasta / "narracao.wav"
+        narracao = extrair_audio_influencer(
+            video_influencer, pasta / "narracao.wav"
         )
         # O alinhamento não vem mais de graça com a narração: sem o
         # `with-timestamps` da ElevenLabs, ele é reconstruído casando o roteiro
@@ -805,7 +805,7 @@ def main() -> None:
         )
         dur_narracao = duracao_audio(narracao)
         print(
-            f"[main] Short narrado pela apresentadora: {dur_narracao:.1f}s "
+            f"[main] Short narrado pela influencer: {dur_narracao:.1f}s "
             f"(alvo de {cfg.video_duracao}s)."
         )
     else:
@@ -813,7 +813,7 @@ def main() -> None:
         # velocidade e a reescrita por duração nunca foram deste caminho — o
         # longo narra em 1.0x e o tamanho dele é resolvido antes, pela duração
         # flexível de cada capítulo.
-        video_apresentadora = None
+        video_influencer = None
         narracao, alinhamento = gerar_narracao(
             cfg, roteiro["texto_video"], pasta / "narracao.mp3"
         )
@@ -980,6 +980,7 @@ def main() -> None:
             altura,
             pasta / "legendas.ass",
             intervalos_imagens=intervalos_imagens(sobreposicoes, duracao),
+            com_influencer=video_influencer is not None,
         )
 
         # Cartelas: a foto do post da trend toma a tela inteira pelo deslize, no
@@ -1006,7 +1007,7 @@ def main() -> None:
             cartelas=cartelas,
             publico=cfg.publico,
             formato=cfg.formato,
-            apresentadora=video_apresentadora,
+            influencer=video_influencer,
         )
 
     # CAPÍTULOS (só no formato longo): cada tópico do roteiro trouxe uma citação

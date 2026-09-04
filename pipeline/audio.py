@@ -1,8 +1,8 @@
 """Narração do vídeo com o TTS da ElevenLabs (com timestamps por caractere).
 
 DESDE 2026-09-03 ISTO É O CAMINHO DO FORMATO LONGO. O Short deixou de ser
-narrado pela ElevenLabs: quem fala nele é a apresentadora que o Wan gera
-(pipeline/apresentadora.py), e o áudio vem junto com a imagem dela. O que este
+narrado pela ElevenLabs: quem fala nele é a influencer que o Wan gera
+(pipeline/influencer.py), e o áudio vem junto com a imagem dela. O que este
 módulo ainda faz pelos dois formatos é o ALINHAMENTO — a ponte entre o texto do
 roteiro e o instante em que cada caractere é falado, de que legendas, cortes e
 cartelas dependem. Para o Short ele é reconstruído por transcrição
@@ -253,7 +253,7 @@ def gerar_narracao(cfg: Config, texto: str, destino: Path) -> tuple[Path, dict]:
 #
 # O Short deixou de ter narração da ElevenLabs em 2026-09-03, e com ela foi
 # embora o `with-timestamps` — a fonte de onde saíam os instantes de cada
-# caractere. Quem fala agora é a apresentadora do Wan, e o áudio dela vem sem
+# caractere. Quem fala agora é a influencer do Wan, e o áudio dela vem sem
 # marcação nenhuma.
 #
 # O alinhamento NÃO É OPCIONAL: `legendas._palavras_com_tempos` sincroniza a
@@ -416,7 +416,7 @@ def alinhar_por_transcricao(cfg: Config, audio: Path, texto: str) -> dict:
         except Exception as e:  # noqa: BLE001 — ver o comentário abaixo
             # AQUI NÃO SE ABORTA, e é a única exceção à diretriz de fail-fast
             # de 2026-07-15 neste caminho. A esta altura o vídeo da
-            # apresentadora já foi gerado e PAGO (US$ 1,70), o áudio existe e o
+            # influencer já foi gerado e PAGO (US$ 1,70), o áudio existe e o
             # Short sai inteiro sem isto — só com a legenda repartida por
             # proporção, como era o plano B de sempre. Jogar a execução fora
             # por causa do carimbo de tempo custaria mais do que o defeito.

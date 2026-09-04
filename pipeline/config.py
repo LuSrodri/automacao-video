@@ -808,7 +808,7 @@ class Config:
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
     tts_model: str = "eleven_v3"
-    # Chave do QwenCloud, que gera a APRESENTADORA do Short (2026-09-03). Só o
+    # Chave do QwenCloud, que gera a INFLUENCER do Short (2026-09-03). Só o
     # formato CURTO a usa: é ela que vira a voz e a imagem de quem comenta o
     # clipe. O formato longo segue narrado pela ElevenLabs e não precisa desta
     # chave — por isso ela não entra na lista de variáveis obrigatórias do
@@ -823,7 +823,7 @@ class Config:
     # precisa acompanhar o raciocínio (ver ativar_formato_longo).
     #
     # DESDE 2026-09-03 ISTO SÓ VALE PARA O FORMATO LONGO. Quem fala no Short é
-    # a apresentadora do Wan, e o áudio dela não pode ser acelerado sem
+    # a influencer do Wan, e o áudio dela não pode ser acelerado sem
     # descolar dos lábios — VIDEO_VELOCIDADE deixou de ter efeito lá. O valor
     # continua sendo conferido abaixo porque o env var é o mesmo dos dois
     # formatos e uma faixa de sanidade não custa nada.
