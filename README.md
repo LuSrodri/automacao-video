@@ -204,8 +204,9 @@ enquanto a narração já conta a primeira pauta.
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
+| `WAN_MODELO` | `wan3.0-video` | Modelo de vídeo do QwenCloud. A alternativa é `wan3.0-video-prime`, a variante **acelerada**: mesma interface e mesmos recursos, o **dobro** do preço, e o que se compra é latência (medido: 46s contra 123s no mesmo vídeo de 12s). Num cron não há ninguém esperando |
 | `LEGENDA_FRAC_INFLUENCER` | `0.085` | Tamanho da palavra da legenda como fração da largura do quadro **quando a influencer está em cena**. Os 0,165 de manchete passavam por cima do rosto dela. Só vale no Short |
-| `QWEN_API_KEY` | — | Chave do **QwenCloud** (começa com `sk-ws-`), que gera a **influencer do Short** com o `wan3.0-video-prime`. **Obrigatória no formato curto** desde 2026-09-03 — é a voz e a imagem de quem comenta o clipe, e o `main.py` aborta no começo sem ela. O `--long-take` **não** a usa |
+| `QWEN_API_KEY` | — | Chave do **QwenCloud** (começa com `sk-ws-`), que gera a **influencer do Short** com o `wan3.0-video` (ver `WAN_MODELO`). **Obrigatória no formato curto** desde 2026-09-03 — é a voz e a imagem de quem comenta o clipe, e o `main.py` aborta no começo sem ela. O `--long-take` **não** a usa |
 | `X_LIST_ID` | — | Id da **lista do X**. **Obrigatório**, mas desde 2026-08-28 é o **fallback**: a fonte primária da pauta são as curtidas do usuário |
 | `X_CURTIDOS` | `1` | Liga as **curtidas do usuário** como fonte primária da pauta (`/2/users/:id/liked_tweets`). **Exige o escopo `like.read` no token do X** — sem ele a leitura volta 403, o log avisa e a lista assume. `0` desliga e volta ao comportamento anterior |
 | `X_CURTIDOS_MIN` | `5` | Posts aproveitáveis abaixo dos quais a coleta **cai para a lista**. Desde 2026-08-29 não é mais o único gatilho: qualquer **erro** de leitura das curtidas, e a **auditoria reprovando o material de todas as candidatas**, também levam à lista |
@@ -293,7 +294,7 @@ Entre **2026-08-06 e 2026-08-16** o mesmo arquivo que ia para o YouTube era publ
 
 **Diretriz de 2026-09-03 (pedido do usuário).** O Short passou a ter uma **influencer no rodapé**, recortada por chroma key, comentando o clipe — e ela não é só imagem: **é ela quem fala**. O áudio do Short deixou de ser TTS. A ElevenLabs ficou com o **formato longo**, que não mudou em nada.
 
-**Como o vídeo dela é feito.** `pipeline/influencer.py` manda `influencer.png` (a foto dela em fundo verde de estúdio, 1254x1254) como **primeiro quadro** para o `wan3.0-video-prime` do [QwenCloud](https://www.qwencloud.com), junto de um prompt que descreve a cena e traz a **fala literal** entre aspas. O modelo devolve um MP4 quadrado com a fala junto. A chamada é assíncrona: `POST .../services/aigc/video-generation/video-synthesis` com `X-DashScope-Async: enable` devolve um `task_id`, e `GET .../tasks/{id}` é consultado até `SUCCEEDED`. A URL do vídeo **expira em 24h**, então ele é baixado na hora.
+**Como o vídeo dela é feito.** `pipeline/influencer.py` manda `influencer.png` (a foto dela em fundo verde de estúdio, 1254x1254) como **primeiro quadro** para o `wan3.0-video` do [QwenCloud](https://www.qwencloud.com), junto de um prompt que descreve a cena e traz a **fala literal** entre aspas. O modelo devolve um MP4 quadrado com a fala junto. A chamada é assíncrona: `POST .../services/aigc/video-generation/video-synthesis` com `X-DashScope-Async: enable` devolve um `task_id`, e `GET .../tasks/{id}` é consultado até `SUCCEEDED`. A URL do vídeo **expira em 24h**, então ele é baixado na hora.
 
 | Parâmetro | Valor | Por quê |
 | --- | --- | --- |
@@ -822,7 +823,7 @@ A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de pro
 | X API v2, pay-per-use | **US$ 0,005 por post lido** (teto de 2 mi de leituras/mês) |
 | `gpt-5.6-luna` | **US$ 0,20 / 1 mi de tokens de entrada**, US$ 1,20 / 1 mi de saída |
 | `gpt-image-2`, qualidade `medium`, retrato/paisagem | US$ 0,041 por imagem (era o que as figuras usavam) |
-| `wan3.0-video-prime` (QwenCloud), **480P** | **US$ 0,068 por segundo** de vídeo (720P: US$ 0,14; 1080P: US$ 0,28) — *conferido em 2026-09-03* |
+| `wan3.0-video` (QwenCloud), **480P** | **US$ 0,035 por segundo** de vídeo (720P: US$ 0,07; 1080P: US$ 0,14) — *conferido em 2026-09-03* |
 | `whisper-1` (alinhamento do Short) | US$ 0,006 por minuto de áudio |
 
 | Etapa | Short (antes → agora) | `--long-take` (antes → agora) |
@@ -832,24 +833,24 @@ A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de pro
 | Lookup de mídias (`MAX_POSTS_MIDIA`: 12 / 16 posts) | US$ 0,060 (inalterado) | US$ 0,080 (inalterado) |
 | `gpt-5.6-luna` — tudo somado ¹ | ~US$ 0,044 (inalterado) | ~US$ 0,070 (inalterado) |
 | Figuras geradas (`gpt-image-2`) | US$ 0,041 → **US$ 0** | US$ 0,164 → **US$ 0** |
-| Influencer (`wan3.0-video-prime`, 25s a 480P) ³ | **US$ 1,700** | — (o longo não a usa) |
+| Influencer (`wan3.0-video`, 25s a 480P) ³ | **US$ 0,875** | — (o longo não a usa) |
 | Alinhamento por transcrição (`whisper-1`) | **US$ 0,003** | — |
-| **Total por vídeo** | US$ 1,15 → 0,35 → 0,60 → **US$ 2,30** | US$ 1,46 → 0,55 → **US$ 0,80** |
+| **Total por vídeo** | US$ 1,15 → 0,35 → 0,60 → 2,30 → **US$ 1,48** | US$ 1,46 → 0,55 → **US$ 0,80** |
 | ElevenLabs | ~420 créditos → **0** (a influencer narra) | ~1.700 créditos |
 | Panorama do dia (YouTube Data API) | **US$ 0** — balde próprio de Search Queries | **US$ 0** |
 | Apuração (web search da OpenAI) ² | **~US$ 0,015** | **~US$ 0,015** |
 
-³ **Preço conferido na tabela oficial em 2026-09-03** (qwencloud.com): US$ 0,068 por segundo em 480P. É o preço do `-prime`, a variante **rápida**; o `wan3.0-video` normal custa **US$ 0,035/s**, praticamente a metade — se a velocidade de geração deixar de importar (o teste real fechou em 49s), trocar de modelo é a maior alavanca desta seção, valendo ~US$ 0,88 por Short.
+³ **Preços conferidos na tabela oficial em 2026-09-03** (qwencloud.com): `wan3.0-video` a **US$ 0,035/s** em 480P e `wan3.0-video-prime` a **US$ 0,068/s**. O `-prime` rodou de 03/09 a 04/09 e foi **trocado pelo normal a pedido do usuário** — a diferença entre os dois é latência, não recurso nem qualidade. **Medido nos dois, mesmo texto e mesma duração (12s):** o `-prime` entrega em **46s** e o normal em **123s**, 2,7x mais lento, muito dentro do teto de 900s do `ESPERA_MAX_S`; sobre uma execução de cron de ~7 minutos, é ~1,3 min a mais. Conferido também que a troca não custou qualidade: verde em (48-59, 171-174, 44-49), o chroma key calibrado ainda dá **fundo em alpha 0 e ela em 255**, e a fala continua literal preenchendo 0,0s→11,88s dos 12s. *Atenção ao voltar aqui:* o US$ 0,035 é um preço **com 30% de desconto** anunciado na página; sem ele seriam US$ 0,05/s, ainda abaixo do `-prime`.
 
 ² **Preço conferido na tabela oficial em 2026-08-30**: US$ 10,00 por 1.000 chamadas de web search (US$ 0,01 cada), mais os **tokens de conteúdo da busca** cobrados na tarifa do modelo — no `gpt-5.6-luna` (US$ 0,20/M de entrada) isso põe o total na casa de **US$ 0,015 por execução**. Sobre o volume mensal, algo entre **US$ 2 e 4/mês**, contra os ~US$ 131 atuais. É a etapa mais barata que o pipeline tem depois do panorama, e não muda a conclusão abaixo: a conta continua sendo do X.
 
 ¹ Estimado de baixo para cima a partir do código, não medido no painel da OpenAI: ~118 mil tokens de entrada e ~17 mil de saída por Short (~169 mil / ~30 mil no longo). O grosso da entrada são as **imagens de visão** — 6 clipes × 8 frames + 4 fotos + a capa de cada campeão do dossiê + 3 quadros da capa, todas reduzidas a 768px (`LADO_VISAO`) — mais as instruções, que vão repetidas em cada chamada de laudo. **É o número menos firme desta tabela; confira contra o painel da OpenAI antes de contar com ele.**
 
-**A conta do Short virou da INFLUENCER (2026-09-03).** Ela sozinha é **US$ 1,70 dos US$ 2,30** de um Short — **74%** —, contra US$ 0,56 do X (24%) e ~US$ 0,04 do Luna (2%). A frase que ficava aqui ("a conta é do X, não da OpenAI") valia até 02/09 e **deixou de valer**: com `X_MAX_POSTS=100` a leitura de posts era ~93% do custo de um Short de US$ 0,60, e agora é o segundo item. No `--long-take` nada mudou — lá a conta continua sendo do X.
+**A conta do Short virou da INFLUENCER (2026-09-03).** Ela sozinha é **US$ 0,875 dos US$ 1,48** de um Short — **59%** —, contra US$ 0,56 do X (38%) e ~US$ 0,04 do Luna (3%). Era 74% enquanto o `-prime` rodava; a troca pelo modelo normal em 04/09 cortou o item pela metade sem tirá-lo do primeiro lugar. A frase que ficava aqui ("a conta é do X, não da OpenAI") valia até 02/09 e **deixou de valer**: com `X_MAX_POSTS=100` a leitura de posts era ~93% do custo de um Short de US$ 0,60, e agora é o segundo item. No `--long-take` nada mudou — lá a conta continua sendo do X.
 
-Sobre o volume atual (**2 Shorts por dia em cada canal**, ~122 Shorts/mês desde 2026-09-02), a influencer acrescenta **~US$ 207/mês**. Em compensação, o Short parou de consumir TTS: são ~51k créditos de ElevenLabs/mês liberados, e o plano passa a servir só aos ~26 vídeos longos.
+Sobre o volume atual (**2 Shorts por dia em cada canal**, ~122 Shorts/mês desde 2026-09-02), a influencer acrescenta **~US$ 107/mês** (eram ~US$ 207 com o `-prime`). Em compensação, o Short parou de consumir TTS: são ~51k créditos de ElevenLabs/mês liberados, e o plano passa a servir só aos ~26 vídeos longos.
 
-**As alavancas do Short, em ordem de tamanho, agora são outras.** (1) Trocar `wan3.0-video-prime` por `wan3.0-video` corta ~US$ 0,88 por Short (~US$ 107/mês) ao preço de gerar mais devagar. (2) `VIDEO_DURACAO` virou uma alavanca **linear e direta**: cada segundo a menos no Short economiza US$ 0,068, e 20s no lugar de 25s valem ~US$ 0,34 por vídeo. (3) A cadência dos crons. (4) `X_MAX_POSTS`, que era a primeira e caiu para quarta.
+**As alavancas do Short, em ordem de tamanho, agora são outras.** A maior delas **já foi puxada** em 04/09: trocar o `-prime` pelo `wan3.0-video` normal cortou ~US$ 0,82 por Short (~US$ 100/mês) ao preço de gerar 2,7x mais devagar. Sobraram, em ordem: (1) `VIDEO_DURACAO`, que virou uma alavanca **linear e direta** — cada segundo a menos no Short economiza US$ 0,035, e 20s no lugar de 25s valem ~US$ 0,18 por vídeo; (2) a cadência dos crons; (3) `X_MAX_POSTS`, que era a primeira de todas e caiu para terceira; (4) baixar a resolução não é opção — 480P já é a mais barata das três.
 
 **As alavancas que sobraram, em ordem de tamanho.** `X_MAX_POSTS` (a coleta, US$ 0,25) e a **cadência dos crons** são as duas que movem a conta de verdade. Depois vem o pool de mídias — `MAX_POSTS_MIDIA` custa US$ 0,06 em leitura do X e ainda puxa a maior parte dos tokens de visão (cada clipe do pool são 8 frames num laudo), então `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` cortam nos dois lados; a contrapartida é que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam as cartelas sem mexer na auditoria dos clipes. No `--long-take`, `X_MAX_POSTS_BUSCA=0` corta US$ 0,15 por vídeo, ao preço de o formato voltar a travar no piso de 3 clipes. A leitura da lista é **uma** chamada — não há o que economizar na forma dela, só no teto: nada é filtrável no servidor (nem data, nem mídia, nem repost), então todo post que a API manda já foi cobrado.
 

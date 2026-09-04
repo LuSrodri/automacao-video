@@ -3,8 +3,12 @@
 DESENHO (2026-09-03, pedido do usuário). Até aqui o Short era narração da
 ElevenLabs sobre clipe do X. Agora ele tem uma INFLUENCER no rodapé,
 recortada por chroma key, e é ELA QUEM FALA: o áudio do Short deixa de ser TTS
-e passa a ser o áudio que o `wan3.0-video-prime` gera junto com a imagem dela.
+e passa a ser o áudio que o `wan3.0-video` gera junto com a imagem dela.
 A ElevenLabs continua narrando o FORMATO LONGO, que não mudou.
+
+O modelo era o `wan3.0-video-prime` até 2026-09-04, quando o usuário pediu a
+troca pelo normal: mesma interface, mesmos recursos, metade do preço, e o que
+se perde é latência — ver MODELO abaixo.
 
 Três consequências que mandam no resto do pipeline, todas medidas em 2026-09-03
 contra a API real (25s, 480P, 1:1, 49s entre pedido e vídeo pronto):
@@ -31,6 +35,7 @@ ElevenLabs, ele é reconstruído transcrevendo o áudio dela
 """
 
 import json
+import os
 import subprocess
 import time
 from base64 import b64encode
@@ -51,10 +56,17 @@ API_BASE = "https://dashscope-intl.aliyuncs.com/api/v1"
 ROTA_GERAR = "/services/aigc/video-generation/video-synthesis"
 ROTA_TAREFA = "/tasks/"
 
-MODELO = "wan3.0-video-prime"
+# O MODELO NORMAL, NÃO O `-prime` (2026-09-04, pedido do usuário). Os dois têm
+# a mesma interface e a mesma lista de recursos; o `-prime` é a variante
+# ACELERADA, e o que se paga a mais nele é latência, não qualidade: US$ 0,068
+# por segundo de vídeo contra US$ 0,035 do normal em 480P. Num pipeline em que
+# a geração roda dentro de um cron que ninguém está esperando, latência não
+# vale o dobro do preço — ela é 74% do custo de um Short, e a troca corta
+# ~US$ 107/mês. O env var existe para a volta ser uma variável, não um deploy.
+MODELO = os.getenv("WAN_MODELO", "wan3.0-video").strip() or "wan3.0-video"
 # 1:1 em 480P sai em 632x632 (medido). Ela ocupa menos de 3/4 da largura do
 # Short, então 480P já entrega mais pixel do que o quadro usa e 720P só
-# dobraria a conta (US$ 0,068/s contra US$ 0,14/s).
+# dobraria a conta (US$ 0,035/s contra US$ 0,07/s).
 RESOLUCAO = "480P"
 PROPORCAO = "1:1"
 
@@ -92,8 +104,10 @@ CHROMA_MISTURA = 0.05
 # legendas.py) e sem cobrir o miolo do clipe.
 LARGURA_FRAC = 0.72
 
-# Quanto esperar a fila do Wan. O teste real fechou em 49s; o teto é generoso
-# porque a alternativa a esperar é perder a execução inteira do cron.
+# Quanto esperar a fila do Wan. Medido: o `-prime` fechava em 44-55s e o modelo
+# normal, que é o que roda desde 2026-09-04, leva mais — o teto é generoso de
+# propósito, porque a alternativa a esperar é perder a execução inteira do
+# cron, e um Short já custa mais que os minutos de máquina do Render.
 ESPERA_MAX_S = 900
 ESPERA_PASSO_S = 10
 
