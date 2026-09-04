@@ -889,11 +889,27 @@ def montar_video(
             )
         idx_inf = prox_entrada
         prox_entrada += 1
+        # A cor do fundo é MEDIDA UMA VEZ e serve às duas coisas que dependem
+        # dela: o chroma key e o recorte que acha onde ela está no quadro.
+        cor_inf = inf.cor_de_fundo(Path(influencer))
+        recorte = inf.recorte_quadrado(Path(influencer), cor_inf)
+        recorte_inf = f"{recorte}," if recorte else ""
         comando += ["-t", f"{duracao:.2f}", "-i", str(influencer)]
         lado = max(2, round(tela_l * inf.LARGURA_FRAC / 2) * 2)
         filtros.append(
-            f"[{idx_inf}:v]{inf.filtro_chroma(Path(influencer))},"
-            f"scale={lado}:{lado},format=rgba,setpts=PTS-STARTPTS[inf]"
+            f"[{idx_inf}:v]{inf.filtro_chroma(cor=cor_inf)},format=rgba,"
+            # 1:1 MONTADO EM VOLTA DELA quando o vídeo não vem quadrado (o
+            # modelo é quem decide a forma; o Gemini Omni, por exemplo, só
+            # gera 16:9 e 9:16). Vazio quando não há o que cortar.
+            f"{recorte_inf}"
+            # A CAIXA É QUADRADA, O VÍDEO DELA NÃO PRECISA SER. Com o `ratio`
+            # em `adaptive` (2026-09-04) quem decide a forma é o modelo, e um
+            # `scale` fixo esticaria o rosto dela no dia em que ela viesse
+            # 9:16. Cabe pela maior dimensão e completa o resto com
+            # transparente, então a geometria do overlay não muda.
+            f"scale={lado}:{lado}:force_original_aspect_ratio=decrease,"
+            f"pad={lado}:{lado}:(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
+            f"setpts=PTS-STARTPTS[inf]"
         )
         filtros.append(
             f"[{corrente}][inf]overlay="
