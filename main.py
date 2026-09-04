@@ -89,13 +89,16 @@ Fluxo:
 8. A ELEVENLABS NARRA OS DOIS FORMATOS, e no SHORT o Wan faz o LIPSYNC em cima
    dela (2026-09-04). A voz do Short é a da INFLUENCER
    (ELEVENLABS_VOICE_ID_INFLUENCER, uma voz por canal), e o vídeo dela sai do
-   `wan3.0-video` no modo referência: influencer.png como `reference_image` e o
-   MP3 como `reference_audio`, devolvendo um quadrado em chroma key verde com a
-   boca acompanhando a fala. Como o áudio é anterior ao vídeo, seguem valendo o
-   corte de silêncio, o ajuste de velocidade e a segunda narração quando o
-   texto não cabe — o que se gera depois é a imagem. O `reference_audio` do Wan
-   é limitado a 15s (medido na API), então a narração é partida em pedaços de
-   segundos inteiros, gerados em paralelo e emendados. No formato LONGO não há
+   `wan2.7-i2v`: influencer.png como `first_frame` e o MP3 como
+   `driving_audio`, devolvendo um quadrado em chroma key verde com a boca
+   acompanhando a fala. É o único modo do Model Studio em que áudio EXTERNO
+   move os lábios — o `reference_audio` do wan3.0 é referência de TIMBRE, e foi
+   por isso que a boca ficava parada. Como o áudio é anterior ao vídeo, seguem
+   valendo o corte de silêncio, o ajuste de velocidade e a segunda narração
+   quando o texto não cabe — o que se gera depois é a imagem. O `duration` do
+   modelo para em 15s, então a narração é partida em pedaços de segundos
+   inteiros e emendada; cada pedaço começa no ÚLTIMO QUADRO do anterior, senão
+   ela voltaria à pose da foto a cada emenda. No formato LONGO não há
    influencer: é voz em off sobre o material.
 9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
    o momento exato da narração (citações do texto -> timestamps do

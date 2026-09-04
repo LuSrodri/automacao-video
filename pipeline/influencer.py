@@ -1,62 +1,79 @@
 """Influencer do Short: a voz é da ElevenLabs, e o Wan faz o lipsync.
 
-DESENHO (2026-09-04, pedido do usuário). Em 2026-09-03 o Short passou a ter uma
-influencer no rodapé e o áudio dela vinha de dentro do modelo de vídeo: o Wan
-recebia o roteiro em TEXTO, escolhia uma voz e devolvia imagem e fala juntas.
-Agora a ordem se inverte — QUEM FALA É A ELEVENLABS, e o Wan só sincroniza os
-lábios com o MP3 que recebe pronto:
+DESENHO (2026-09-04, 5ª mudança do dia). A ordem é a mesma desde a 3ª mudança
+— quem fala é a ElevenLabs, e o Wan só sincroniza os lábios com o MP3 pronto:
 
     roteiro -> ElevenLabs (voz da influencer) -> MP3 + timestamps
-            -> Wan (reference_image + reference_audio) -> vídeo dela falando
+            -> Wan (first_frame + driving_audio) -> vídeo dela falando
 
-O MODELO É O MESMO de ontem (`wan3.0-video`), e continua sendo o que o
-`WAN_MODELO` disser. O que mudou foi o MODO de chamada, e isso não foi escolha:
+O QUE MUDOU FOI O MODELO, e por uma razão de leitura de documentação, não de
+medição: o `wan3.0-video` NÃO TEM lipsync dirigido por áudio externo. O
+`reference_audio` dele é referência de TIMBRE. O guia oficial do wan3.0 diz o
+uso pretendido com todas as letras — "extract the voice characteristics from
+Audio 1, and have the character say the following lines: '...'" —, ou seja: o
+modelo CLONA a voz do áudio e GERA uma fala nova a partir do TEXTO do prompt, e
+é a boca dessa fala gerada que ele sincroniza. Não existe, no wan3.0, "case os
+lábios com este MP3".
 
-  - `first_frame` + `driving_audio` (o modo em que o vídeo saía até ontem, com
-    áudio anexado) é RECUSADO pelo Wan3.0. Medido contra a API em 2026-09-04:
-    a tarefa é aceita e falha logo depois com
-    `InvalidParameter: Input should be 'first_frame', 'last_frame',
-    'reference_image'...`. A FAQ da Alibaba diz o mesmo — `driving_audio` é do
-    `wan2.7-i2v`, não do Wan3.0;
-  - o modo que aceita áudio no Wan3.0 é o de REFERÊNCIA:
-    `reference_image` + `reference_audio`, que é o que roda aqui.
+Isso explica exatamente o que se viu:
 
-TRÊS CONSEQUÊNCIAS MEDIDAS, todas contra a API real em 2026-09-04:
+  - o desenho de 2026-09-03 sincronizava porque o roteiro ia em TEXTO no
+    prompt — havia fala gerada dirigindo a boca;
+  - o de 2026-09-04 (3ª) não sincronizava porque o prompt tirou a fala. Não
+    sobrou NADA dirigindo os lábios, e a boca aberta nos oito testes de
+    /m/ /b/ /p/ era boca de idle, não lipsync errado;
+  - o áudio voltar com correlação 0,98 nunca foi prova de sincronia: sem texto
+    de fala o modelo passa a referência adiante como trilha. Áudio preservado
+    não é áudio dirigindo.
 
-1. O ÁUDIO VOLTA INTEIRO E É O NOSSO. O vídeo devolvido traz a mesma onda do
-   MP3 que subiu — correlação de 0,98 entre os dois —, com ~0,11s de silêncio
-   colado na frente (1º som em 0,059s na entrada e 0,175s na saída). Por isso
-   a narração do Short volta a ser o arquivo da ElevenLabs, e não o áudio
-   extraído do vídeo: é a mesma fala, sem uma segunda passada de codec. O
-   silêncio da frente é medido segmento a segmento e descontado
-   (`_deslocamento` + `_encaixar`), senão a boca ficaria 0,11s atrás da voz.
+Havia um segundo defeito no mesmo prompt, e ele some junto: as referências do
+wan3.0 são endereçadas por TAG POSICIONAL ("Image 1", "Img 1", "Audio 1"), e o
+prompt daqui mandava "Imagem 1" e "Áudio 1" em português — nem a identidade
+dela estava amarrada à foto.
 
-2. O TETO DO ÁUDIO É 15s, E É DA API. Não é o teto do vídeo, que segue em 30s:
-   `reference_audio` é material de REFERÊNCIA, e o Wan limita referência a 15s
-   (vale igual para `reference_video`). Medido: um MP3 de 22,08s derruba a
-   tarefa com `duration should be at most 15s, got 22.08s`, e o `-prime` recusa
-   igual — 29,97s devolvem `duration should be at most 15s, got 29.975s`. Não
-   há variante do modelo que aceite os 30s de uma vez. Como o Short nasce
-   entre 13s e 25s (clipe de 15-30s dividido por MATERIAL_MARGEM, com teto de
-   VIDEO_DURACAO), a narração é PARTIDA em pedaços de segundos inteiros e cada
-   um vira uma geração, emendadas no fim. Um Short curto cabe em uma só.
+O MODO QUE FAZ O QUE ESTE MÓDULO PRECISA é o do `wan2.7-i2v`: `first_frame` +
+`driving_audio`, do qual a referência da API diz, textualmente, "the model uses
+it as a driving source for lip-sync and action timing". É o único modo
+documentado no Model Studio em que áudio EXTERNO move a boca.
 
-3. O VERDE MUDOU E PASSOU A SER MEDIDO. No modo primeiro-quadro o fundo era o
-   da própria influencer.png, e o chroma key podia ser constante. No modo
-   referência o modelo REPINTA a cena: o verde saiu em 0x489850 (72,152,80)
-   contra os 0x38AF33 (56,175,51) de ontem. Com os parâmetros de ontem
-   (0,10/0,05) esse verde já come a regata branca dela (alpha 205) e o cabelo
-   (68). Em vez de recalibrar uma constante que o modelo pode mudar na próxima
-   geração, `cor_de_fundo` MEDE a borda do vídeo pronto e a montagem monta o
-   filtro com a cor medida.
+O QUE ISSO MUDA, ponto a ponto:
 
-O que este módulo NÃO faz mais: gerar voz, escolher palavras e reconstruir
-alinhamento. Os timestamps voltaram a vir de graça no `with-timestamps` da
-ElevenLabs (audio.gerar_narracao), e com eles voltaram o corte de silêncio e o
-ajuste de velocidade, que existiam antes de 2026-09-03 e eram impossíveis com o
-áudio preso aos lábios — aqui o lipsync é feito DEPOIS, sobre o áudio já final.
+1. VOLTA O PRIMEIRO QUADRO. A influencer.png não é mais uma referência que o
+   modelo reinterpreta: é literalmente o quadro 1 do vídeo. A identidade dela
+   deixa de depender de o modelo "entender" a foto, e o FUNDO deixa de ser
+   repintado a cada geração — o verde volta a ser o da própria foto. Por isso
+   a constante de chroma key volta à calibração de 2026-09-03 (0x38AF33 em
+   0,10/0,05, varrida em cima de saída real do modo primeiro-quadro). A
+   medição em tempo de execução (`cor_de_fundo`) FICA: ela custa nada e agora
+   é rede em vez de necessidade.
+
+2. O TETO DE 15s DEIXA DE SER DO ÁUDIO E PASSA A SER DO VÍDEO. O
+   `driving_audio` aceita de 2s a 30s; quem para em 15s é o `duration` do
+   modelo. A narração continua partida em pedaços de segundos inteiros e
+   emendada no fim, e por isso `_cortes`, `_pedaco`, `_deslocamento`,
+   `_encaixar` e `_emendar` seguem valendo palavra por palavra. O que MUDOU é
+   que os pedaços deixaram de correr em paralelo: cada um começa no ÚLTIMO
+   QUADRO do anterior, porque começar todos na foto fazia a influencer voltar
+   à pose do retrato no meio da frase, a cada emenda (ver `gerar`).
+
+3. A RESOLUÇÃO SOBE. O wan2.7-i2v tem 720P e 1080P, sem 480P, e a proporção da
+   saída SEGUE A DO PRIMEIRO QUADRO (não há `ratio`): a influencer.png é
+   quadrada, então sai um quadrado de ~960x960 no lugar dos 624x624 de antes.
+   Mais pixel do que o Short usa, e não há tier menor para pedir.
+
+4. O CUSTO SOBE, e foi a alavanca aceita pelo usuário para ter lipsync de
+   verdade. Não há variante barata: `driving_audio` só existe aqui.
+
+O env var mudou de nome DE PROPÓSITO: `WAN_MODELO` ficou para trás porque os
+dois modos têm payloads INCOMPATÍVEIS (`reference_image`/`reference_audio`
+contra `first_frame`/`driving_audio`), e um valor velho de wan3.0 sobrevivendo
+no ambiente derrubaria toda execução. Agora é `WAN_LIPSYNC_MODELO`.
+
+O que este módulo NÃO faz: gerar voz, escolher palavras e reconstruir
+alinhamento. Os timestamps vêm de graça no `with-timestamps` da ElevenLabs
+(audio.gerar_narracao), e com eles seguem de pé o corte de silêncio e o ajuste
+de velocidade — aqui o lipsync é feito DEPOIS, sobre o áudio já final.
 """
-
 import json
 import math
 import os
@@ -84,37 +101,38 @@ ROTA_GERAR = "/services/aigc/video-generation/video-synthesis"
 ROTA_TAREFA = "/tasks/"
 ROTA_UPLOAD = "/uploads"
 
-# DE VOLTA AO `-prime` (2026-09-04, 3ª mudança do dia, pedido do usuário). Ele
-# tinha saído de manhã por custo — é a variante ACELERADA, US$ 0,068/s contra
-# US$ 0,035/s do normal em 480P —, e volta agora que o Short depende de um
-# lipsync que ainda está sendo acertado: com o -prime a rodada de teste é ~3x
-# mais rápida (46s contra 123s medidos em 12s de vídeo), e num assunto em que se
-# gera para conferir, esperar custa mais que o dobro do preço. A conta sobe
-# ~US$ 0,42 num Short de 13s. O env var segue existindo para a volta ser uma
-# troca de valor e não um deploy.
-MODELO = os.getenv("WAN_MODELO", "wan3.0-video-prime").strip() or "wan3.0-video-prime"
-# 1:1 em 480P sai em 624x624 (medido no modo referência). Ela ocupa menos de
-# 3/4 da largura do Short, então 480P já entrega mais pixel do que o quadro usa
-# e 720P só dobraria a conta.
-RESOLUCAO = "480P"
-PROPORCAO = "1:1"
+# O MODELO DO LIPSYNC. `wan2.7-i2v` é o único do Model Studio cuja API aceita
+# áudio EXTERNO como driver da boca (`driving_audio`); ver o cabeçalho. O env
+# var MUDOU DE NOME (`WAN_MODELO` -> `WAN_LIPSYNC_MODELO`) porque os payloads
+# dos dois modos são incompatíveis, e um valor velho de wan3.0 sobrando no
+# ambiente derrubaria toda execução em vez de degradar.
+MODELO = os.getenv("WAN_LIPSYNC_MODELO", "wan2.7-i2v").strip() or "wan2.7-i2v"
+# O wan2.7-i2v tem 720P e 1080P, sem 480P — 720P é o piso. E NÃO HÁ `ratio`: a
+# proporção da saída segue a do primeiro quadro, e a influencer.png é quadrada
+# (1254x1254), então sai um quadrado de ~960x960. É mais pixel do que o Short
+# usa, e não há tier menor para pedir.
+RESOLUCAO = "720P"
 
-# TETO DO ÁUDIO DE REFERÊNCIA, imposto pela API (ver o cabeçalho). Narração
-# maior que isto é partida em pedaços; cada pedaço é uma geração.
-AUDIO_MAX_S = 15
-# Faixa de duração de vídeo do modelo. Um pedaço nunca chega perto do teto.
+# FAIXA DE UM PEDAÇO, que é a faixa do `duration` do modelo. O teto passou a
+# ser do VÍDEO e não do áudio: o `driving_audio` aceita de 2s a 30s, e quem
+# para em 15s é o `duration`. Narração maior que isto é partida; cada pedaço é
+# uma geração.
 DUR_MIN_S = 2
-DUR_MAX_S = 30
+SEGMENTO_MAX_S = 15
 
-# CHROMA KEY: só o PLANO B. A cor real vem medida do vídeo pronto
-# (`cor_de_fundo`), porque no modo referência o fundo é repintado a cada
-# geração. Estes números são os de 2026-09-04: cor medida no primeiro vídeo de
-# referência e a janela de similaridade/mistura varrida em cima dele — em
-# 0,08/0,02 os cantos ficam em alpha 1, o rosto e a regata em 255 e a borda do
-# cabelo em 170. Acima de 0,12 o filtro começa a comer a regata branca.
-CHROMA_COR = "0x489850"
-CHROMA_SIMILARIDADE = 0.08
-CHROMA_MISTURA = 0.02
+# CHROMA KEY: só o PLANO B — a cor real vem medida do vídeo pronto
+# (`cor_de_fundo`). Estes números voltaram a ser os de 2026-09-03, que é a
+# calibração do modo PRIMEIRO QUADRO: com a influencer.png virando o quadro 1,
+# o fundo é o verde dela e não mais um verde repintado pelo modelo. Em
+# 0,10/0,05 os cantos ficam transparentes e o rosto e a regata branca ficam
+# inteiros. RE-MEDIDO em saída real do wan2.7-i2v (2026-09-04): o verde sai em
+# 0x2DAF2A, estável entre quadros (desvio de 1), e com esta cor e esta janela
+# sobra 0,09% do fundo e o filtro come 0,2% do sujeito, em três quadros
+# espalhados. A janela é estreita de verdade: em 0,16/0,08 ele come metade
+# dela.
+CHROMA_COR = "0x38AF33"
+CHROMA_SIMILARIDADE = 0.10
+CHROMA_MISTURA = 0.05
 
 # SEM DESPILL, de propósito, como desde 2026-09-03. O `despill` do ffmpeg tira
 # o verde refletido, mas lavava a regata BRANCA dela para lilás (canal verde do
@@ -127,10 +145,12 @@ CHROMA_MISTURA = 0.02
 # baixo, abaixo da legenda e sem cobrir o miolo do clipe.
 LARGURA_FRAC = 0.72
 
-# Quanto esperar a fila do Wan. Medido no modo referência: 134s para 10s de
-# vídeo. Os pedaços são pedidos TODOS DE UMA VEZ e esperados depois, então dois
-# pedaços custam o tempo do mais lento, não a soma. O teto é generoso de
-# propósito: a alternativa a esperar é perder a execução inteira do cron.
+# Quanto esperar a fila do Wan, SOMANDO TODOS OS PEDAÇOS — o `t0` é criado uma
+# vez em `gerar` e atravessa o laço. A doc do wan2.7-i2v fala em 1 a 5 minutos
+# por tarefa, e medimos ~105s por pedaço; como os pedaços são encadeados (cada
+# um começa no último quadro do anterior), o custo é a SOMA e não o máximo:
+# ~210s nos dois pedaços de um Short típico. O teto é generoso de propósito: a
+# alternativa a esperar é perder a execução inteira do cron.
 ESPERA_MAX_S = 900
 ESPERA_PASSO_S = 10
 
@@ -160,9 +180,10 @@ def _cabecalhos(cfg: Config, assincrono: bool) -> dict:
 def _subir(cfg: Config, arquivo: Path) -> str:
     """Sobe um arquivo ao armazenamento temporário do DashScope (URL `oss://`).
 
-    O ÁUDIO NÃO PODE IR EM BASE64. A imagem pode — e ia, até ontem —, mas o
-    `reference_audio` só aceita URL pública ou `oss://` (conferido na
-    referência da API e no comportamento real). Como o pipeline não tem onde
+    O ÁUDIO NÃO PODE IR EM BASE64. A imagem pode — a referência do wan2.7-i2v
+    aceita base64 em `first_frame` —, mas o `driving_audio` só aceita URL
+    pública ou `oss://` (a doc lista só "Public URL"). Como o pipeline não tem
+    onde
     publicar um MP3, o caminho é este: o DashScope dá uma credencial de upload,
     o arquivo vai para um bucket temporário dele (válido por 48h) e o modelo o
     lê pela URL `oss://`. É de graça e não sai da casa da própria API.
@@ -224,35 +245,42 @@ def _subir(cfg: Config, arquivo: Path) -> str:
 def _prompt(publico: str) -> str:
     """O prompt do Wan: quem ela é, como se comporta e qual é o fundo.
 
-    O QUE SAIU DAQUI FOI A FALA. Até ontem o roteiro inteiro ia dentro do
-    prompt, entre aspas, porque era o prompt que ditava o que ela dizia. Agora
-    quem diz é o Áudio 1, e mandar o texto junto seria pedir ao modelo que
-    resolvesse uma redundância — no melhor caso ele obedeceria ao áudio, no
-    pior tentaria conciliar os dois.
+    NÃO TEM TAG DE REFERÊNCIA, e é isso que o distingue do prompt de antes. No
+    wan3.0 o material era endereçado por tag posicional ("Image 1", "Audio 1"),
+    e este prompt mandava "Imagem 1" e "Áudio 1" em português — que o modelo
+    não reconhece. No wan2.7-i2v não há tag nenhuma a acertar: a foto É o
+    primeiro quadro e o MP3 É o driver, os dois pela `media`, e o prompt volta a
+    ser só o que ele deve ser — a direção da cena.
 
-    O QUE FICOU É O REGISTRO, palavra por palavra como estava: influencer e não
-    apresentadora de telejornal (2026-09-04), ombros soltos, gesto assimétrico,
-    sorriso que vem e vai. E o FUNDO VERDE, que aqui é ainda mais importante
-    que ontem: no modo referência o modelo repinta a cena, então "liso,
-    uniforme, sem sombras e sem objetos" é o que segura o chroma key de pé.
+    A FALA CONTINUA FORA DAQUI, agora por um motivo mais forte do que ontem.
+    Quem dita os lábios é o `driving_audio`; mandar o roteiro junto seria pedir
+    ao modelo que conciliasse duas fontes de fala, e a que ele obedecesse
+    poderia não ser a nossa. O prompt DIZ que ela está falando (senão a boca
+    fica parada) e CALA o que ela diz.
+
+    O registro é o mesmo, palavra por palavra: influencer e não apresentadora de
+    telejornal (2026-09-04), ombros soltos, gesto assimétrico, sorriso que vem e
+    vai. E o FUNDO VERDE, que aqui é mais barato de segurar que no modo
+    referência — ele já vem do primeiro quadro; o prompt só evita que o modelo
+    invente objeto ou sombra em cima dele.
     """
     idioma = "inglês americano" if publico == "usa" else "português do Brasil"
     return (
-        "A mesma mulher da Imagem 1, uma influencer jovem e carismática "
-        "gravando um vídeo casual para as redes sociais dela, enquadrada da "
-        "cintura para cima, diante de um fundo CHROMA KEY VERDE liso, uniforme "
-        "e totalmente sem textura, sem sombras e sem objetos. Câmera fixa, sem "
-        "zoom, sem corte e sem movimento de câmera. Iluminação de estúdio "
-        "suave. Ela fala o Áudio 1 em "
-        f"{idioma}, com os lábios sincronizados exatamente com ele. O clima é "
-        "DESCONTRAÍDO e espontâneo, nada de apresentadora de telejornal: ela "
-        "fala olhando para a câmera como quem conta uma novidade para um "
-        "amigo, com os ombros soltos e a postura relaxada, sorrindo de leve e "
-        "naturalmente entre as frases, levantando as sobrancelhas, inclinando "
-        "a cabeça de vez em quando e gesticulando de um jeito solto e "
-        "assimétrico com as mãos. Expressão viva e informal, sem rigidez e sem "
-        "gesto ensaiado. Nenhuma outra voz, nenhuma música e nenhum ruído além "
-        "do Áudio 1."
+        "Uma influencer jovem e carismática gravando um vídeo casual para as "
+        "redes sociais dela, enquadrada da cintura para cima, diante de um "
+        "fundo CHROMA KEY VERDE liso, uniforme e totalmente sem textura, sem "
+        "sombras e sem objetos. Câmera fixa, sem zoom, sem corte e sem "
+        "movimento de câmera. Iluminação de estúdio suave. Ela FALA o tempo "
+        f"todo, em {idioma}, com os lábios sincronizados exatamente com o "
+        "áudio, articulando cada sílaba, fechando os lábios nos sons de M, B e "
+        "P e abrindo a boca nas vogais. O clima é DESCONTRAÍDO e espontâneo, "
+        "nada de apresentadora de telejornal: ela fala olhando para a câmera "
+        "como quem conta uma novidade para um amigo, com os ombros soltos e a "
+        "postura relaxada, sorrindo de leve e naturalmente entre as frases, "
+        "levantando as sobrancelhas, inclinando a cabeça de vez em quando e "
+        "gesticulando de um jeito solto e assimétrico com as mãos. Expressão "
+        "viva e informal, sem rigidez e sem gesto ensaiado. Nenhuma outra voz, "
+        "nenhuma música e nenhum ruído além da fala dela."
     )
 
 
@@ -302,6 +330,10 @@ def _duracao(arquivo: Path) -> float:
 def _cortes(narracao: Path) -> list[tuple[int, int]]:
     """Onde partir a narração: pedaços de segundos INTEIROS, de até 15s.
 
+    QUINZE POR CAUSA DO VÍDEO, não do áudio: o `driving_audio` do wan2.7-i2v
+    aceita até 30s, mas o `duration` do modelo para em 15. Pedir mais devolveria
+    um vídeo curto demais para o pedaço, com a boca parando antes da fala.
+
     INTEIROS porque o `duration` do Wan é inteiro. Pedir 12 para um pedaço de
     12,4s deixaria o modelo resolver 0,4s de fala sobrando do jeito dele, e
     ninguém sabe qual é esse jeito; com o corte no segundo cheio, o pedido e o
@@ -316,7 +348,7 @@ def _cortes(narracao: Path) -> list[tuple[int, int]]:
     """
     total = _duracao(narracao)
     fim = int(math.ceil(total - 0.01))
-    n = max(1, math.ceil(fim / AUDIO_MAX_S))
+    n = max(1, math.ceil(fim / SEGMENTO_MAX_S))
     if n == 1:
         return [(0, max(DUR_MIN_S, fim))]
 
@@ -340,10 +372,10 @@ def _cortes(narracao: Path) -> list[tuple[int, int]]:
         alvo = fim * k / n
         # Candidatos: os segundos cheios em volta do alvo que respeitam o teto
         # dos dois lados (o pedaço que fecha e o que abre).
-        menor = max(bordas[-1] + DUR_MIN_S, int(math.ceil(fim - AUDIO_MAX_S * (n - k))))
-        maior = min(bordas[-1] + AUDIO_MAX_S, fim - DUR_MIN_S)
+        menor = max(bordas[-1] + DUR_MIN_S, int(math.ceil(fim - SEGMENTO_MAX_S * (n - k))))
+        maior = min(bordas[-1] + SEGMENTO_MAX_S, fim - DUR_MIN_S)
         if menor > maior:
-            menor = maior = min(bordas[-1] + AUDIO_MAX_S, fim - DUR_MIN_S)
+            menor = maior = min(bordas[-1] + SEGMENTO_MAX_S, fim - DUR_MIN_S)
         candidatos = [s for s in range(menor, maior + 1) if abs(s - alvo) <= 2.5] or [
             int(round(min(max(alvo, menor), maior)))
         ]
@@ -392,8 +424,10 @@ def _pedaco(narracao: Path, inicio: int, duracao: int, destino: Path) -> Path:
 def _deslocamento(pedaco: Path, segmento: Path) -> float:
     """Quanto de silêncio o Wan colou na FRENTE do áudio devolvido, em segundos.
 
-    O modelo devolve a mesma onda que recebeu, atrasada — 0,116s no vídeo de
-    calibração. Como o vídeo é gerado em cima do áudio ATRASADO, os lábios
+    No modo referência o modelo devolvia a mesma onda que recebeu, atrasada —
+    0,116s no vídeo de calibração. A medida vale igual aqui, e se o wan2.7-i2v
+    não atrasar nada ela devolve 0 e nada é cortado. Como o vídeo é gerado em
+    cima do áudio, um atraso no áudio é um atraso nos lábios
     também estão atrasados, e sem descontar isso ela ficaria falando um décimo
     de segundo depois da voz (a voz na frente da imagem é o lado que o olho
     percebe primeiro).
@@ -495,12 +529,55 @@ def _emendar(segmentos: list[Path], destino: Path) -> Path:
 # --- Geração -----------------------------------------------------------------
 
 
+def _ultimo_quadro(video: Path, destino: Path) -> Path:
+    """Extrai o ÚLTIMO quadro do segmento, para ele virar o quadro 1 do próximo.
+
+    É o que costura a emenda (ver `gerar`). `-sseof -1` posiciona a leitura no
+    último segundo e `-update 1` deixa cada quadro sobrescrever o anterior, de
+    modo que o que sobra no arquivo é literalmente o último — sem precisar
+    saber a duração nem contar quadros.
+    """
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-v", "error",
+            "-sseof", "-1", "-i", str(video),
+            "-update", "1", "-frames:v", "1", str(destino),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not destino.is_file():
+        _abortar(
+            f"ffmpeg não extraiu o último quadro de {video.name}: "
+            f"{(proc.stderr or '')[-300:]}"
+        )
+    return destino
+
+
 def gerar(cfg: Config, narracao: Path, destino: Path) -> Path:
     """Gera o vídeo da influencer com os lábios sincronizados com `narracao`.
 
-    Devolve o caminho do MP4 (624x624, 30fps, SEM áudio), pronto para o chroma
+    Devolve o caminho do MP4 (960x960, 30fps, SEM áudio), pronto para o chroma
     key da montagem. A duração é a da narração arredondada para cima, no
     segundo cheio — a montagem já corta o excedente no `-t` dela.
+
+    OS PEDAÇOS SÃO ENCADEADOS, e isso custa tempo de propósito. Até aqui eles
+    eram pedidos TODOS DE UMA VEZ e corriam em paralelo, o que fazia dois
+    pedaços custarem o tempo do mais lento em vez da soma. O problema é que
+    cada geração começa no `first_frame` que recebe: com a influencer.png em
+    todos, TODO SEGMENTO recomeçava da mesma foto, e na emenda ela voltava de
+    supetão para a pose parada do retrato — cabelo no lugar, cabeça centrada,
+    sorriso de foto — no meio de uma frase. Medido no vídeo de 21s: em 11,98s
+    ela está falando com a cabeça de lado, e em 12,00s é o retrato de novo.
+
+    Como um Short nasce entre 13s e 26s e o `duration` para em 15s, DOIS
+    pedaços é o caso comum, não a exceção — a emenda apareceria em quase todo
+    vídeo. Por isso o quadro 1 de cada pedaço passou a ser o ÚLTIMO QUADRO do
+    pedaço anterior: a pose atravessa a emenda e o corte deixa de existir.
+
+    O preço é a serialização (~210s em vez de ~110s nos dois pedaços medidos),
+    que cabe folgado no ESPERA_MAX_S e é barato perto de um salto visível no
+    meio do Short.
     """
     if not cfg.qwen_api_key:
         _abortar(
@@ -520,20 +597,20 @@ def gerar(cfg: Config, narracao: Path, destino: Path) -> Path:
     print(
         f"[influencer] {_duracao(narracao):.1f}s de narração em "
         f"{len(pedacos)} geração(ões) de {[d for _, d in pedacos]}s "
-        f"({MODELO}, {RESOLUCAO}, {PROPORCAO})."
+        f"({MODELO}, {RESOLUCAO})."
     )
-    if any(d > AUDIO_MAX_S for _, d in pedacos):
+    if any(d > SEGMENTO_MAX_S for _, d in pedacos):
         _abortar(
-            f"Pedaço acima do teto de {AUDIO_MAX_S}s do reference_audio "
+            f"Pedaço acima do teto de {SEGMENTO_MAX_S}s do `duration` "
             f"({[d for _, d in pedacos]}) — a API recusaria a geração."
         )
 
-    imagem_url = _subir(cfg, IMAGEM)
-
-    # PEDE TODOS DE UMA VEZ e só depois espera: as gerações correm em paralelo
-    # no QwenCloud, então dois pedaços custam o tempo do mais lento (~135s
-    # medidos para 10s de vídeo) em vez da soma.
-    tarefas = []
+    # O PRIMEIRO pedaço começa na FOTO — é ela que fixa a identidade da
+    # influencer de um Short para o outro. Do segundo em diante, o quadro 1 vem
+    # do pedaço anterior.
+    quadro_inicial = IMAGEM
+    prontos = []
+    t0 = time.time()
     for i, (inicio, duracao) in enumerate(pedacos):
         arquivo = _pedaco(
             narracao, inicio, duracao, destino.parent / f"narracao_p{i}.mp3"
@@ -542,16 +619,22 @@ def gerar(cfg: Config, narracao: Path, destino: Path) -> Path:
             "model": MODELO,
             "input": {
                 "prompt": _prompt(cfg.publico),
+                # `first_frame` + `driving_audio` é O modo de lipsync do
+                # Model Studio: a imagem vira o quadro 1 e o MP3 move a boca.
+                # Cada `type` só pode aparecer uma vez — por isso um pedaço
+                # por tarefa.
                 "media": [
-                    {"type": "reference_image", "url": imagem_url},
-                    {"type": "reference_audio", "url": _subir(cfg, arquivo)},
+                    {"type": "first_frame", "url": _subir(cfg, quadro_inicial)},
+                    {"type": "driving_audio", "url": _subir(cfg, arquivo)},
                 ],
             },
             "parameters": {
+                # Sem `ratio` e sem `audio`: o wan2.7-i2v não tem nenhum dos
+                # dois. A proporção sai da imagem, e o áudio do vídeo é o
+                # próprio driver (que a montagem descarta — a narração que vai
+                # ao ar é o MP3 da ElevenLabs).
                 "resolution": RESOLUCAO,
-                "ratio": PROPORCAO,
                 "duration": duracao,
-                "audio": True,
                 # O prompt_extend REESCREVE o prompt antes de gerar, e o que
                 # está escrito aqui é o que segura o fundo verde de pé.
                 "prompt_extend": False,
@@ -580,21 +663,24 @@ def gerar(cfg: Config, narracao: Path, destino: Path) -> Path:
         tarefa = ((resp.json() or {}).get("output") or {}).get("task_id")
         if not tarefa:
             _abortar(f"Resposta do QwenCloud sem task_id: {resp.text[:300]}")
-        tarefas.append((tarefa, arquivo, duracao))
 
-    prontos = []
-    t0 = time.time()
-    for i, (tarefa, arquivo, duracao) in enumerate(tarefas):
         bruto = destino.parent / f"influencer_bruto{i}.mp4"
         _baixar(_esperar(cfg, tarefa, t0), bruto)
         desloc = _deslocamento(arquivo, bruto)
         print(
-            f"[influencer] Segmento {i + 1}/{len(tarefas)}: {duracao}s, "
+            f"[influencer] Segmento {i + 1}/{len(pedacos)}: {duracao}s, "
             f"silêncio de {desloc * 1000:.0f}ms na frente, descontado."
         )
-        prontos.append(
-            _encaixar(bruto, desloc, duracao, destino.parent / f"influencer_s{i}.mp4")
+        segmento = _encaixar(
+            bruto, desloc, duracao, destino.parent / f"influencer_s{i}.mp4"
         )
+        prontos.append(segmento)
+        # O quadro 1 do próximo pedaço sai do arquivo JÁ ENCAIXADO, e não do
+        # bruto: é este que vai ao ar, e é com ele que a emenda tem de casar.
+        if i + 1 < len(pedacos):
+            quadro_inicial = _ultimo_quadro(
+                segmento, destino.parent / f"influencer_fim{i}.png"
+            )
 
     _emendar(prontos, destino)
     print(
@@ -664,11 +750,11 @@ def _baixar(url: str, destino: Path) -> None:
 def cor_de_fundo(video: Path) -> str:
     """Mede o verde do fundo NESTE vídeo e devolve a cor em hexa.
 
-    Existe porque o modo referência repinta a cena: o verde não é mais o da
-    influencer.png, e nada garante que a próxima geração pinte o mesmo tom.
-    Medido no vídeo de calibração de 2026-09-04, o fundo é estável DENTRO de um
-    vídeo (desvio de 1,3 a 2,7 entre quadros) — o risco é entre vídeos, e é
-    esse que a medição cobre.
+    Nasceu no modo referência, em que o modelo REPINTAVA a cena e o verde
+    mudava de geração para geração. No modo primeiro-quadro o fundo é o da
+    própria influencer.png, então a constante voltou a ser confiável — mas a
+    medição fica: ela custa oito quadros de leitura e cobre a deriva de tom que
+    o modelo ainda pode introduzir ao longo dos segundos gerados.
 
     Como: mediana da BORDA (12px de cada lado) de 8 quadros espalhados. A borda
     é fundo em qualquer enquadramento de meio corpo, e a mediana ignora o

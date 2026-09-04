@@ -870,11 +870,13 @@ def montar_video(
     # passasse na frente, uma legenda comprida poderia sumir atrás do ombro
     # dela.
     #
-    # O chroma key é MEDIDO NESTE vídeo, não constante (2026-09-04): desde que
-    # o lipsync passou a ser feito no modo referência do Wan, o modelo repinta
-    # o fundo a cada geração, e o verde muda de um Short para o outro (0x489850
-    # num, 0x4E9656 no seguinte, medidos). `influencer.filtro_chroma` lê a
-    # borda do arquivo e monta o filtro com a cor de agora. O lado do quadrado
+    # O chroma key é MEDIDO NESTE vídeo, não constante (2026-09-04). Nasceu no
+    # modo referência do Wan, em que o modelo repintava o fundo a cada geração
+    # e o verde mudava de um Short para o outro (0x489850 num, 0x4E9656 no
+    # seguinte, medidos). Com o lipsync no wan2.7-i2v o fundo voltou a ser o da
+    # influencer.png, mas a medição ficou de rede: `influencer.filtro_chroma`
+    # lê a borda do arquivo e monta o filtro com a cor de agora, e cai na
+    # constante calibrada se o que medir não for verde. O lado do quadrado
     # é par de propósito: o libx264 em yuv420p rejeita dimensão ímpar, e um
     # arredondamento aqui derrubaria a montagem inteira no fim.
     #
