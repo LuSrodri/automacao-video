@@ -101,6 +101,7 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.parse
 import webbrowser
 from copy import copy
@@ -166,20 +167,67 @@ MAX_TEXTO_POST = 300  # caracteres do texto de cada post enviados ao GPT
 # nada muda: ela só roda no formato longo, que usa 48h.
 
 
+# RETENTATIVA DO TOKEN APP-ONLY (2026-09-04). O endpoint de token do X devolve
+# 503 sem aviso, e uma única tentativa fazia disso o fim da execução: em 04/09
+# ele derrubou duas runs (US 14:02, BR 19:02) DEPOIS de a execução já ter pago
+# as 100 leituras da X API, a classificação e a visão de três candidatas. Não
+# era credencial — o mesmo `obter_bearer` havia funcionado três vezes na mesma
+# run, minutos antes, e o token de usuário renovou normalmente às 18:20 e 19:20.
+#
+# São 5 retentativas com a espera DOBRANDO (2s, 4s, 8s, 16s, 32s; 62s no pior
+# caso), e só para falha PASSAGEIRA — rede, timeout, 429 e 5xx. Credencial
+# recusada (401/403) continua falhando na hora: esperar 62s para receber o
+# mesmo 401 não conserta .env nenhum, só atrasa o e-mail de falha.
+TOKEN_RETENTATIVAS = 5
+TOKEN_ESPERA_S = 2.0
+
+# O bearer app-only não vence (o X só o invalida a pedido), então buscá-lo de
+# novo a cada candidata da triagem era abrir seis sorteios contra a
+# instabilidade do X para receber sempre o mesmo token de volta. Fica em cache
+# pelo processo, por par de credencial — e um cron é um processo.
+_BEARER_CACHE: dict[str, str] = {}
+
+
+def _falha_passageira(erro: Exception) -> bool:
+    """Vale tentar de novo, ou o X já disse que a credencial não presta?"""
+    resposta = getattr(erro, "response", None)
+    if resposta is None:
+        # Rede, timeout, DNS, JSON quebrado: nada disso é o X recusando nada.
+        return True
+    return resposta.status_code == 429 or resposta.status_code >= 500
+
+
 def obter_bearer(cfg: Config) -> str | None:
     """Token OAuth2 app-only a partir do consumer key/secret."""
-    try:
-        resp = requests.post(
-            TOKEN_ENDPOINT,
-            auth=(cfg.x_consumer_key, cfg.x_consumer_secret),
-            data={"grant_type": "client_credentials"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["access_token"]
-    except (requests.RequestException, KeyError, ValueError) as erro:
-        print(f"[aviso] X API: falha ao obter token ({erro})")
-        return None
+    chave = cfg.x_consumer_key or ""
+    if chave in _BEARER_CACHE:
+        return _BEARER_CACHE[chave]
+
+    espera = TOKEN_ESPERA_S
+    for tentativa in range(TOKEN_RETENTATIVAS + 1):
+        try:
+            resp = requests.post(
+                TOKEN_ENDPOINT,
+                auth=(cfg.x_consumer_key, cfg.x_consumer_secret),
+                data={"grant_type": "client_credentials"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            token = resp.json()["access_token"]
+            _BEARER_CACHE[chave] = token
+            return token
+        except (requests.RequestException, KeyError, ValueError) as erro:
+            if tentativa == TOKEN_RETENTATIVAS or not _falha_passageira(erro):
+                print(f"[aviso] X API: falha ao obter token ({erro})")
+                return None
+            print(
+                f"[aviso] X API: falha ao obter token ({erro}); tentando de "
+                f"novo em {espera:.0f}s "
+                f"({tentativa + 1}/{TOKEN_RETENTATIVAS})."
+            )
+            time.sleep(espera)
+            espera *= 2
+    return None
 
 
 def _get(token: str, url: str, params: dict) -> dict:
