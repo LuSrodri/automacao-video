@@ -204,6 +204,7 @@ enquanto a narração já conta a primeira pauta.
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
+| `QWEN_API_KEY` | — | Chave do **QwenCloud** (começa com `sk-ws-`), que gera a **apresentadora do Short** com o `wan3.0-video-prime`. **Obrigatória no formato curto** desde 2026-09-03 — é a voz e a imagem de quem comenta o clipe, e o `main.py` aborta no começo sem ela. O `--long-take` **não** a usa |
 | `X_LIST_ID` | — | Id da **lista do X**. **Obrigatório**, mas desde 2026-08-28 é o **fallback**: a fonte primária da pauta são as curtidas do usuário |
 | `X_CURTIDOS` | `1` | Liga as **curtidas do usuário** como fonte primária da pauta (`/2/users/:id/liked_tweets`). **Exige o escopo `like.read` no token do X** — sem ele a leitura volta 403, o log avisa e a lista assume. `0` desliga e volta ao comportamento anterior |
 | `X_CURTIDOS_MIN` | `5` | Posts aproveitáveis abaixo dos quais a coleta **cai para a lista**. Desde 2026-08-29 não é mais o único gatilho: qualquer **erro** de leitura das curtidas, e a **auditoria reprovando o material de todas as candidatas**, também levam à lista |
@@ -287,13 +288,50 @@ Entre **2026-08-06 e 2026-08-16** o mesmo arquivo que ia para o YouTube era publ
 
 **Saiu inteiro a pedido do usuário**: o módulo `pipeline/zernio.py`, a chamada no `main.py`, os campos de `Config` e as variáveis `TIKTOK_PUBLICAR`, `ZERNIO_API_KEY`, `ZERNIO_ACCOUNT_ID`, `TIKTOK_USUARIO`, `TIKTOK_PRIVACY` e `TIKTOK_AIGC` (também apagadas dos cron jobs do Render). **O YouTube é o único destino do vídeo.** Não reintroduzir sem pedido explícito.
 
+## Como funciona a apresentadora do Short
+
+**Diretriz de 2026-09-03 (pedido do usuário).** O Short passou a ter uma **apresentadora no rodapé**, recortada por chroma key, comentando o clipe — e ela não é só imagem: **é ela quem fala**. O áudio do Short deixou de ser TTS. A ElevenLabs ficou com o **formato longo**, que não mudou em nada.
+
+**Como o vídeo dela é feito.** `pipeline/apresentadora.py` manda `apresentadora.png` (a foto dela em fundo verde de estúdio, 1254x1254) como **primeiro quadro** para o `wan3.0-video-prime` do [QwenCloud](https://www.qwencloud.com), junto de um prompt que descreve a cena e traz a **fala literal** entre aspas. O modelo devolve um MP4 quadrado com a fala junto. A chamada é assíncrona: `POST .../services/aigc/video-generation/video-synthesis` com `X-DashScope-Async: enable` devolve um `task_id`, e `GET .../tasks/{id}` é consultado até `SUCCEEDED`. A URL do vídeo **expira em 24h**, então ele é baixado na hora.
+
+| Parâmetro | Valor | Por quê |
+| --- | --- | --- |
+| `resolution` | `480P` | Sai em **632x632** (medido). Ela ocupa menos de 3/4 da largura do Short, então 480P já entrega mais pixel do que o quadro usa; 720P só dobraria a conta |
+| `ratio` | `1:1` | A foto de origem já é quadrada, e o quadrado é o recorte que melhor aproveita o rodapé do 9:16 |
+| `duration` | `VIDEO_DURACAO` | **É um pedido, não uma medida** — ver abaixo |
+| `audio` | `true` | É daqui que sai a narração |
+| `prompt_extend` | `false` | Ligado, ele **reescreve o prompt** antes de gerar — e a fala entre aspas é o roteiro aprovado, que as legendas e os cortes já contam como certo |
+
+**O que foi medido em 2026-09-03, contra a API real** (25s, 480P, 1:1, 49 segundos entre o pedido e o vídeo pronto):
+
+- **Ela fala o roteiro literalmente.** A transcrição do áudio devolveu as **50 palavras** do texto, na ordem, em português do Brasil. Nada foi cortado nem inventado.
+- **A duração pedida é a duração entregue.** A fala ocupou de **0,0s a 24,84s** dos 25s pedidos. É o modelo que ajusta o ritmo ao tempo, não o contrário.
+- **O verde é chromakeável e estável.** Medido nos cantos de 4 quadros ao longo dos 25s: **(56,175,51)** com desvio de 5,6 no canal verde, do começo ao fim.
+- **Ela fala mais devagar que o TTS.** 50 palavras em 25s são **2,00 palavras/s**, contra as 2,90 da ElevenLabs a 1,05x.
+
+**O chroma key foi calibrado, não chutado.** Uma varredura de `similarity` x `blend` mediu o alpha em pontos de fundo e pontos dela: `chromakey=0x38AF33:0.10:0.05` deixa o **fundo em alpha 0** e **ela em 255** em todos os pontos, com folga dos dois lados da janela. Acima de `0.15:0.05` o filtro começa a **comer a pele** (alpha 164 no rosto), que foi o defeito da primeira tentativa. **Sem `despill`**: comparado lado a lado, ele lavava a **regata branca dela para lilás** (canal verde do tecido caindo de 107 para 62), e a franja verde que ele corrigia some na escala em que ela entra no quadro.
+
+**No quadro** ela ocupa um quadrado de `LARGURA_FRAC` (0,72) da largura — 778px num Short de 1080 —, ancorado no **rodapé** e centralizado. A apresentadora recortada fica com ~435px de largura e o topo da cabeça em ~61% da altura: terço de baixo, **abaixo da legenda** (que é centralizada na vertical) e sem cobrir o miolo do clipe. Ela entra **depois** do clipe e do carrossel e **antes** da legenda, do crédito e da etiqueta — ela é cena, e os três textos são camada de informação por cima da cena.
+
+**As três coisas que isso apagou do Short**, e nenhuma por simplificação — nenhuma delas é *possível* aqui, porque o áudio está preso aos lábios dela:
+
+1. **O corte de silêncios** (`aparar_silencios`) cortaria pedaços do áudio e a boca continuaria se mexendo nos pedaços cortados.
+2. **O ajuste de velocidade** (`audio.ajustar_ao_alvo`, a faixa de 1,00x a 1,15x) descolaria a fala dos lábios do mesmo jeito. `VIDEO_VELOCIDADE` deixou de ter efeito no Short.
+3. **A segunda narração** (`TENTATIVAS_NARRACAO`) existia para o texto **caber** na duração. A duração virou parâmetro; não há mais o que refazer.
+
+Por isso o áudio é extraído em **WAV, não MP3**: o MP3 carrega um atraso de codificador (as amostras de *priming* do LAME) que os decodificadores só descontam quando acham a marcação *gapless*, e apostar a sincronia labial num metadado seria um risco gratuito.
+
+**O alinhamento teve que ser reconstruído.** Ele não é opcional — as legendas, os cortes dos clipes e as cartelas saem todos dos timestamps por caractere, e sem eles os três caem no plano B de repartir o texto proporcionalmente pela duração, que é aceitável para um empurrão e péssimo como regime (fala tem pausa, e "metade dos caracteres" nunca cai na metade dos segundos). Sem o `/with-timestamps` da ElevenLabs, `audio.alinhar_por_transcricao` transcreve o áudio dela (`whisper-1`, com timestamp por palavra) e **casa a transcrição com o roteiro** por `difflib`. A diferença importante: **o texto certo já é conhecido** — não se transcreve para descobrir o que foi dito, e sim **quando**. Palavra que o transcritor ouviu errado não estraga o texto; ela só deixa de ancorar aquele trecho, que passa a ser interpolado entre os vizinhos. Medido no áudio real: **47 das 50 palavras ancoradas**, resultado monotônico e cobrindo 0,00s a 24,84s.
+
+**Falha aqui aborta a execução** (diretriz de fail-fast de 2026-07-15): sem apresentadora o Short sairia mudo. A `QWEN_API_KEY` é conferida **no começo do `main.py`**, antes de gastar com a coleta do X e com o roteiro. A única exceção é a **transcrição do alinhamento**: se ela falhar, o vídeo dela já foi gerado e pago, e o Short sai inteiro com a legenda repartida por proporção — jogar a execução fora por causa do carimbo de tempo custaria mais que o defeito.
+
 ## Como funciona o corte de silêncios
 
-Depois da narração, o ffmpeg (`silencedetect`) localiza os silêncios e o pipeline os corta (`aselect`), deixando uma pequena folga em cada um para o áudio não ficar com trechos parados. O ponto crítico: os timestamps do alinhamento da ElevenLabs são **remapeados** para o novo áudio, então as legendas e a sincronização das imagens continuam corretas. Se não houver silêncio relevante (ou faltar ffmpeg), o áudio original é mantido. O roteiro também é escrito para ser dinâmico, rápido e direto ao ponto, reduzindo as pausas na origem.
+**Só no formato longo desde 2026-09-03** — o Short não tem mais narração de TTS para cortar, e o áudio da apresentadora não pode ser tocado sem descolar dos lábios dela. Depois da narração, o ffmpeg (`silencedetect`) localiza os silêncios e o pipeline os corta (`aselect`), deixando uma pequena folga em cada um para o áudio não ficar com trechos parados. O ponto crítico: os timestamps do alinhamento da ElevenLabs são **remapeados** para o novo áudio, então as legendas e a sincronização das imagens continuam corretas. Se não houver silêncio relevante (ou faltar ffmpeg), o áudio original é mantido. O roteiro também é escrito para ser dinâmico, rápido e direto ao ponto, reduzindo as pausas na origem.
 
 ## Como funcionam as legendas
 
-(No formato longo, `--long-take`, **não há legendas**: esta seção vale só para os Shorts.) A ElevenLabs retorna o tempo de fala de cada caractere (`/with-timestamps`), e o pipeline mostra **uma palavra por vez** em maiúsculas, gravadas em `legendas.ass` e queimadas no vídeo pelo ffmpeg. Como sempre há clipe na tela, as legendas ficam na **parte inferior** para não cobrir o clipe nítido. O estilo é editorial de rede social: texto **branco com contorno preto grosso e sombra suave**, fonte **Archivo Black** (em `fonts/ArchivoBlack-Regular.ttf`, licença OFL), tamanho de manchete, com entrada de "carimbo" (a palavra surge um pouco maior e assenta no tamanho final). Desde 2026-08-04 a **altura do glifo é levemente reduzida** (`ESCALA_Y = 92`, o `ScaleY` do ASS): o **corpo da fonte não mudou** — o que muda é só a proporção, que fica mais baixa e condensada, devolvendo o ar editorial e minimalista sem perder a força de manchete (que vem da largura e do peso, não da altura). O `scy` do ASS é absoluto, então a animação de entrada também sai desse valor — escrever `scy100` nela anularia o achatamento em toda palavra. O arquivo `alinhamento.json` de cada execução guarda os timestamps para depuração.
+(No formato longo, `--long-take`, **não há legendas**: esta seção vale só para os Shorts.) O tempo de fala de cada caractere vem de **duas fontes diferentes desde 2026-09-03**: no formato longo, do `/with-timestamps` da ElevenLabs; no Short, da **reconstrução por transcrição** do áudio da apresentadora (`audio.alinhar_por_transcricao` — ver a seção da apresentadora). O formato do dado é o mesmo nos dois casos, e o pipeline mostra **uma palavra por vez** em maiúsculas, gravadas em `legendas.ass` e queimadas no vídeo pelo ffmpeg. Como sempre há clipe na tela, as legendas ficam na **parte inferior** para não cobrir o clipe nítido. O estilo é editorial de rede social: texto **branco com contorno preto grosso e sombra suave**, fonte **Archivo Black** (em `fonts/ArchivoBlack-Regular.ttf`, licença OFL), tamanho de manchete, com entrada de "carimbo" (a palavra surge um pouco maior e assenta no tamanho final). Desde 2026-08-04 a **altura do glifo é levemente reduzida** (`ESCALA_Y = 92`, o `ScaleY` do ASS): o **corpo da fonte não mudou** — o que muda é só a proporção, que fica mais baixa e condensada, devolvendo o ar editorial e minimalista sem perder a força de manchete (que vem da largura e do peso, não da altura). O `scy` do ASS é absoluto, então a animação de entrada também sai desse valor — escrever `scy100` nela anularia o achatamento em toda palavra. O arquivo `alinhamento.json` de cada execução guarda os timestamps para depuração.
 
 ## Como funciona a alavanca de share
 
@@ -779,6 +817,8 @@ A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de pro
 | X API v2, pay-per-use | **US$ 0,005 por post lido** (teto de 2 mi de leituras/mês) |
 | `gpt-5.6-luna` | **US$ 0,20 / 1 mi de tokens de entrada**, US$ 1,20 / 1 mi de saída |
 | `gpt-image-2`, qualidade `medium`, retrato/paisagem | US$ 0,041 por imagem (era o que as figuras usavam) |
+| `wan3.0-video-prime` (QwenCloud), **480P** | **US$ 0,068 por segundo** de vídeo (720P: US$ 0,14; 1080P: US$ 0,28) — *conferido em 2026-09-03* |
+| `whisper-1` (alinhamento do Short) | US$ 0,006 por minuto de áudio |
 
 | Etapa | Short (antes → agora) | `--long-take` (antes → agora) |
 | --- | --- | --- |
@@ -787,16 +827,24 @@ A auditoria pró-leigo (chamada própria ao GPT) verifica isso em código de pro
 | Lookup de mídias (`MAX_POSTS_MIDIA`: 12 / 16 posts) | US$ 0,060 (inalterado) | US$ 0,080 (inalterado) |
 | `gpt-5.6-luna` — tudo somado ¹ | ~US$ 0,044 (inalterado) | ~US$ 0,070 (inalterado) |
 | Figuras geradas (`gpt-image-2`) | US$ 0,041 → **US$ 0** | US$ 0,164 → **US$ 0** |
-| **Total por vídeo** | US$ 1,15 → 0,35 → **US$ 0,60** | US$ 1,46 → 0,55 → **US$ 0,80** |
-| ElevenLabs | ~420 créditos do plano | ~1.700 créditos |
+| Apresentadora (`wan3.0-video-prime`, 25s a 480P) ³ | **US$ 1,700** | — (o longo não a usa) |
+| Alinhamento por transcrição (`whisper-1`) | **US$ 0,003** | — |
+| **Total por vídeo** | US$ 1,15 → 0,35 → 0,60 → **US$ 2,30** | US$ 1,46 → 0,55 → **US$ 0,80** |
+| ElevenLabs | ~420 créditos → **0** (a apresentadora narra) | ~1.700 créditos |
 | Panorama do dia (YouTube Data API) | **US$ 0** — balde próprio de Search Queries | **US$ 0** |
 | Apuração (web search da OpenAI) ² | **~US$ 0,015** | **~US$ 0,015** |
+
+³ **Preço conferido na tabela oficial em 2026-09-03** (qwencloud.com): US$ 0,068 por segundo em 480P. É o preço do `-prime`, a variante **rápida**; o `wan3.0-video` normal custa **US$ 0,035/s**, praticamente a metade — se a velocidade de geração deixar de importar (o teste real fechou em 49s), trocar de modelo é a maior alavanca desta seção, valendo ~US$ 0,88 por Short.
 
 ² **Preço conferido na tabela oficial em 2026-08-30**: US$ 10,00 por 1.000 chamadas de web search (US$ 0,01 cada), mais os **tokens de conteúdo da busca** cobrados na tarifa do modelo — no `gpt-5.6-luna` (US$ 0,20/M de entrada) isso põe o total na casa de **US$ 0,015 por execução**. Sobre o volume mensal, algo entre **US$ 2 e 4/mês**, contra os ~US$ 131 atuais. É a etapa mais barata que o pipeline tem depois do panorama, e não muda a conclusão abaixo: a conta continua sendo do X.
 
 ¹ Estimado de baixo para cima a partir do código, não medido no painel da OpenAI: ~118 mil tokens de entrada e ~17 mil de saída por Short (~169 mil / ~30 mil no longo). O grosso da entrada são as **imagens de visão** — 6 clipes × 8 frames + 4 fotos + a capa de cada campeão do dossiê + 3 quadros da capa, todas reduzidas a 768px (`LADO_VISAO`) — mais as instruções, que vão repetidas em cada chamada de laudo. **É o número menos firme desta tabela; confira contra o painel da OpenAI antes de contar com ele.**
 
-**A conta é do X, não da OpenAI.** Com `X_MAX_POSTS=100`, a leitura de posts é **~93% do custo de um Short** (US$ 0,56 dos US$ 0,60, contando o lookup de mídias) e o Luna, ~7%. Mexer em modelo de texto não economiza nada relevante; as duas alavancas reais são `X_MAX_POSTS` e a **cadência dos crons**.
+**A conta do Short virou da APRESENTADORA (2026-09-03).** Ela sozinha é **US$ 1,70 dos US$ 2,30** de um Short — **74%** —, contra US$ 0,56 do X (24%) e ~US$ 0,04 do Luna (2%). A frase que ficava aqui ("a conta é do X, não da OpenAI") valia até 02/09 e **deixou de valer**: com `X_MAX_POSTS=100` a leitura de posts era ~93% do custo de um Short de US$ 0,60, e agora é o segundo item. No `--long-take` nada mudou — lá a conta continua sendo do X.
+
+Sobre o volume atual (**2 Shorts por dia em cada canal**, ~122 Shorts/mês desde 2026-09-02), a apresentadora acrescenta **~US$ 207/mês**. Em compensação, o Short parou de consumir TTS: são ~51k créditos de ElevenLabs/mês liberados, e o plano passa a servir só aos ~26 vídeos longos.
+
+**As alavancas do Short, em ordem de tamanho, agora são outras.** (1) Trocar `wan3.0-video-prime` por `wan3.0-video` corta ~US$ 0,88 por Short (~US$ 107/mês) ao preço de gerar mais devagar. (2) `VIDEO_DURACAO` virou uma alavanca **linear e direta**: cada segundo a menos no Short economiza US$ 0,068, e 20s no lugar de 25s valem ~US$ 0,34 por vídeo. (3) A cadência dos crons. (4) `X_MAX_POSTS`, que era a primeira e caiu para quarta.
 
 **As alavancas que sobraram, em ordem de tamanho.** `X_MAX_POSTS` (a coleta, US$ 0,25) e a **cadência dos crons** são as duas que movem a conta de verdade. Depois vem o pool de mídias — `MAX_POSTS_MIDIA` custa US$ 0,06 em leitura do X e ainda puxa a maior parte dos tokens de visão (cada clipe do pool são 8 frames num laudo), então `MAX_POSTS_MIDIA`/`POOL_EXTRA_CLIPES` cortam nos dois lados; a contrapartida é que sem pool a auditoria só tem como reprovar até o vídeo não sair. `MAX_CARTELAS=0` e `MAX_FOTOS=0` desligam as cartelas sem mexer na auditoria dos clipes. No `--long-take`, `X_MAX_POSTS_BUSCA=0` corta US$ 0,15 por vídeo, ao preço de o formato voltar a travar no piso de 3 clipes. A leitura da lista é **uma** chamada — não há o que economizar na forma dela, só no teto: nada é filtrável no servidor (nem data, nem mídia, nem repost), então todo post que a API manda já foi cobrado.
 

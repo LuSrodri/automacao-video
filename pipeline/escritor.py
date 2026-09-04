@@ -140,6 +140,7 @@ from urllib.parse import urlparse
 
 from openai import OpenAI
 
+from .apresentadora import PALAVRAS_POR_SEGUNDO_WAN
 from .apuracao import resumo_para_prompt as resumo_da_apuracao
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import (
@@ -176,6 +177,27 @@ PALAVRAS_POR_SEGUNDO = 2.76
 # Piso de palavras como fração do teto: o teto sozinho deixava o modelo
 # entregar metade das palavras e o vídeo sair com metade da duração-alvo.
 FRACAO_MINIMA = 0.85
+
+
+def ritmo_da_voz(cfg: Config) -> float:
+    """Palavras por segundo de vídeo, na voz de quem vai narrar ESTE formato.
+
+    OS DOIS FORMATOS DEIXARAM DE TER A MESMA VOZ em 2026-09-03. O longo segue
+    narrado pela ElevenLabs, e lá a conta é a de sempre: a média medida vezes a
+    velocidade em que o MP3 é tocado. O Short passou a ser falado pela
+    APRESENTADORA que o Wan gera, e ela fala mais devagar — 2,00 palavras/s
+    medidas contra as 2,90 da ElevenLabs a 1,05x.
+
+    A diferença não é detalhe de conversão: um Short de 25s cai de ~72 para ~50
+    palavras. Manter a régua antiga encomendaria 40% mais texto do que cabe no
+    tempo, e o modelo de vídeo resolveria o excesso do jeito dele — atropelando
+    a fala para caber nos 25 segundos pedidos, que é o único jeito que ele tem.
+    A `velocidade` não entra aqui porque no Short não há mais o que acelerar: o
+    áudio está preso aos lábios dela (ver apresentadora.extrair_audio).
+    """
+    if getattr(cfg, "formato", "curto") == "curto":
+        return PALAVRAS_POR_SEGUNDO_WAN
+    return PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
 # Ritmo mais LENTO já medido numa narração real do formato longo: 2,4
 # palavras/s, no vídeo do canal US de 26/08 (361 palavras faladas em 147,9s de
 # fala). Fica abaixo da faixa registrada em PALAVRAS_POR_SEGUNDO, que é uma
@@ -1352,12 +1374,11 @@ unidade — falado é o único jeito de o espectador receber. Pelo mesmo motivo,
 narração precisa se sustentar de olhos fechados: NUNCA escreva "como você vê no
 gráfico", "veja a tabela" nem qualquer referência ao que está na tela.
 
-NARRAÇÃO EXPRESSIVA — insira audio tags do ElevenLabs v3 no texto_video:
-palavras em inglês entre colchetes, imediatamente antes do trecho que modificam.
-Exemplos: [excited], [curious], [whispers], [surprised], [sighs], [laughs],
-[short pause]. Use de 8 a 12 tags, variando a emoção conforme o conteúdo (elas
-não são faladas nem aparecem nas legendas). A pontuação também guia a entrega:
-reticências para suspense, MAIÚSCULAS para ênfase pontual.\
+NARRAÇÃO EXPRESSIVA — NÃO use audio tags entre colchetes ([excited], [sighs] e
+afins). Quem narra este formato é uma APRESENTADORA em vídeo, e as tags não
+existem para ela: seriam apenas descartadas. A entrega é guiada pela ESCRITA —
+frases curtas, verbo forte, reticências para suspense e MAIÚSCULAS para ênfase
+pontual.\
 """ + INSTRUCOES_SEO_GEO + """
 
 Responda somente com o JSON pedido.\
@@ -2385,19 +2406,23 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     sempre a mesma: o teto é o alvo convertido em palavras, o piso é
     FRACAO_MINIMA dele.
 
-    A VELOCIDADE entra como multiplicador: a narração acelerada cabe
-    proporcionalmente mais palavras no mesmo tempo de tela, e sem isso o vídeo
-    sairia mais curto que a duração pedida — que foi exatamente o bug do piso
-    de palavras em 2026-07-16, por outro caminho. É também o que faz a queda de
-    1,25x para 1,05x no Short (2026-09-01) "adequar a geração de palavras"
-    sozinha: o mesmo clipe passa a pedir ~16% menos texto.
+    QUEM CONVERTE SEGUNDOS EM PALAVRAS É `ritmo_da_voz`, e desde 2026-09-03 a
+    resposta dela depende do formato, porque os dois deixaram de ter a mesma
+    voz. No LONGO segue a conta de sempre, com a VELOCIDADE como multiplicador:
+    a narração acelerada cabe proporcionalmente mais palavras no mesmo tempo de
+    tela, e sem isso o vídeo sairia mais curto que a duração pedida — que foi
+    exatamente o bug do piso de palavras em 2026-07-16, por outro caminho. No
+    SHORT não há mais velocidade a considerar: quem fala é a apresentadora do
+    Wan, o áudio dela não pode ser acelerado sem descolar dos lábios, e o ritmo
+    é o dela (PALAVRAS_POR_SEGUNDO_WAN).
 
-    Os SEGUNDOS aqui são sempre segundos do áudio FINAL, porque é isso que
-    PALAVRAS_POR_SEGUNDO mede desde 2026-08-05 (depois da aceleração e do corte
-    de silêncios). Não há nada a descontar por fora: o corte de silêncio já
-    está dentro da constante.
+    Os SEGUNDOS aqui são sempre segundos do áudio FINAL, porque é isso que as
+    duas réguas medem: PALAVRAS_POR_SEGUNDO desde 2026-08-05 (depois da
+    aceleração e do corte de silêncios) e PALAVRAS_POR_SEGUNDO_WAN por
+    construção (o vídeo dela dura o que foi pedido). Não há nada a descontar
+    por fora.
     """
-    ritmo = PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
+    ritmo = ritmo_da_voz(cfg)
     limite = int(cfg.video_duracao * ritmo)
     # O TERMO ABSOLUTO SAIU em 2026-08-28, com o piso duro do formato. Ele era
     # `(CURTO_MIN_S + margem) * ritmo`, e existia para o roteiro nunca sair
@@ -2514,7 +2539,7 @@ def _orcamento_das_pautas(cfg: Config, pautas_s: list[int] | None) -> str:
     """
     if not pautas_s:
         return ""
-    ritmo = PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
+    ritmo = ritmo_da_voz(cfg)
     linhas = [
         f"   - pauta {k}: ~{s}s de fala (~{max(1, int(s * ritmo))} palavras)"
         for k, s in enumerate(pautas_s, 1)

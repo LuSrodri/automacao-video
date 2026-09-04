@@ -89,6 +89,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import apresentadora as apr
 from . import enquadramento
 from .config import RAIZ
 
@@ -560,6 +561,7 @@ def montar_video(
     cartelas: list[dict] | None = None,
     publico: str = "brasil",
     formato: str = "curto",
+    apresentadora: Path | None = None,
 ) -> Path:
     """Monta o vídeo final em TELA CHEIA: clipe do X sobre o fundo borrado dele.
 
@@ -584,6 +586,12 @@ def montar_video(
     `formato`: "curto" (Shorts 9:16, com legendas queimadas) ou "longo"
     (--long-take: 16:9, sem legendas) — muda a tolerância de tempo de cada
     clipe na tela.
+
+    `apresentadora`: o MP4 quadrado que o Wan gerou (pipeline/apresentadora.py),
+    fundo verde de chroma key. Recortada e encaixada no RODAPÉ, ela comenta o
+    clipe que está passando — e, no Short, a voz do vídeo é a dela. SÓ NO
+    FORMATO CURTO: no longo a narração é da ElevenLabs e não há ninguém em
+    cena para sincronizar. None mantém a montagem como era antes de 2026-09-03.
     """
     _exigir_ffmpeg()
     if not FONTE_CREDITO.is_file():
@@ -855,6 +863,47 @@ def montar_video(
             f":enable='between(t,{ini:.3f},{fim:.3f})'[vcart{j}]"
         )
         corrente = f"vcart{j}"
+
+    # A APRESENTADORA no rodapé (2026-09-03). Entra DEPOIS do clipe e do
+    # carrossel e ANTES da legenda, do crédito e da etiqueta: ela é parte da
+    # cena, e os três textos são camada de informação por cima da cena — se ela
+    # passasse na frente, uma legenda comprida poderia sumir atrás do ombro
+    # dela.
+    #
+    # O chroma key vem calibrado de apresentadora.py, medido no verde que o
+    # próprio modelo devolve. O lado do quadrado é par de propósito: o libx264
+    # em yuv420p rejeita dimensão ímpar, e um arredondamento aqui derrubaria a
+    # montagem inteira no fim.
+    #
+    # `eof_action=repeat` segura o último quadro dela nos RESPIRO_FINAL (0,15s)
+    # em que o vídeo dura mais que a fala — tempo curto demais para o congelado
+    # aparecer, e melhor que ela sumir do quadro de um frame para o outro.
+    if apresentadora is not None:
+        if not Path(apresentadora).is_file():
+            raise SystemExit(
+                f"Vídeo da apresentadora ausente ({apresentadora}) — ele é a "
+                "voz do Short desde 2026-09-03; abortando."
+            )
+        idx_apr = prox_entrada
+        prox_entrada += 1
+        comando += ["-t", f"{duracao:.2f}", "-i", str(apresentadora)]
+        lado = max(2, round(tela_l * apr.LARGURA_FRAC / 2) * 2)
+        filtros.append(
+            f"[{idx_apr}:v]{apr.filtro_chroma()},"
+            f"scale={lado}:{lado},format=rgba,setpts=PTS-STARTPTS[apr]"
+        )
+        filtros.append(
+            f"[{corrente}][apr]overlay="
+            f"x={tela_x + round((tela_l - lado) / 2)}"
+            f":y={tela_y + tela_a - lado}"
+            f":eof_action=repeat[vapr]"
+        )
+        corrente = "vapr"
+        print(
+            f"[edicao] Apresentadora no rodapé: {lado}x{lado} "
+            f"({apr.LARGURA_FRAC:.0%} da largura), chroma key "
+            f"{apr.CHROMA_COR}."
+        )
 
     if legendas is not None:
         fontes = RAIZ / "fonts"

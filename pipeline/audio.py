@@ -1,17 +1,36 @@
-"""Narração do vídeo com o TTS da ElevenLabs (com timestamps por caractere)."""
+"""Narração do vídeo com o TTS da ElevenLabs (com timestamps por caractere).
+
+DESDE 2026-09-03 ISTO É O CAMINHO DO FORMATO LONGO. O Short deixou de ser
+narrado pela ElevenLabs: quem fala nele é a apresentadora que o Wan gera
+(pipeline/apresentadora.py), e o áudio vem junto com a imagem dela. O que este
+módulo ainda faz pelos dois formatos é o ALINHAMENTO — a ponte entre o texto do
+roteiro e o instante em que cada caractere é falado, de que legendas, cortes e
+cartelas dependem. Para o Short ele é reconstruído por transcrição
+(`alinhar_por_transcricao`), já que não há mais `with-timestamps` de onde tirá-lo.
+"""
 
 import base64
+import difflib
 import json
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 import requests
+from openai import OpenAI
 
 from .config import Config
 from .edicao import duracao_audio
 
 API_BASE = "https://api.elevenlabs.io/v1"
+
+# Modelo de transcrição usado só para RECONSTRUIR o alinhamento do Short. É o
+# mais barato que devolve timestamp por palavra (~US$ 0,006/min: um Short de
+# 25s custa US$ 0,0025, três ordens de grandeza abaixo dos US$ 1,70 do vídeo
+# dela). O texto certo já é conhecido — o roteiro —, então o que se pede à
+# transcrição não é "o que ela disse", é "quando ela disse".
+MODELO_TRANSCRICAO = "whisper-1"
 
 # Quanto a duração final pode ficar longe do alvo sem que valha refazer o
 # roteiro. 5% de um Short de 20s são 1 segundo — dentro da MATERIAL_MARGEM de
@@ -228,3 +247,204 @@ def gerar_narracao(cfg: Config, texto: str, destino: Path) -> tuple[Path, dict]:
 
     print(f"[audio] Narração salva em {destino}")
     return destino, alinhamento
+
+
+# --- Alinhamento do Short, reconstruído por transcrição -----------------------
+#
+# O Short deixou de ter narração da ElevenLabs em 2026-09-03, e com ela foi
+# embora o `with-timestamps` — a fonte de onde saíam os instantes de cada
+# caractere. Quem fala agora é a apresentadora do Wan, e o áudio dela vem sem
+# marcação nenhuma.
+#
+# O alinhamento NÃO É OPCIONAL: `legendas._palavras_com_tempos` sincroniza a
+# legenda por ele, `cortes._tempo_do_char` decide em que segundo cada clipe
+# entra, e `cartelas` posiciona a foto do post pelo mesmo caminho. Sem ele os
+# três caem no plano B — repartir o texto proporcionalmente pela duração —, que
+# é aceitável para um empurrão e péssimo como regime: fala tem pausa, e "metade
+# dos caracteres" nunca cai na metade dos segundos.
+#
+# A reconstrução aproveita uma coisa que a ElevenLabs não dava e aqui existe: o
+# TEXTO CERTO JÁ É CONHECIDO. Não se está transcrevendo para descobrir o que foi
+# dito — o roteiro diz. Transcreve-se para descobrir QUANDO. Por isso a
+# transcrição não vira legenda: ela é casada com o roteiro palavra a palavra, e
+# o que ela empresta são só os carimbos de tempo. Palavra que o transcritor
+# ouviu errado (ou não ouviu) não estraga o texto; ela apenas deixa de ancorar
+# aquele trecho, que passa a ser interpolado entre os vizinhos.
+
+
+def _sem_acento(palavra: str) -> str:
+    decomposta = unicodedata.normalize("NFD", palavra.lower())
+    return "".join(c for c in decomposta if unicodedata.category(c) != "Mn")
+
+
+def _chave(palavra: str) -> str:
+    """A palavra reduzida ao que dá para comparar entre roteiro e transcrição.
+
+    Sem acento, sem caixa e sem pontuação: o transcritor devolve "código" e
+    "Código," como coisas diferentes, e para casar as duas listas isso é ruído.
+    """
+    return "".join(c for c in _sem_acento(palavra) if c.isalnum())
+
+
+def _palavras_faladas_com_posicao(texto: str) -> list[dict]:
+    """As palavras FALADAS do texto, com onde cada uma começa e acaba nele.
+
+    O conteúdo entre colchetes (audio tags) fica de fora: ele não é falado, e
+    levá-lo para a comparação com a transcrição só produziria par errado. As
+    posições são índices do texto CRU, porque é nele que `cortes.py` procura.
+    """
+    palavras: list[dict] = []
+    profundidade, inicio = 0, None
+
+    def fechar(fim: int) -> None:
+        nonlocal inicio
+        if inicio is None:
+            return
+        chave = _chave(texto[inicio:fim])
+        if chave:
+            palavras.append({"ini": inicio, "fim": fim, "chave": chave})
+        inicio = None
+
+    for i, c in enumerate(texto):
+        if c == "[":
+            profundidade += 1
+            fechar(i)
+            continue
+        if c == "]":
+            profundidade = max(0, profundidade - 1)
+            fechar(i)
+            continue
+        if profundidade or c.isspace():
+            fechar(i)
+            continue
+        if inicio is None:
+            inicio = i
+    fechar(len(texto))
+    return palavras
+
+
+def _transcrever(cfg: Config, audio: Path) -> list[dict]:
+    """Palavras ouvidas no áudio, com início e fim em segundos."""
+    cliente = OpenAI(api_key=cfg.openai_api_key)
+    with open(audio, "rb") as arquivo:
+        resposta = cliente.audio.transcriptions.create(
+            model=MODELO_TRANSCRICAO,
+            file=arquivo,
+            response_format="verbose_json",
+            timestamp_granularities=["word"],
+        )
+    ouvidas = []
+    for palavra in getattr(resposta, "words", None) or []:
+        chave = _chave(getattr(palavra, "word", ""))
+        if chave:
+            ouvidas.append(
+                {
+                    "chave": chave,
+                    "ini": float(palavra.start),
+                    "fim": float(palavra.end),
+                }
+            )
+    return ouvidas
+
+
+def _ancorar(roteiro: list[dict], ouvidas: list[dict]) -> int:
+    """Carimba nas palavras do roteiro o tempo das que o transcritor casou.
+
+    Compara as duas listas por `difflib`, que acha os trechos IGUAIS mesmo com
+    palavra sobrando, faltando ou trocada no meio — que é exatamente o que uma
+    transcrição produz. Devolve quantas palavras ficaram ancoradas.
+    """
+    casador = difflib.SequenceMatcher(
+        a=[p["chave"] for p in roteiro],
+        b=[p["chave"] for p in ouvidas],
+        autojunk=False,
+    )
+    ancoradas = 0
+    for a, b, tamanho in casador.get_matching_blocks():
+        for k in range(tamanho):
+            roteiro[a + k]["t_ini"] = ouvidas[b + k]["ini"]
+            roteiro[a + k]["t_fim"] = ouvidas[b + k]["fim"]
+            ancoradas += 1
+    return ancoradas
+
+
+def _ancoras_de_caractere(
+    texto: str, roteiro: list[dict], duracao: float
+) -> list[tuple[int, float]]:
+    """Pares (índice de caractere, instante) crescentes, para interpolar entre eles.
+
+    Só entram as palavras ANCORADAS. Tudo que ficou sem carimbo — palavra que o
+    transcritor não ouviu, espaço, pontuação, audio tag — cai no meio de dois
+    pares e recebe o tempo por interpolação linear, proporcional ao número de
+    caracteres. As pontas são fixas: o caractere 0 começa em 0s e o fim do
+    texto cai na duração do áudio.
+    """
+    ancoras = [(0, 0.0)]
+    for palavra in roteiro:
+        if "t_ini" not in palavra:
+            continue
+        ancoras.append((palavra["ini"], float(palavra["t_ini"])))
+        ancoras.append((palavra["fim"], float(palavra["t_fim"])))
+    ancoras.append((len(texto), float(duracao)))
+
+    # Monotonia nos dois eixos. Um carimbo fora de ordem (o transcritor às
+    # vezes devolve fim < início em palavra colada) faria a interpolação andar
+    # para trás e a legenda piscar; o par que não avança é simplesmente
+    # descartado.
+    limpas: list[tuple[int, float]] = []
+    for indice, tempo in ancoras:
+        if limpas and (indice <= limpas[-1][0] or tempo < limpas[-1][1]):
+            continue
+        limpas.append((indice, tempo))
+    return limpas
+
+
+def alinhar_por_transcricao(cfg: Config, audio: Path, texto: str) -> dict:
+    """Alinhamento por caractere do `texto` sobre `audio`, no formato do pipeline.
+
+    Devolve o mesmo dicionário que a ElevenLabs devolvia — characters /
+    character_start_times_seconds / character_end_times_seconds —, com
+    `"".join(characters) == texto` exatamente, que é a conferência que
+    `cortes._tempo_do_char` faz antes de confiar nele.
+    """
+    duracao = duracao_audio(audio)
+    palavras = _palavras_faladas_com_posicao(texto)
+    ouvidas: list[dict] = []
+    if palavras:
+        try:
+            ouvidas = _transcrever(cfg, audio)
+        except Exception as e:  # noqa: BLE001 — ver o comentário abaixo
+            # AQUI NÃO SE ABORTA, e é a única exceção à diretriz de fail-fast
+            # de 2026-07-15 neste caminho. A esta altura o vídeo da
+            # apresentadora já foi gerado e PAGO (US$ 1,70), o áudio existe e o
+            # Short sai inteiro sem isto — só com a legenda repartida por
+            # proporção, como era o plano B de sempre. Jogar a execução fora
+            # por causa do carimbo de tempo custaria mais do que o defeito.
+            print(f"[audio] aviso: transcrição para o alinhamento falhou ({e}).")
+
+    ancoradas = _ancorar(palavras, ouvidas) if ouvidas else 0
+    ancoras = _ancoras_de_caractere(texto, palavras, duracao)
+    print(
+        f"[audio] Alinhamento reconstruído: {ancoradas}/{len(palavras)} "
+        f"palavras ancoradas na transcrição ({duracao:.1f}s)."
+    )
+
+    inicios: list[float] = []
+    tramo = 0
+    for indice in range(len(texto) + 1):
+        while tramo + 1 < len(ancoras) - 1 and ancoras[tramo + 1][0] <= indice:
+            tramo += 1
+        i0, t0 = ancoras[tramo]
+        i1, t1 = ancoras[min(tramo + 1, len(ancoras) - 1)]
+        fracao = (indice - i0) / (i1 - i0) if i1 > i0 else 0.0
+        inicios.append(round(t0 + (t1 - t0) * min(max(fracao, 0.0), 1.0), 4))
+
+    alinhamento = {
+        "characters": list(texto),
+        "character_start_times_seconds": inicios[:-1],
+        "character_end_times_seconds": inicios[1:],
+    }
+    (audio.parent / "alinhamento.json").write_text(
+        json.dumps(alinhamento, ensure_ascii=False), encoding="utf-8"
+    )
+    return alinhamento

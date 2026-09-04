@@ -808,12 +808,25 @@ class Config:
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
     tts_model: str = "eleven_v3"
+    # Chave do QwenCloud, que gera a APRESENTADORA do Short (2026-09-03). Só o
+    # formato CURTO a usa: é ela que vira a voz e a imagem de quem comenta o
+    # clipe. O formato longo segue narrado pela ElevenLabs e não precisa desta
+    # chave — por isso ela não entra na lista de variáveis obrigatórias do
+    # `carregar_config`, e sim numa conferência que acontece depois, quando o
+    # formato já foi decidido (main.py).
+    qwen_api_key: str = ""
     video_duracao: int = 25
     # Velocidade da narração (e, por consequência, do ritmo do vídeo inteiro:
     # os cortes, as legendas e as sobreposições saem do alinhamento, que é
-    # reescalado junto). O Short é ACELERADO — é o que o feed premia — e o
+    # reescalado junto). O Short era ACELERADO — é o que o feed premia — e o
     # formato longo roda em velocidade NORMAL, porque é análise e o espectador
     # precisa acompanhar o raciocínio (ver ativar_formato_longo).
+    #
+    # DESDE 2026-09-03 ISTO SÓ VALE PARA O FORMATO LONGO. Quem fala no Short é
+    # a apresentadora do Wan, e o áudio dela não pode ser acelerado sem
+    # descolar dos lábios — VIDEO_VELOCIDADE deixou de ter efeito lá. O valor
+    # continua sendo conferido abaixo porque o env var é o mesmo dos dois
+    # formatos e uma faixa de sanidade não custa nada.
     velocidade: float = CURTO_VELOCIDADE
     # JANELA DE TEMPO — NÃO SE APLICA MAIS À LISTA DO X (2026-08-25, pedido do
     # usuário). A v2 não filtra data no endpoint de lista, então recortar por
@@ -980,6 +993,7 @@ def carregar_config(exige_lista: bool = True) -> Config:
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
+        qwen_api_key=(os.getenv("QWEN_API_KEY", "") or "").strip(),
         video_duracao=int(os.getenv("VIDEO_DURACAO", "25")),
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", str(CURTO_VELOCIDADE))),
         janela_horas=int(os.getenv("JANELA_HORAS", "8")),
