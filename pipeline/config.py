@@ -807,6 +807,13 @@ class Config:
     text_model: str = "gpt-5.6-luna"
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
+    # A VOZ DA INFLUENCER (2026-09-04, IDs dados pelo usuário). É a voz do
+    # SHORT, e é dela — de quem aparece na tela —, não do canal: os IDs acima
+    # seguem sendo a voz em off do formato longo. As duas ficam separadas de
+    # propósito, para trocar a voz da influencer não mexer no longo e
+    # vice-versa (`audio._voz`).
+    voice_id_influencer: str = "ohZOfA9iwlZ5nOsoY7LB"
+    voice_id_influencer_usa: str = "k9KXsQFJqzAoomTCOrJB"
     tts_model: str = "eleven_v3"
     # Chave do QwenCloud, que gera a INFLUENCER do Short (2026-09-03). Só o
     # formato CURTO a usa: é ela que vira a voz e a imagem de quem comenta o
@@ -815,18 +822,21 @@ class Config:
     # `carregar_config`, e sim numa conferência que acontece depois, quando o
     # formato já foi decidido (main.py).
     qwen_api_key: str = ""
-    video_duracao: int = 25
+    # TETO do Short, derivado da faixa de clipe (`_teto_do_short`): 30s de
+    # clipe / MATERIAL_MARGEM = 26s. Não é meta — quem dimensiona o roteiro é o
+    # material da pauta (`alvo_pelo_material`).
+    video_duracao: int = 26
     # Velocidade da narração (e, por consequência, do ritmo do vídeo inteiro:
     # os cortes, as legendas e as sobreposições saem do alinhamento, que é
     # reescalado junto). O Short era ACELERADO — é o que o feed premia — e o
     # formato longo roda em velocidade NORMAL, porque é análise e o espectador
     # precisa acompanhar o raciocínio (ver ativar_formato_longo).
     #
-    # DESDE 2026-09-03 ISTO SÓ VALE PARA O FORMATO LONGO. Quem fala no Short é
-    # a influencer do Wan, e o áudio dela não pode ser acelerado sem
-    # descolar dos lábios — VIDEO_VELOCIDADE deixou de ter efeito lá. O valor
-    # continua sendo conferido abaixo porque o env var é o mesmo dos dois
-    # formatos e uma faixa de sanidade não custa nada.
+    # VOLTOU A VALER NOS DOIS FORMATOS em 2026-09-04. Entre 09-03 e 09-04 não
+    # havia o que acelerar no Short: o áudio vinha de dentro do modelo de vídeo,
+    # preso aos lábios. Com a voz de novo na ElevenLabs e o lipsync feito DEPOIS
+    # dela, acelerar o MP3 voltou a ser possível — e a boca acompanha, porque o
+    # vídeo é gerado em cima do áudio já acelerado.
     velocidade: float = CURTO_VELOCIDADE
     # JANELA DE TEMPO — NÃO SE APLICA MAIS À LISTA DO X (2026-08-25, pedido do
     # usuário). A v2 não filtra data no endpoint de lista, então recortar por
@@ -936,6 +946,34 @@ class Config:
     registro_path: Path = field(default_factory=lambda: RAIZ / "videos.txt")
 
 
+def _teto_do_short() -> int:
+    """O teto de duração do Short, DERIVADO da faixa de clipe que ele coleta.
+
+    O NÚMERO DEIXOU DE SER SOLTO em 2026-09-04 (pedido do usuário: "o clipe
+    coletado do X pode ter de 15 a 30s, isso é hard limited; logo o teto de 25s
+    não faz nenhum sentido"). Ele estava certo, e a origem da contradição é
+    histórica: `VIDEO_DURACAO=25` nasceu em 2026-08-09 como a META do Short, num
+    desenho em que a duração era escolhida e o material se virava para cobri-la
+    (com loop de clipe, inclusive). Depois que o MATERIAL passou a dimensionar o
+    roteiro (2026-08-28) o 25 virou só teto, e quando a FAIXA DE CLIPE de 15-30s
+    entrou (2026-09-02) ninguém reconciliou os dois: o máximo que a faixa
+    consegue produzir é 30/1,15 = 26s, então o teto de 25 não fazia nada além de
+    jogar fora ~1s de material nos clipes mais longos.
+
+    Agora ele SAI da faixa: teto = clipe máximo / MATERIAL_MARGEM. Mexer na
+    faixa move o teto junto, e a contradição não tem como voltar.
+
+    `VIDEO_DURACAO` continua podendo sobrepor — é a saída para encurtar o Short
+    por decisão editorial ou por custo (cada segundo a menos são US$ 0,035 de
+    Wan), e não por engano de coerência.
+    """
+    posto = (os.getenv("VIDEO_DURACAO", "") or "").strip()
+    if posto:
+        return int(posto)
+    maximo = int(os.getenv("CURTO_MAX_DUR_CLIPE", "30"))
+    return max(DUR_MINIMA_TECNICA_S, int(maximo / MATERIAL_MARGEM))
+
+
 def carregar_config(exige_lista: bool = True) -> Config:
     load_dotenv(RAIZ / ".env")
 
@@ -992,9 +1030,15 @@ def carregar_config(exige_lista: bool = True) -> Config:
         text_model=os.getenv("TEXT_MODEL", "gpt-5.6-luna"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
+        voice_id_influencer=os.getenv(
+            "ELEVENLABS_VOICE_ID_INFLUENCER", "ohZOfA9iwlZ5nOsoY7LB"
+        ),
+        voice_id_influencer_usa=os.getenv(
+            "ELEVENLABS_VOICE_ID_INFLUENCER_USA", "k9KXsQFJqzAoomTCOrJB"
+        ),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
         qwen_api_key=(os.getenv("QWEN_API_KEY", "") or "").strip(),
-        video_duracao=int(os.getenv("VIDEO_DURACAO", "25")),
+        video_duracao=_teto_do_short(),
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", str(CURTO_VELOCIDADE))),
         janela_horas=int(os.getenv("JANELA_HORAS", "8")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),

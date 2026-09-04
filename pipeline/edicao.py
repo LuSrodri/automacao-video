@@ -870,10 +870,13 @@ def montar_video(
     # passasse na frente, uma legenda comprida poderia sumir atrás do ombro
     # dela.
     #
-    # O chroma key vem calibrado de influencer.py, medido no verde que o
-    # próprio modelo devolve. O lado do quadrado é par de propósito: o libx264
-    # em yuv420p rejeita dimensão ímpar, e um arredondamento aqui derrubaria a
-    # montagem inteira no fim.
+    # O chroma key é MEDIDO NESTE vídeo, não constante (2026-09-04): desde que
+    # o lipsync passou a ser feito no modo referência do Wan, o modelo repinta
+    # o fundo a cada geração, e o verde muda de um Short para o outro (0x489850
+    # num, 0x4E9656 no seguinte, medidos). `influencer.filtro_chroma` lê a
+    # borda do arquivo e monta o filtro com a cor de agora. O lado do quadrado
+    # é par de propósito: o libx264 em yuv420p rejeita dimensão ímpar, e um
+    # arredondamento aqui derrubaria a montagem inteira no fim.
     #
     # `eof_action=repeat` segura o último quadro dela nos RESPIRO_FINAL (0,15s)
     # em que o vídeo dura mais que a fala — tempo curto demais para o congelado
@@ -881,15 +884,15 @@ def montar_video(
     if influencer is not None:
         if not Path(influencer).is_file():
             raise SystemExit(
-                f"Vídeo da influencer ausente ({influencer}) — ele é a "
-                "voz do Short desde 2026-09-03; abortando."
+                f"Vídeo da influencer ausente ({influencer}) — é ele que "
+                "põe na tela quem narra o Short; abortando."
             )
         idx_inf = prox_entrada
         prox_entrada += 1
         comando += ["-t", f"{duracao:.2f}", "-i", str(influencer)]
         lado = max(2, round(tela_l * inf.LARGURA_FRAC / 2) * 2)
         filtros.append(
-            f"[{idx_inf}:v]{inf.filtro_chroma()},"
+            f"[{idx_inf}:v]{inf.filtro_chroma(Path(influencer))},"
             f"scale={lado}:{lado},format=rgba,setpts=PTS-STARTPTS[inf]"
         )
         filtros.append(
@@ -901,8 +904,7 @@ def montar_video(
         corrente = "vinf"
         print(
             f"[edicao] Influencer no rodapé: {lado}x{lado} "
-            f"({inf.LARGURA_FRAC:.0%} da largura), chroma key "
-            f"{inf.CHROMA_COR}."
+            f"({inf.LARGURA_FRAC:.0%} da largura)."
         )
 
     if legendas is not None:

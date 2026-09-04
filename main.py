@@ -86,15 +86,17 @@ Fluxo:
    esgotadas as TENTATIVAS_TREND candidatas das CURTIDAS, o laço lê a LISTA do
    X e recomeça com a pauta dela (2026-08-29) — só depois de as duas fontes
    falharem é que a execução aborta.
-8. A VOZ DEPENDE DO FORMATO desde 2026-09-03. No SHORT quem fala é a
-   INFLUENCER: o Wan (wan3.0-video-prime) gera, a partir de
-   influencer.png, um vídeo quadrado dela em chroma key verde falando o
-   roteiro, e o áudio que vem junto É a narração — nada de TTS, e nada de
-   acelerar ou aparar depois, porque o áudio está preso aos lábios dela. O
-   alinhamento, que a ElevenLabs entregava de graça, é reconstruído casando o
-   roteiro com a transcrição do áudio (audio.alinhar_por_transcricao). No
-   formato LONGO nada mudou: ElevenLabs narra, o pipeline roda em velocidade
-   normal e corta os silêncios, e os timestamps acompanham as duas coisas.
+8. A ELEVENLABS NARRA OS DOIS FORMATOS, e no SHORT o Wan faz o LIPSYNC em cima
+   dela (2026-09-04). A voz do Short é a da INFLUENCER
+   (ELEVENLABS_VOICE_ID_INFLUENCER, uma voz por canal), e o vídeo dela sai do
+   `wan3.0-video` no modo referência: influencer.png como `reference_image` e o
+   MP3 como `reference_audio`, devolvendo um quadrado em chroma key verde com a
+   boca acompanhando a fala. Como o áudio é anterior ao vídeo, seguem valendo o
+   corte de silêncio, o ajuste de velocidade e a segunda narração quando o
+   texto não cabe — o que se gera depois é a imagem. O `reference_audio` do Wan
+   é limitado a 15s (medido na API), então a narração é partida em pedaços de
+   segundos inteiros, gerados em paralelo e emendados. No formato LONGO não há
+   influencer: é voz em off sobre o material.
 9. A IA planeja os cortes: um "editor de cortes" casa cada clipe aprovado com
    o momento exato da narração (citações do texto -> timestamps do
    alinhamento).
@@ -138,14 +140,12 @@ Formatos (o mesmo fluxo acima, com parâmetros diferentes):
   cobre a narração e a montagem encaixa as janelas no que existe
   (`_encaixar_no_material`, edicao.py). O ZOOM INTELIGENTE que transforma clipe
   horizontal em vertical (enquadramento.py) continua valendo.
-  QUEM FALA NO SHORT É A INFLUENCER (2026-09-03): o vídeo dela, gerado
-  pelo Wan a partir de influencer.png, entra recortado por chroma key no
-  rodapé, e o áudio que vem junto É a narração — a ElevenLabs ficou só com o
-  formato longo. Com isso a DURAÇÃO deixou de ser fechada em camadas de
-  correção (velocidade + reescrita, que mediam o resultado do TTS depois do
-  fato) e passou a ser um PARÂMETRO: pede-se a duração e o modelo cabe a fala
-  nela. O que resta ao orçamento de PALAVRAS é encomendar o texto no ritmo
-  dela, que é mais lento que o do TTS (escritor.ritmo_da_voz).
+  QUEM FALA NO SHORT É A INFLUENCER (2026-09-03), COM A VOZ DA ELEVENLABS E O
+  LIPSYNC DO WAN (2026-09-04): a narração é gerada primeiro, na voz dela
+  (ELEVENLABS_VOICE_ID_INFLUENCER), e só depois o Wan gera o vídeo em que a
+  boca acompanha esse MP3 — que entra recortado por chroma key no rodapé. Como
+  o áudio vem antes da imagem, a duração continua sendo fechada como sempre
+  foi: velocidade dentro da faixa e, se não couber, reescrita do texto.
 - `--long-take`: vídeo de ANÁLISE em 16:9 (1920x1080), com TETO de
   LONG_DURACAO (máximo LONGO_MAX_S=150s) e sem piso, SEM legendas e em
   velocidade NORMAL, para os dois canais (combina com `-usa`). O roteiro
@@ -224,17 +224,19 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-from pipeline.influencer import extrair_audio as extrair_audio_influencer
 from pipeline.influencer import gerar as gerar_influencer
-from pipeline.audio import alinhar_por_transcricao, gerar_narracao
+from pipeline.audio import ajustar_ao_alvo, gerar_narracao
 from pipeline.auditoria import auditar_midias
 from pipeline.cartelas import gerar_cartelas
 from pipeline.classificacao import classificar_trends, filtrar_por_macrotema
 from pipeline.config import (
+    CURTO_VELOCIDADE_MAX,
+    CURTO_VELOCIDADE_MIN,
     LONGO_MAX_S,
     LONGO_MIN_CLIPES_APROVADOS,
     LONGO_NUM_TRENDS,
     MATERIAL_MARGEM,
+    TENTATIVAS_NARRACAO,
     TENTATIVAS_TREND,
     alvo_pelo_material,
     alvos_das_pautas,
@@ -253,7 +255,9 @@ from pipeline.edicao import (
 )
 from pipeline.montagem_longa import montar_video_longo
 from pipeline.escritor import (
+    contar_palavras_faladas,
     gerar_roteiro,
+    reescrever_para_duracao,
     selecionar_trend,
     selecionar_trends_longo,
 )
@@ -753,73 +757,90 @@ def main() -> None:
 
     marcar_memoria("antes da narração")
 
-    # A NARRAÇÃO SE PARTIU EM DOIS CAMINHOS (2026-09-03). Até aqui os dois
-    # formatos eram narrados pela ElevenLabs e o Short tinha, por cima, uma
-    # dança de correção que não existe mais: narrar, MEDIR e — se o áudio não
-    # coubesse na faixa de velocidade de 1,00x a 1,15x — REFAZER o texto e
-    # narrar de novo (2026-09-01). Aquilo resolvia um problema que era do TTS:
-    # a duração saía do texto, com ±11% de erro de ritmo, e só depois se
-    # descobria se tinha dado certo.
+    # A VOZ VOLTOU A SER DA ELEVENLABS NOS DOIS FORMATOS (2026-09-04, pedido do
+    # usuário: "a voz vai ser gerada com o elevenlabs, e o wan fará o lipsync").
+    # Por um dia, entre 09-03 e 09-04, o Short foi narrado por dentro do modelo
+    # de vídeo: o Wan recebia o TEXTO e devolvia imagem e fala juntas. O desenho
+    # funcionava, mas prendia o áudio aos lábios, e com ele foram três coisas
+    # que agora voltam — o corte de silêncio, o ajuste de velocidade e a
+    # segunda narração quando o texto não cabe no tempo. Aqui o lipsync é feito
+    # DEPOIS, em cima do MP3 já pronto e já ajustado, então nada disso conflita.
     #
-    # No Short esse problema deixou de existir junto com o TTS. A influencer
-    # do Wan recebe a duração como PARÂMETRO e entrega aquilo — não há erro de
-    # ritmo para absorver, nem faixa de velocidade para estourar, nem segunda
-    # tentativa a encomendar. O que se paga em troca é a impossibilidade de
-    # tocar no áudio depois (ver o bloco abaixo) e um ritmo de fala mais lento,
-    # que o orçamento de palavras já leva em conta.
+    # NARRAR, MEDIR E — SE NÃO COUBE — REFAZER O TEXTO (2026-09-01). A duração
+    # do vídeo é decidida em PALAVRAS e conferida depois dos fatos: o orçamento
+    # usa PALAVRAS_POR_SEGUNDO, que é a média de dez narrações, e o TTS varia
+    # ±11% em torno dela. Esse erro é absorvido pela velocidade até o limite da
+    # faixa de 1,00x a 1,15x; passando disso, a alavanca é o TEXTO.
     #
-    # O formato longo não mudou nada.
-    if cfg.formato == "curto":
-        # QUEM NARRA O SHORT É A INFLUENCER (2026-09-03, pedido do usuário:
-        # "será totalmente Wan; ElevenLabs fica para os vídeos longos"). O
-        # vídeo dela vem com a fala junto, e é essa fala que vira a narração —
-        # não há TTS no caminho do Short.
-        #
-        # ISSO APAGA TRÊS ETAPAS que existiam só para o Short, e não por
-        # simplificação: nenhuma delas é POSSÍVEL aqui.
-        #   - `aparar_silencios` cortaria pedaços do áudio, e a boca dela
-        #     continuaria se mexendo nos pedaços cortados;
-        #   - `ajustar_ao_alvo` acelera ou desacelera o MP3, o que descolaria a
-        #     fala dos lábios do mesmo jeito;
-        #   - a segunda tentativa de narração existia para o texto CABER na
-        #     duração; agora a duração é um PARÂMETRO que o modelo obedece —
-        #     medido em 2026-09-03, as 50 palavras do roteiro couberam em
-        #     0,0s → 24,84s dos 25s pedidos, sem cortar nada.
-        # Em troca, o orçamento de palavras passou a ser convertido pelo ritmo
-        # DELA (escritor.ritmo_da_voz), que é mais lento que o do TTS.
-        video_influencer = gerar_influencer(
-            cfg,
-            roteiro["texto_video"],
-            float(cfg.video_duracao),
-            pasta / "influencer.mp4",
-        )
-        narracao = extrair_audio_influencer(
-            video_influencer, pasta / "narracao.wav"
-        )
-        # O alinhamento não vem mais de graça com a narração: sem o
-        # `with-timestamps` da ElevenLabs, ele é reconstruído casando o roteiro
-        # (que já é o texto certo) com a transcrição do áudio dela, que empresta
-        # só os carimbos de tempo.
-        alinhamento = alinhar_por_transcricao(
-            cfg, narracao, roteiro["texto_video"]
-        )
-        dur_narracao = duracao_audio(narracao)
-        print(
-            f"[main] Short narrado pela influencer: {dur_narracao:.1f}s "
-            f"(alvo de {cfg.video_duracao}s)."
-        )
-    else:
-        # FORMATO LONGO: narração da ElevenLabs, como sempre foi. A faixa de
-        # velocidade e a reescrita por duração nunca foram deste caminho — o
-        # longo narra em 1.0x e o tamanho dele é resolvido antes, pela duração
-        # flexível de cada capítulo.
-        video_influencer = None
+    # A segunda tentativa não é um chute repetido: a primeira narração deu o
+    # ritmo REAL desta voz com este texto, e é por ele que o novo tamanho é
+    # encomendado.
+    #
+    # SÓ NO SHORT. O longo narra em 1.0x por decisão editorial e não tem faixa
+    # de velocidade para estourar; o tamanho dele é resolvido antes, pela
+    # duração flexível de cada capítulo.
+    for tentativa_audio in range(1, TENTATIVAS_NARRACAO + 1):
         narracao, alinhamento = gerar_narracao(
             cfg, roteiro["texto_video"], pasta / "narracao.mp3"
         )
         narracao, alinhamento, dur_narracao = aparar_silencios(
             narracao, alinhamento
         )
+        if cfg.formato != "curto":
+            coube = True
+            break
+
+        # A duração ANTES do ajuste é a que mede o ritmo desta voz na
+        # velocidade de BASE — depois do ajuste ela já traz a correção dentro.
+        palavras_narradas = contar_palavras_faladas(roteiro["texto_video"])
+        dur_na_base = dur_narracao
+        alinhamento, dur_narracao, coube = ajustar_ao_alvo(
+            narracao,
+            alinhamento,
+            float(cfg.video_duracao),
+            dur_narracao,
+            base=cfg.velocidade,
+            minimo=CURTO_VELOCIDADE_MIN,
+            maximo=CURTO_VELOCIDADE_MAX,
+        )
+        if coube or tentativa_audio == TENTATIVAS_NARRACAO:
+            break
+
+        # Ritmo MEDIDO, em palavras por segundo de áudio NA VELOCIDADE DE BASE.
+        ritmo = palavras_narradas / max(dur_na_base, 0.1)
+        roteiro = reescrever_para_duracao(
+            cfg,
+            roteiro,
+            max(1, int(cfg.video_duracao * ritmo)),
+            f"tentativa {tentativa_audio}/{TENTATIVAS_NARRACAO} de fechar "
+            f"{cfg.video_duracao}s dentro da faixa de velocidade",
+        )
+        (pasta / "roteiro.json").write_text(
+            json.dumps(roteiro, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    if cfg.formato == "curto" and not coube:
+        print(
+            f"[aviso] Depois de {TENTATIVAS_NARRACAO} narração(ões) o vídeo "
+            f"ficou em {dur_narracao:.1f}s contra o alvo de "
+            f"{cfg.video_duracao}s; seguindo — a MATERIAL_MARGEM da montagem "
+            "cobre a diferença."
+        )
+
+    # O LIPSYNC VEM DEPOIS DA NARRAÇÃO PRONTA. O vídeo da influencer é gerado a
+    # partir do MP3 final — já aparado, já na velocidade certa —, e por isso a
+    # boca dela acompanha exatamente o áudio que vai ao ar. É também o último
+    # lugar onde isso pode ser feito: qualquer coisa que mexesse no áudio
+    # depois daqui desencostaria os lábios.
+    #
+    # Ele volta SEM ÁUDIO: a narração do Short é o arquivo da ElevenLabs, e o
+    # vídeo dela é imagem. O formato longo não tem influencer.
+    if cfg.formato == "curto":
+        video_influencer = gerar_influencer(
+            cfg, narracao, pasta / "influencer.mp4"
+        )
+    else:
+        video_influencer = None
 
     largura, altura = cfg.video_largura, cfg.video_altura
     duracao = duracao_audio(narracao) + RESPIRO_FINAL

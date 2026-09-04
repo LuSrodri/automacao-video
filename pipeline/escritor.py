@@ -140,7 +140,6 @@ from urllib.parse import urlparse
 
 from openai import OpenAI
 
-from .influencer import PALAVRAS_POR_SEGUNDO_WAN
 from .apuracao import resumo_para_prompt as resumo_da_apuracao
 from .classificacao import MACROTEMAS, MACROTEMAS_DESCRICAO
 from .config import (
@@ -182,21 +181,16 @@ FRACAO_MINIMA = 0.85
 def ritmo_da_voz(cfg: Config) -> float:
     """Palavras por segundo de vídeo, na voz de quem vai narrar ESTE formato.
 
-    OS DOIS FORMATOS DEIXARAM DE TER A MESMA VOZ em 2026-09-03. O longo segue
-    narrado pela ElevenLabs, e lá a conta é a de sempre: a média medida vezes a
-    velocidade em que o MP3 é tocado. O Short passou a ser falado pela
-    INFLUENCER que o Wan gera, e ela fala mais devagar — 2,00 palavras/s
-    medidas contra as 2,90 da ElevenLabs a 1,05x.
+    OS DOIS FORMATOS VOLTARAM A TER A MESMA VOZ em 2026-09-04, e por isso a
+    conta voltou a ser uma só: a média medida da ElevenLabs vezes a velocidade
+    em que o MP3 é tocado. Entre 09-03 e 09-04 o Short teve régua própria
+    (2,00 palavras/s, o ritmo da voz que o Wan gerava junto com a imagem, contra
+    2,90 da ElevenLabs a 1,05x) — com a voz de volta ao TTS, e o lipsync feito
+    DEPOIS em cima dele, o que dita o ritmo é de novo o TTS.
 
-    A diferença não é detalhe de conversão: um Short de 25s cai de ~72 para ~50
-    palavras. Manter a régua antiga encomendaria 40% mais texto do que cabe no
-    tempo, e o modelo de vídeo resolveria o excesso do jeito dele — atropelando
-    a fala para caber nos 25 segundos pedidos, que é o único jeito que ele tem.
-    A `velocidade` não entra aqui porque no Short não há mais o que acelerar: o
-    áudio está preso aos lábios dela (ver influencer.extrair_audio).
+    A VELOCIDADE conta: a narração acelerada cabe proporcionalmente mais
+    palavras no mesmo tempo de tela, e ignorar isso encomendaria texto de menos.
     """
-    if getattr(cfg, "formato", "curto") == "curto":
-        return PALAVRAS_POR_SEGUNDO_WAN
     return PALAVRAS_POR_SEGUNDO * (getattr(cfg, "velocidade", 1.0) or 1.0)
 # Ritmo mais LENTO já medido numa narração real do formato longo: 2,4
 # palavras/s, no vídeo do canal US de 26/08 (361 palavras faladas em 147,9s de
@@ -2406,21 +2400,16 @@ def _faixa_palavras(cfg: Config) -> tuple[int, int]:
     sempre a mesma: o teto é o alvo convertido em palavras, o piso é
     FRACAO_MINIMA dele.
 
-    QUEM CONVERTE SEGUNDOS EM PALAVRAS É `ritmo_da_voz`, e desde 2026-09-03 a
-    resposta dela depende do formato, porque os dois deixaram de ter a mesma
-    voz. No LONGO segue a conta de sempre, com a VELOCIDADE como multiplicador:
-    a narração acelerada cabe proporcionalmente mais palavras no mesmo tempo de
-    tela, e sem isso o vídeo sairia mais curto que a duração pedida — que foi
-    exatamente o bug do piso de palavras em 2026-07-16, por outro caminho. No
-    SHORT não há mais velocidade a considerar: quem fala é a influencer do
-    Wan, o áudio dela não pode ser acelerado sem descolar dos lábios, e o ritmo
-    é o dela (PALAVRAS_POR_SEGUNDO_WAN).
+    QUEM CONVERTE SEGUNDOS EM PALAVRAS É `ritmo_da_voz`, com a VELOCIDADE como
+    multiplicador: a narração acelerada cabe proporcionalmente mais palavras no
+    mesmo tempo de tela, e sem isso o vídeo sairia mais curto que a duração
+    pedida — que foi exatamente o bug do piso de palavras em 2026-07-16, por
+    outro caminho. A régua vale para os DOIS formatos de novo desde 2026-09-04,
+    quando a voz do Short voltou a ser a da ElevenLabs.
 
-    Os SEGUNDOS aqui são sempre segundos do áudio FINAL, porque é isso que as
-    duas réguas medem: PALAVRAS_POR_SEGUNDO desde 2026-08-05 (depois da
-    aceleração e do corte de silêncios) e PALAVRAS_POR_SEGUNDO_WAN por
-    construção (o vídeo dela dura o que foi pedido). Não há nada a descontar
-    por fora.
+    Os SEGUNDOS aqui são sempre segundos do áudio FINAL, porque é isso que
+    PALAVRAS_POR_SEGUNDO mede desde 2026-08-05: depois da aceleração e do corte
+    de silêncios. Não há nada a descontar por fora.
     """
     ritmo = ritmo_da_voz(cfg)
     limite = int(cfg.video_duracao * ritmo)
