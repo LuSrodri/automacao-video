@@ -34,7 +34,9 @@ TRÊS CONSEQUÊNCIAS MEDIDAS, todas contra a API real em 2026-09-04:
 2. O TETO DO ÁUDIO É 15s, E É DA API. Não é o teto do vídeo, que segue em 30s:
    `reference_audio` é material de REFERÊNCIA, e o Wan limita referência a 15s
    (vale igual para `reference_video`). Medido: um MP3 de 22,08s derruba a
-   tarefa com `duration should be at most 15s, got 22.08s`. Como o Short nasce
+   tarefa com `duration should be at most 15s, got 22.08s`, e o `-prime` recusa
+   igual — 29,97s devolvem `duration should be at most 15s, got 29.975s`. Não
+   há variante do modelo que aceite os 30s de uma vez. Como o Short nasce
    entre 13s e 25s (clipe de 15-30s dividido por MATERIAL_MARGEM, com teto de
    VIDEO_DURACAO), a narração é PARTIDA em pedaços de segundos inteiros e cada
    um vira uma geração, emendadas no fim. Um Short curto cabe em uma só.
@@ -82,10 +84,15 @@ ROTA_GERAR = "/services/aigc/video-generation/video-synthesis"
 ROTA_TAREFA = "/tasks/"
 ROTA_UPLOAD = "/uploads"
 
-# O MESMO MODELO de 2026-09-04 (`wan3.0-video`, o normal e não o `-prime`): a
-# troca de ontem cortou metade do preço pagando com latência, e nada aqui muda
-# essa conta. O env var existe para a volta ser uma variável, não um deploy.
-MODELO = os.getenv("WAN_MODELO", "wan3.0-video").strip() or "wan3.0-video"
+# DE VOLTA AO `-prime` (2026-09-04, 3ª mudança do dia, pedido do usuário). Ele
+# tinha saído de manhã por custo — é a variante ACELERADA, US$ 0,068/s contra
+# US$ 0,035/s do normal em 480P —, e volta agora que o Short depende de um
+# lipsync que ainda está sendo acertado: com o -prime a rodada de teste é ~3x
+# mais rápida (46s contra 123s medidos em 12s de vídeo), e num assunto em que se
+# gera para conferir, esperar custa mais que o dobro do preço. A conta sobe
+# ~US$ 0,42 num Short de 13s. O env var segue existindo para a volta ser uma
+# troca de valor e não um deploy.
+MODELO = os.getenv("WAN_MODELO", "wan3.0-video-prime").strip() or "wan3.0-video-prime"
 # 1:1 em 480P sai em 624x624 (medido no modo referência). Ela ocupa menos de
 # 3/4 da largura do Short, então 480P já entrega mais pixel do que o quadro usa
 # e 720P só dobraria a conta.
