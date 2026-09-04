@@ -35,12 +35,9 @@ TRÊS CONSEQUÊNCIAS MEDIDAS, todas contra a API real em 2026-09-04:
    `reference_audio` é material de REFERÊNCIA, e o Wan limita referência a 15s
    (vale igual para `reference_video`). Medido: um MP3 de 22,08s derruba a
    tarefa com `duration should be at most 15s, got 22.08s`. Como o Short nasce
-   entre 13s e 26s (clipe de 15-30s dividido por MATERIAL_MARGEM, que é de onde
-   sai o teto desde 2026-09-04), a narração é PARTIDA em pedaços de segundos
-   inteiros e cada um vira uma geração, emendadas no fim — e os 5 clipes que o
-   `reference_audio` aceita não ajudam, porque o teto de 15s é do TOTAL:
-   `reference_audio total duration 21.0s exceeds max 15s`, medido com dois
-   clipes de 11s e 10s. Um Short curto cabe em uma geração só.
+   entre 13s e 25s (clipe de 15-30s dividido por MATERIAL_MARGEM, com teto de
+   VIDEO_DURACAO), a narração é PARTIDA em pedaços de segundos inteiros e cada
+   um vira uma geração, emendadas no fim. Um Short curto cabe em uma só.
 
 3. O VERDE MUDOU E PASSOU A SER MEDIDO. No modo primeiro-quadro o fundo era o
    da própria influencer.png, e o chroma key podia ser constante. No modo
@@ -89,19 +86,11 @@ ROTA_UPLOAD = "/uploads"
 # troca de ontem cortou metade do preço pagando com latência, e nada aqui muda
 # essa conta. O env var existe para a volta ser uma variável, não um deploy.
 MODELO = os.getenv("WAN_MODELO", "wan3.0-video").strip() or "wan3.0-video"
-# 480P com referência quadrada sai em 624x624 (medido). Ela ocupa menos de 3/4
-# da largura do Short, então 480P já entrega mais pixel do que o quadro usa e
-# 720P só dobraria a conta.
+# 1:1 em 480P sai em 624x624 (medido no modo referência). Ela ocupa menos de
+# 3/4 da largura do Short, então 480P já entrega mais pixel do que o quadro usa
+# e 720P só dobraria a conta.
 RESOLUCAO = "480P"
-# ADAPTIVE, NÃO 1:1 (2026-09-04, pedido do usuário). O `adaptive` é o padrão do
-# modelo e o que o guia recomenda: ele deduz a proporção do material de
-# referência em vez de recebê-la imposta. MEDIDO: com a influencer.png quadrada
-# a saída é 624x624 nos dois casos — ou seja, o parâmetro não muda o
-# enquadramento aqui, e o que se ganha é não forçar a mão do modelo num eixo em
-# que ele já ia acertar. A montagem deixou de depender disso de qualquer jeito
-# (ver o `force_original_aspect_ratio` em edicao.py): se um dia a referência
-# mudar de forma, o vídeo dela entra na caixa sem esticar.
-PROPORCAO = "adaptive"
+PROPORCAO = "1:1"
 
 # TETO DO ÁUDIO DE REFERÊNCIA, imposto pela API (ver o cabeçalho). Narração
 # maior que isto é partida em pedaços; cada pedaço é uma geração.
@@ -721,110 +710,7 @@ def cor_de_fundo(video: Path) -> str:
     return cor
 
 
-def recorte_quadrado(video: Path, cor: str | None = None) -> str | None:
-    """Como pôr ESTE vídeo num quadrado 1:1 sem perder um pixel DELA.
-
-    Existe porque a forma do vídeo é do MODELO, não nossa (2026-09-04). O
-    `wan3.0-video` devolve quadrado quando a referência é quadrada, mas isso é
-    sorte de configuração: o `gemini-omni-1.1-flash`, por exemplo, RECUSA 1:1 —
-    "Supported values: '16:9', '9:16'", medido na API dele — e qualquer troca de
-    modelo pode trazer um retrato ou um panorâmico. A montagem quer um quadrado,
-    e a conversão não pode ser um corte cego: cortar o meio de um 9:16 come a
-    cabeça ou as mãos dela.
-
-    Então o quadrado é montado EM VOLTA DELA:
-
-      1. o fundo é conhecido (`cor_de_fundo`), então o que NÃO é fundo é ela;
-      2. a máscara é unida ao longo do clipe — a caixa cobre onde ela esteve em
-         qualquer momento, não onde ela está num quadro sorteado;
-      3. se um quadrado que contenha essa caixa couber dentro do vídeo, é ele,
-         centrado nela e preso ao rodapé (que é onde ela é cortada pelo
-         enquadramento de meio corpo);
-      4. se NÃO couber — o caso do 9:16, em que ela é mais alta que a largura —,
-         não se corta nada: devolve None e a montagem encaixa o vídeo inteiro na
-         caixa, completando o resto com transparente.
-
-    Devolve o filtro `crop=...` do ffmpeg, ou None quando não há o que cortar
-    (vídeo já quadrado, sem OpenCV, ou sujeito maior que o quadrado possível).
-    """
-    try:
-        import cv2  # noqa: PLC0415 — opcional, como no enquadramento
-    except ImportError:
-        return None
-
-    cap = cv2.VideoCapture(str(video))
-    largura = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    altura = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    if not largura or not altura or largura == altura:
-        cap.release()
-        return None  # já é 1:1: nada a fazer
-
-    hexa = (cor or cor_de_fundo(video)).replace("0x", "")
-    fundo = np.array(
-        [int(hexa[4:6], 16), int(hexa[2:4], 16), int(hexa[0:2], 16)], dtype=np.float32
-    )  # BGR, que é a ordem do OpenCV
-
-    caixa = None
-    for quadro in np.linspace(0, max(total - 1, 0), 12, dtype=int):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(quadro))
-        ok, imagem = cap.read()
-        if not ok:
-            continue
-        # DISTÂNCIA ATÉ O FUNDO, não "é verde?": o limiar em cima da cor medida
-        # segue o fundo que o modelo pintou, em vez de supor um verde fixo.
-        dist = np.linalg.norm(imagem.astype(np.float32) - fundo, axis=2)
-        mascara = (dist > 70).astype(np.uint8)
-        # Abre a máscara para o ruído de compressão no fundo não virar sujeito.
-        mascara = cv2.morphologyEx(
-            mascara, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8)
-        )
-        xs = np.where(mascara.any(axis=0))[0]
-        ys = np.where(mascara.any(axis=1))[0]
-        if not len(xs) or not len(ys):
-            continue
-        atual = (int(xs[0]), int(ys[0]), int(xs[-1]), int(ys[-1]))
-        caixa = atual if caixa is None else (
-            min(caixa[0], atual[0]), min(caixa[1], atual[1]),
-            max(caixa[2], atual[2]), max(caixa[3], atual[3]),
-        )
-    cap.release()
-    if caixa is None:
-        print("[influencer] Não achei o sujeito no quadro; vídeo inteiro na caixa.")
-        return None
-
-    x0, y0, x1, y1 = caixa
-    larg_dela, alt_dela = x1 - x0 + 1, y1 - y0 + 1
-    lado = max(larg_dela, alt_dela)
-    if lado > min(largura, altura):
-        print(
-            f"[influencer] O sujeito ({larg_dela}x{alt_dela}) não cabe num "
-            f"quadrado de {min(largura, altura)}px; encaixando o vídeo inteiro."
-        )
-        return None
-
-    # Centrado nela na horizontal e ANCORADO EMBAIXO: o enquadramento é de meio
-    # corpo, então a borda de baixo é onde ela é cortada, e é ela que tem de
-    # coincidir com o rodapé da caixa na montagem.
-    lado = min(lado + lado // 10, min(largura, altura))   # 10% de folga
-    x = int(round((x0 + x1) / 2 - lado / 2))
-    y = min(altura - lado, max(0, y1 - lado + 1))
-    x = max(0, min(largura - lado, x))
-    lado -= lado % 2
-    print(
-        f"[influencer] Quadrado montado em volta dela: {lado}x{lado} "
-        f"em ({x},{y}) de {largura}x{altura}."
-    )
-    return f"crop={lado}:{lado}:{x}:{y}"
-
-
-def filtro_chroma(video: Path | None = None, cor: str | None = None) -> str:
-    """O filtro de chroma key, num lugar só, para a montagem e para os testes.
-
-    Aceita a cor JÁ MEDIDA porque a montagem precisa dela duas vezes (aqui e no
-    `recorte_quadrado`), e medir de novo seria reler o vídeo inteiro para chegar
-    ao mesmo número.
-    """
-    if cor is None:
-        cor = cor_de_fundo(video) if video is not None else CHROMA_COR
+def filtro_chroma(video: Path | None = None) -> str:
+    """O filtro de chroma key, num lugar só, para a montagem e para os testes."""
+    cor = cor_de_fundo(video) if video is not None else CHROMA_COR
     return f"chromakey={cor}:{CHROMA_SIMILARIDADE}:{CHROMA_MISTURA}"
