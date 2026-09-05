@@ -838,7 +838,15 @@ class Config:
     # Continua valendo onde o filtro é do SERVIDOR e economiza de verdade: o
     # `start_time` da busca aberta por clipes (x_client) e a janela do panorama
     # do YouTube (seo.py). Os crons do formato longo passam 48.
-    janela_horas: int = 8
+    #
+    # 8 -> 24 EM 2026-09-05 (pedido do usuário), junto com o corte dos Shorts
+    # para UMA execução diária por canal (10h locais: BR `0 13`, US `0 14` UTC).
+    # A janela acompanha o INTERVALO ENTRE EXECUÇÕES: com 8h e um disparo a cada
+    # 24h, o panorama do YouTube julgava a concorrência de um terço do dia e
+    # dizia "o assunto está livre" sobre as outras 16h, que é onde estava a
+    # concorrência real. Não muda o material da PAUTA — a coleta do X não tem
+    # janela desde 2026-08-25/29 (ver o topo de x_client.py).
+    janela_horas: int = 24
     num_trends: int = 10  # quantas trends do X coletar para escolher a do vídeo
     publico: str = "brasil"  # "brasil" ou "usa" (flag -usa no main.py)
     formato: str = "curto"  # "curto" (Shorts 9:16) ou "longo" (--long-take, 16:9)
@@ -1027,7 +1035,7 @@ def carregar_config(exige_lista: bool = True) -> Config:
         qwen_api_key=(os.getenv("QWEN_API_KEY", "") or "").strip(),
         video_duracao=_teto_do_short(),
         velocidade=float(os.getenv("VIDEO_VELOCIDADE", str(CURTO_VELOCIDADE))),
-        janela_horas=int(os.getenv("JANELA_HORAS", "8")),
+        janela_horas=int(os.getenv("JANELA_HORAS", "24")),
         num_trends=int(os.getenv("NUM_TRENDS", "10")),
         # VARREDURA `has:videos` LIGADA no curto desde 2026-08-17; BUSCA ABERTA
         # segue desligada, por decisão do usuário. Ela ficou zerada enquanto se
