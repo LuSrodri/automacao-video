@@ -807,13 +807,6 @@ class Config:
     text_model: str = "gpt-5.6-luna"
     voice_id: str = "czvzJwIVS2asEKnthV40"
     voice_id_usa: str = "POPWFdpTM8Mn2ZQEagyQ"
-    # A VOZ DA INFLUENCER (2026-09-04, IDs dados pelo usuário). É a voz do
-    # SHORT, e é dela — de quem aparece na tela —, não do canal: os IDs acima
-    # seguem sendo a voz em off do formato longo. As duas ficam separadas de
-    # propósito, para trocar a voz da influencer não mexer no longo e
-    # vice-versa (`audio._voz`).
-    voice_id_influencer: str = "ohZOfA9iwlZ5nOsoY7LB"
-    voice_id_influencer_usa: str = "k9KXsQFJqzAoomTCOrJB"
     tts_model: str = "eleven_v3"
     # Chave do QwenCloud, que gera a INFLUENCER do Short (2026-09-03). Só o
     # formato CURTO a usa: é ela que vira a voz e a imagem de quem comenta o
@@ -832,11 +825,11 @@ class Config:
     # formato longo roda em velocidade NORMAL, porque é análise e o espectador
     # precisa acompanhar o raciocínio (ver ativar_formato_longo).
     #
-    # VOLTOU A VALER NOS DOIS FORMATOS em 2026-09-04. Entre 09-03 e 09-04 não
-    # havia o que acelerar no Short: o áudio vinha de dentro do modelo de vídeo,
-    # preso aos lábios. Com a voz de novo na ElevenLabs e o lipsync feito DEPOIS
-    # dela, acelerar o MP3 voltou a ser possível — e a boca acompanha, porque o
-    # vídeo é gerado em cima do áudio já acelerado.
+    # ISTO SÓ VALE PARA O FORMATO LONGO (de novo, 2026-09-05). Quem fala no
+    # Short é a influencer do Wan, e o áudio dela sai de dentro do modelo de
+    # vídeo, preso aos lábios: acelerar descolaria a voz da boca. O valor
+    # continua sendo conferido abaixo porque o env var é o mesmo dos dois
+    # formatos e uma faixa de sanidade não custa nada.
     velocidade: float = CURTO_VELOCIDADE
     # JANELA DE TEMPO — NÃO SE APLICA MAIS À LISTA DO X (2026-08-25, pedido do
     # usuário). A v2 não filtra data no endpoint de lista, então recortar por
@@ -1030,12 +1023,6 @@ def carregar_config(exige_lista: bool = True) -> Config:
         text_model=os.getenv("TEXT_MODEL", "gpt-5.6-luna"),
         voice_id=os.getenv("ELEVENLABS_VOICE_ID", "czvzJwIVS2asEKnthV40"),
         voice_id_usa=os.getenv("ELEVENLABS_VOICE_ID_USA", "POPWFdpTM8Mn2ZQEagyQ"),
-        voice_id_influencer=os.getenv(
-            "ELEVENLABS_VOICE_ID_INFLUENCER", "ohZOfA9iwlZ5nOsoY7LB"
-        ),
-        voice_id_influencer_usa=os.getenv(
-            "ELEVENLABS_VOICE_ID_INFLUENCER_USA", "k9KXsQFJqzAoomTCOrJB"
-        ),
         tts_model=os.getenv("ELEVENLABS_MODEL", "eleven_v3"),
         qwen_api_key=(os.getenv("QWEN_API_KEY", "") or "").strip(),
         video_duracao=_teto_do_short(),
