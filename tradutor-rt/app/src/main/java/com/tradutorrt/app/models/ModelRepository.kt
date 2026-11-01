@@ -35,6 +35,12 @@ class ModelRepository(context: Context) {
 
     fun fileFor(m: ModelFile): File = File(dir, m.localName)
 
+    /** Apaga arquivos de modelos que sairam do catalogo (ex.: o VAD antigo). */
+    fun removeObsolete(keep: Collection<ModelFile>) {
+        val names = keep.flatMap { listOf(it.localName, it.localName + ".part") }.toSet()
+        dir.listFiles()?.filter { it.name !in names }?.forEach { it.delete() }
+    }
+
     /** Considera presente se o arquivo final existe com o tamanho certo (o hash e checado no download). */
     fun isPresent(m: ModelFile): Boolean = fileFor(m).let { it.exists() && it.length() == m.size }
 

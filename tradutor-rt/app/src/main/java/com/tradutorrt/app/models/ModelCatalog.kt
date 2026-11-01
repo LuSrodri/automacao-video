@@ -20,10 +20,14 @@ data class ModelFile(
 }
 
 object ModelCatalog {
+    /**
+     * Silero VAD v6.2 — o MESMO arquivo do pacote oficial `silero-vad` 6.2.x (SHA-256 identico).
+     * A copia antiga do onnx-community e uma versao anterior que diverge ate 0,8 por bloco do modelo atual.
+     */
     val sileroVad = ModelFile(
-        "vad", "Silero VAD (ONNX)", "onnx-community/silero-vad", "e71cae966052b992a7eca6b17738916ce0eca4ec",
-        "onnx/model.onnx", 2_243_022L, "a4a068cd6cf1ea8355b84327595838ca748ec29a25bc91fc82e6c299ccdc5808",
-        localName = "silero_vad.onnx",
+        "vad", "Silero VAD v6.2 (ONNX)", "istupakov/silero-vad-onnx", "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6",
+        "silero_vad.onnx", 2_327_524L, "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+        localName = "silero_vad_v6.2.onnx",
     )
     val smartTurn = ModelFile(
         "smartturn", "Smart Turn v3.2 (CPU, int8)", "pipecat-ai/smart-turn-v3", "f766f81d3cfdf7737ac64aad813d91bbfd56bf93",
@@ -66,6 +70,8 @@ object ModelCatalog {
         "onnx/soprano_decoder_fp32.onnx.data", 121_503_744L,
         "02ba358c807c31966ec3f41ca1ceb9b5b82abf78786551b6067d7979e7dbf7fd",
     )
+
+    val all: List<ModelFile> get() = listOf(sileroVad, smartTurn, whisperBase, whisperSmall, hyMt) + soprano
 
     fun whisper(size: WhisperSize) = if (size == WhisperSize.SMALL) whisperSmall else whisperBase
 

@@ -45,8 +45,9 @@ class MainActivity : ComponentActivity() {
                 var showSettings by remember { mutableStateOf(false) }
                 val required = remember(settings.whisperSize, settings.voiceEnabled, settings.sopranoForEnglish) { app.requiredModels() }
                 LaunchedEffect(required, download.running) { if (!download.running) app.models.refresh(required) }
-                val missing = app.models.missing(required)
-                val ready = missing.isEmpty() && !download.running
+                // checagem de disco so quando algo relevante muda (nao a cada atualizacao do pipeline)
+                val missingCount = remember(required, download.running, download.allDone) { app.models.missing(required).size }
+                val ready = missingCount == 0 && !download.running
 
                 if (!ready) {
                     SetupScreen(
@@ -58,6 +59,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     MainScreen(
                         state = pipeline,
+                        level = app.pipeline.level,
                         settings = settings,
                         onToggle = { toggleListening(pipeline.engine) },
                         onReplay = { app.pipeline.replay(it) },

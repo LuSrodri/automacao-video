@@ -98,7 +98,21 @@ fun SettingsDialog(
                     valueRange = 0.2f..0.9f,
                 )
                 Text(
-                    "Maior = espera mais certeza de que você terminou de falar.",
+                    "Pausa mínima para fechar a frase: ${settings.minEndSilenceMs} ms",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = settings.minEndSilenceMs.toFloat(),
+                    onValueChange = { v -> onChange { it.copy(minEndSilenceMs = ((v / 50).toInt() * 50)) } },
+                    valueRange = 200f..1500f,
+                )
+                Text(
+                    "Menor = responde mais rápido, mas pode cortar frases em pausas de vírgula. 600 ms não cortou " +
+                        "nenhuma frase nos testes com fala real.",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
+                )
+                Text(
+                    "Limiar maior = o Smart Turn precisa de mais certeza de que você terminou.",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline,
                 )
                 OutlinedButton(onClick = onClearHistory, modifier = Modifier.fillMaxWidth()) { Text("Limpar conversa") }

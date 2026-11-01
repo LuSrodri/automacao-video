@@ -79,6 +79,13 @@ class TranslationPipeline(
     private val _state = MutableStateFlow(PipelineState())
     val state: StateFlow<PipelineState> = _state.asStateFlow()
 
+    /** Nivel do VAD (0..1) num fluxo separado: atualiza ~10x/s sem recompor a lista da conversa. */
+    private val _level = MutableStateFlow(0f)
+    val level: StateFlow<Float> = _level.asStateFlow()
+
+    /** true enquanto ha um turno aberto (falando ou em pausa aguardando o fim do turno). */
+    @Volatile private var userSpeaking = false
+
     // ---- modelos (cada um so e tocado pela sua thread)
     private var vad: SileroVad? = null
     private var smartTurn: SmartTurn? = null
@@ -170,7 +177,9 @@ class TranslationPipeline(
         scope.launch {
             listenJobs.forEach { it.cancelAndJoin() }
             listenJobs = emptyList()
-            _state.update { it.copy(engine = EngineState.STOPPED, speaking = false, vadProb = 0f, partial = "", status = "Parado") }
+            userSpeaking = false
+            _level.value = 0f
+            _state.update { it.copy(engine = EngineState.STOPPED, speaking = false, partial = "", status = "Parado") }
         }
     }
 
@@ -205,6 +214,7 @@ class TranslationPipeline(
         val v = vad!!
         var wasMuted = false
         var uiCounter = 0
+        var smoothed = 0f
         for (msg in input) {
             when (msg) {
                 is VadInput.Audio -> {
@@ -212,32 +222,41 @@ class TranslationPipeline(
                     if (muted) {
                         if (!wasMuted) {
                             detector.reset(); v.reset()
-                            _state.update { it.copy(speaking = false, vadProb = 0f, partial = "") }
+                            setSpeaking(false)
+                            _level.value = 0f
                         }
                         wasMuted = true
                         continue
                     }
                     wasMuted = false
+                    val s = settings.value
+                    detector.threshold = s.smartTurnThreshold
+                    detector.minEndSilenceMs = s.minEndSilenceMs.toLong()
                     val prob = v.process(msg.chunk)
                     val events = detector.process(msg.chunk, prob, msg.t)
-                    if (++uiCounter % 3 == 0) {
-                        val speaking = detector.state != TurnDetector.State.IDLE
-                        _state.update { it.copy(vadProb = prob, speaking = speaking) }
-                    }
+                    setSpeaking(detector.state != TurnDetector.State.IDLE)
+                    // nivel suavizado (subida rapida, descida lenta) para o indicador nao "piscar"
+                    smoothed = if (prob > smoothed) 0.5f * smoothed + 0.5f * prob else 0.85f * smoothed + 0.15f * prob
+                    if (++uiCounter % 3 == 0) _level.value = smoothed
                     handleEvents(events, input)
                 }
                 is VadInput.StResult -> {
                     lastSmartTurnMs = msg.ms
-                    val thr = settings.value.smartTurnThreshold
-                    handleEvents(detector.onSmartTurn(msg.turnId, msg.version, msg.prob, thr, System.nanoTime()), input)
+                    handleEvents(detector.onSmartTurn(msg.turnId, msg.version, msg.prob, System.nanoTime()), input)
                 }
             }
         }
     }
 
+    /** So publica mudancas reais (evita recomposicoes a cada bloco de audio). */
+    private fun setSpeaking(v: Boolean) {
+        userSpeaking = v
+        if (_state.value.speaking != v) _state.update { it.copy(speaking = v) }
+    }
+
     private suspend fun handleEvents(events: List<TurnDetector.Event>, input: Channel<VadInput>) {
         for (e in events) when (e) {
-            is TurnDetector.Event.SpeechStarted -> _state.update { it.copy(speaking = true, partial = "") }
+            is TurnDetector.Event.SpeechStarted -> _state.update { it.copy(speaking = true, partial = "", partialLang = "") }
             is TurnDetector.Event.RunSmartTurn -> scope.launch(smartTurnDispatcher) {
                 val r = smartTurn!!.predict(e.audio)
                 Log.d(tag, "smart turn p=%.3f (%d+%d ms)".format(r.probability, r.featureMs, r.inferMs))
@@ -248,21 +267,27 @@ class TranslationPipeline(
                 lastFinalTurnId = e.turnId
                 val id = ids.incrementAndGet()
                 val st = if (e.reason == TurnDetector.EndReason.SMART_TURN) lastSmartTurnMs else null
-                addItem(
+                // a bolha "ao vivo" vira o item da conversa no MESMO update (sem piscar): o texto parcial
+                // fica como provisorio ate a transcricao final chegar
+                val partial = _state.value.partial
+                val item =
                     ChatItem(
-                        id, status = ItemStatus.TRANSCRIBING,
+                        id, status = ItemStatus.TRANSCRIBING, original = partial, provisional = partial.isNotEmpty(),
                         endReason = when (e.reason) {
                             TurnDetector.EndReason.SMART_TURN -> "Smart Turn %.2f".format(e.smartTurnProb ?: 0f)
                             TurnDetector.EndReason.SILENCE_TIMEOUT -> "silêncio"
                             TurnDetector.EndReason.MAX_LENGTH -> "tamanho máx."
                         },
                         latencies = Latencies(endpointMs = (e.decisionNanos - e.endOfSpeechNanos) / 1_000_000, smartTurnMs = st),
-                    ),
-                )
-                _state.update { it.copy(speaking = false, partial = "") }
+                    )
+                userSpeaking = false
+                _state.update { it.copy(items = it.items + item, speaking = false, partial = "", partialLang = "") }
                 finals.send(FinalTurn(id, e, st))
             }
-            is TurnDetector.Event.TurnDiscarded -> _state.update { it.copy(speaking = false, partial = "") }
+            is TurnDetector.Event.TurnDiscarded -> {
+                userSpeaking = false
+                _state.update { it.copy(speaking = false, partial = "", partialLang = "") }
+            }
         }
     }
 
@@ -339,7 +364,7 @@ class TranslationPipeline(
         }
         updateItem(f.id) {
             it.copy(
-                original = tr.text, sourceLang = src, sourceLangProb = prob, targetLang = tgt,
+                original = tr.text, provisional = false, sourceLang = src, sourceLangProb = prob, targetLang = tgt,
                 status = ItemStatus.TRANSLATING, latencies = it.latencies.copy(asrMs = asrMs),
             )
         }
@@ -415,6 +440,8 @@ class TranslationPipeline(
                 val t0 = System.nanoTime()
                 val useSoprano = job.lang == "en" && s.sopranoForEnglish && soprano != null
                 var firstAudio = 0L
+                // nunca comecar a falar por cima da pessoa (o microfone fica mudo durante a voz):
+                // o Soprano sintetiza em paralelo e so o inicio da reproducao espera
                 if (useSoprano) {
                     val all = ArrayList<FloatArray>()
                     val sentences = SopranoTextNormalizer.sentences(SopranoTextNormalizer.clean(job.text))
@@ -423,6 +450,7 @@ class TranslationPipeline(
                         Log.d(tag, "soprano '$sentence' ${soprano!!.lastStats}")
                         if (audio.isEmpty()) continue
                         if (firstAudio == 0L) {
+                            awaitUserSilence()
                             firstAudio = System.nanoTime()
                             outputBusy = true
                         }
@@ -433,6 +461,7 @@ class TranslationPipeline(
                 } else {
                     val started = CompletableDeferred<Long>()
                     systemTts!!.onStart = { started.complete(System.nanoTime()) }
+                    awaitUserSilence()
                     outputBusy = true
                     if (!systemTts!!.speak(job.text, job.lang)) {
                         outputBusy = false
@@ -456,6 +485,11 @@ class TranslationPipeline(
                 fail(job.id, e)
             }
         }
+    }
+
+    private suspend fun awaitUserSilence(maxMs: Long = 20_000) {
+        val t0 = System.nanoTime()
+        while (userSpeaking && (System.nanoTime() - t0) / 1_000_000 < maxMs) kotlinx.coroutines.delay(40)
     }
 
     /** Repete o audio de uma mensagem (Soprano: audio guardado; sistema: fala de novo). */

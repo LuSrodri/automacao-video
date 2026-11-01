@@ -4,8 +4,6 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.NoiseSuppressor
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.isActive
 
@@ -24,10 +22,8 @@ class AudioCapture {
             AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuf, SAMPLE_RATE * 2),
         )
         check(rec.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord nao inicializou" }
-        val aec = if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId) else null
-        aec?.enabled = true
-        val ns = if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId) else null
-        ns?.enabled = false // o Silero e o Whisper preferem audio sem supressao agressiva
+        // Sem AEC/supressao de ruido: o app e half-duplex (nao escuta enquanto fala), e esses efeitos
+        // distorcem/atenuam a voz em varios aparelhos; o Silero e o Whisper preferem o audio cru.
         val buf = ShortArray(CHUNK)
         try {
             rec.startRecording()
@@ -44,8 +40,6 @@ class AudioCapture {
         } finally {
             runCatching { rec.stop() }
             rec.release()
-            aec?.release()
-            ns?.release()
         }
     }
 }

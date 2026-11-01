@@ -14,6 +14,7 @@ enum class ItemStatus { TRANSCRIBING, TRANSLATING, SPEAKING, DONE, ERROR }
 data class ChatItem(
     val id: Long,
     val original: String = "",
+    val provisional: Boolean = false,   // texto ainda e a transcricao parcial
     val sourceLang: String = "",
     val sourceLangProb: Float = 0f,
     val translation: String = "",
@@ -31,7 +32,6 @@ data class PipelineState(
     val engine: EngineState = EngineState.STOPPED,
     val status: String = "",
     val speaking: Boolean = false,      // usuario falando (VAD)
-    val vadProb: Float = 0f,
     val partial: String = "",
     val partialLang: String = "",
     val items: List<ChatItem> = emptyList(),

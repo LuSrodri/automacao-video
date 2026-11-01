@@ -17,6 +17,7 @@ data class AppSettings(
     val sopranoForEnglish: Boolean = true,
     val whisperSize: WhisperSize = WhisperSize.BASE,
     val smartTurnThreshold: Float = 0.5f,
+    val minEndSilenceMs: Int = 600,
     val partialTranscripts: Boolean = true,
     val fastAsr: Boolean = true,
 )
@@ -39,6 +40,7 @@ class SettingsStore(context: Context) {
             whisperSize = runCatching { WhisperSize.valueOf(prefs.getString("whisper", d.whisperSize.name)!!) }
                 .getOrDefault(d.whisperSize),
             smartTurnThreshold = prefs.getFloat("stThreshold", d.smartTurnThreshold),
+            minEndSilenceMs = prefs.getInt("minEndSilence", d.minEndSilenceMs),
             partialTranscripts = prefs.getBoolean("partials", d.partialTranscripts),
             fastAsr = prefs.getBoolean("fastAsr", d.fastAsr),
         )
@@ -55,6 +57,7 @@ class SettingsStore(context: Context) {
             .putBoolean("soprano", s.sopranoForEnglish)
             .putString("whisper", s.whisperSize.name)
             .putFloat("stThreshold", s.smartTurnThreshold)
+            .putInt("minEndSilence", s.minEndSilenceMs)
             .putBoolean("partials", s.partialTranscripts)
             .putBoolean("fastAsr", s.fastAsr)
             .apply()

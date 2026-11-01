@@ -89,7 +89,7 @@ fun main(args: Array<String>) {
     println("threads=$threads, audio=${audio.size / 16000.0}s, par=$langA<->$langB")
 
     var t = System.nanoTime()
-    val vad = on("vad") { SileroVad(File(dir, "silero_vad.onnx").path) }
+    val vad = on("vad") { SileroVad(File(dir, "silero_vad_v6.2.onnx").path) }
     val filters = File("app/src/main/assets/whisper_mel_filters_201x80.f32").readBytes()
         .let { val fb = ByteBuffer.wrap(it).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer(); FloatArray(fb.remaining()).also { a -> fb.get(a) } }
     val st = on("st") { SmartTurn(File(dir, "smart-turn-v3.2-cpu.onnx").path, WhisperFeatures(filters), 2) }
@@ -105,7 +105,11 @@ fun main(args: Array<String>) {
     val soprano = on("tts") { SopranoTts(File(dir, "soprano_backbone_kv_int8.onnx").path, File(dir, "soprano_decoder_fp32.onnx").path, tok, threads) }
     println("carga Soprano: ${ms(t)} ms\n")
 
-    val det = TurnDetector()
+    val det = TurnDetector().apply {
+        threshold = System.getenv("ST_THRESHOLD")?.toFloat() ?: 0.5f
+        minEndSilenceMs = System.getenv("MIN_END_SILENCE_MS")?.toLong() ?: 600
+    }
+    val asrOnly = System.getenv("ASR_ONLY") == "1"
     val partialLang = HashMap<Int, String>()
     val tts = ArrayList<FloatArray>()
     var vadTotal = 0L
@@ -138,7 +142,7 @@ fun main(args: Array<String>) {
                     println("[%.2fs]   pausa -> Smart Turn p=%.3f (mel %d ms + onnx %d ms) sobre %.2fs".format(
                         now / 1e9, r.probability, r.featureMs, r.inferMs, e.audio.size / 16000.0))
                     // resultado "chega" depois do tempo de computacao
-                    events += det.onSmartTurn(e.turnId, e.version, r.probability, 0.5f, now + (r.featureMs + r.inferMs) * 1_000_000)
+                    events += det.onSmartTurn(e.turnId, e.version, r.probability, now + (r.featureMs + r.inferMs) * 1_000_000)
                 }
                 is TurnDetector.Event.TurnDiscarded -> println("[%.2fs]   turno descartado (curto)".format(now / 1e9))
                 is TurnDetector.Event.TurnComplete -> {
@@ -152,6 +156,7 @@ fun main(args: Array<String>) {
                     val tr = on("asr") { whisper.transcribe(e.audio, threads, src, audioCtx = fctx) }!!
                     val asr = ms(t0)
                     val tgt = if (src == langA) langB else langA
+                    if (asrOnly) { println("   ASR %d ms  [%s %.0f%%] %s\n".format(asr, src, 100 * (probs[src] ?: 0f), tr.text)); continue }
                     t0 = System.nanoTime()
                     val out = TranslationPrompt.clean(on("mt") { llama.generate(TranslationPrompt.build(tr.text, src, tgt), tr.text.length * 2 + 48) }!!)
                     val mt = ms(t0)

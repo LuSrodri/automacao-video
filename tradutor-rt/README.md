@@ -34,6 +34,7 @@ força isso, porque o ggml com `-O0` fica dezenas de vezes mais lento. Os kernel
 | Caminho | O quê |
 |---|---|
 | `app/` | App (Compose, serviço, pipeline, ONNX Runtime) |
+| `app/.../ui/MainScreen.kt` | Tela principal (lista ancorada embaixo, transições animadas, sem recomposição por nível do microfone) |
 | `app/.../pipeline/TranslationPipeline.kt` | Orquestração: uma thread por modelo, ligadas por canais |
 | `app/.../audio/TurnDetector.kt` | Máquina de estados VAD + Smart Turn |
 | `app/.../audio/WhisperFeatures.kt` | Port do pré-processamento do Smart Turn (mel do Whisper) |
@@ -48,16 +49,22 @@ força isso, porque o ggml com `-O0` fica dezenas de vezes mais lento. Os kernel
 
 ## Pipeline em detalhe
 
-1. **VAD** — Silero VAD v5 (ONNX), blocos de 512 amostras + 64 de contexto. Abre um turno após
-   ~96 ms de fala (com 320 ms de pré-roll).
+1. **VAD** — Silero VAD **v6.2** (ONNX, o mesmo arquivo do pacote oficial `silero-vad` 6.2.x),
+   blocos de 512 amostras + 64 de contexto. Abre um turno após ~96 ms de fala (com 320 ms de
+   pré-roll). A primeira versão usava a cópia do `onnx-community`, um modelo mais antigo que diverge
+   até 0,8 por bloco do Silero atual.
 2. **Fim de turno** — depois de ~190 ms de silêncio roda o `smart-turn-v3.2-cpu.onnx` sobre o turno
    atual (últimos 8 s). O pré-processamento segue exatamente o `inference.py` do
    `pipecat-ai/smart-turn`: zeros à esquerda até 8 s, normalização média 0/variância 1, STFT Hann 400/160
    com padding reflect, banco mel slaney de 80 filtros (a mesma matriz do `transformers`, empacotada como
    asset), `log10`, clamp `max-8`, `(x+4)/4`. O teste `WhisperFeaturesTest` compara com o
-   `WhisperFeatureExtractor` do `transformers` (erro máx. < 2e-3). Probabilidade > limiar (0,5 por
-   padrão, ajustável) fecha o turno. Se a pessoa volta a falar, o resultado pendente é descartado e na
-   próxima pausa o Smart Turn roda de novo sobre o turno inteiro. Rede de segurança: 2,5 s de silêncio.
+   `WhisperFeatureExtractor` do `transformers` (erro máx. < 2e-3). O turno fecha quando **o Smart
+   Turn dá probabilidade > limiar (0,5) E a pausa já dura o mínimo configurado (600 ms por padrão)**.
+   Só o Smart Turn não basta: medido em 80 frases reais do FLEURS (pt/en), com ~200 ms de pausa ele
+   diz "completo" em ~83% das pausas de vírgula, o que cortava ~1,1 vez por frase. Com 600 ms, nenhuma
+   frase dos testes foi cortada (tabela abaixo). Se a pessoa volta a falar (2 blocos seguidos com voz;
+   um estalo isolado não conta), o resultado pendente é descartado e na próxima pausa o Smart Turn roda
+   de novo sobre o turno inteiro. Se ele diz "incompleto", o turno fecha com 2 s de silêncio.
 3. **ASR + idioma** — whisper.cpp, `ggml-base-q5_1` (padrão) ou `ggml-small-q5_1`. O app chama
    `whisper_lang_auto_detect` (o mesmo que `language="auto"` faz internamente) e:
    * modo **Conversa**: escolhe o mais provável entre os dois idiomas configurados;
@@ -78,7 +85,9 @@ força isso, porque o ggml com `-O0` fica dezenas de vezes mais lento. Os kernel
    chamadas. Threads limitadas aos núcleos grandes.
 5. **Voz** — Soprano-1.1-80M quando o destino é inglês; TTS nativo do Android nos demais idiomas.
    A reprodução é por frase (a frase seguinte é sintetizada enquanto a anterior toca). Durante a
-   reprodução o microfone é ignorado (half-duplex), para o app não traduzir a própria voz.
+   reprodução o microfone é ignorado (half-duplex), para o app não traduzir a própria voz, e por isso
+   a voz **nunca começa enquanto há um turno aberto** (a pessoa ainda falando ou em pausa). A captura
+   usa `VOICE_RECOGNITION` sem AEC/supressão de ruído.
 
 Cada modelo tem a sua thread (`vad`, `smart-turn`, `asr-whisper`, `mt-llama`, `tts`,
 `audio-capture`, `audio-player`); a UI só observa um `StateFlow`. Isso é obrigatório, não só
@@ -118,6 +127,21 @@ completa, ~1,1 s). Cache de prefixo do Hy-MT2: 23 tokens reaproveitados, prefill
 O áudio do Soprano gerado pelo código Kotlin foi transcrito de volta pelo Whisper small corretamente
 (os erros de nome próprio vêm do ASR da voz sintética de entrada).
 
+### Endpointing com fala real
+
+Conversa com 9 frases reais do FLEURS (5 pt, 4 en), em versão limpa e "de celular" (−14 dB de ganho
++ ruído contínuo a ~12 dB de SNR), rodando o código do app:
+
+| Pausa mínima | Turnos (esperado: 9), limpo / celular | Fim da fala → decisão |
+|---|---|---|
+| ~200 ms (versão 0.1.0) | 15 / 15 (frases cortadas na vírgula) | ~300 ms |
+| 400 ms | 11 / 12 | 416 ms |
+| **600 ms (padrão)** | **9 / 9** | 608 ms |
+| 800 ms | 9 / 9 | 800 ms |
+
+Com o padrão, versão "de celular": todas as 9 frases saíram inteiras, com tradução correta, e
+total (fim da fala → voz) de 2,5 a 4,1 s no host.
+
 **Esses números são do host, não de celular.** Num aparelho de 6–8 GB com 4 núcleos grandes o
 esperado é a mesma ordem de grandeza, mas não foi medido; a tela principal do app mostra as latências
 reais de cada etapa.
@@ -130,7 +154,7 @@ verificação de tamanho + SHA-256 (o `oid` LFS). As revisões são fixadas por 
 
 | Modelo | Repositório HF | Arquivo | Tamanho | Licença |
 |---|---|---|---|---|
-| Silero VAD v5 | `onnx-community/silero-vad` | `onnx/model.onnx` | 2,2 MB | MIT |
+| Silero VAD v6.2 | `istupakov/silero-vad-onnx` | `silero_vad.onnx` | 2,3 MB | MIT |
 | Smart Turn v3.2 | `pipecat-ai/smart-turn-v3` | `smart-turn-v3.2-cpu.onnx` | 8,7 MB | BSD-2-Clause |
 | Whisper base | `ggerganov/whisper.cpp` | `ggml-base-q5_1.bin` | 60 MB | MIT |
 | Whisper small (opcional) | `ggerganov/whisper.cpp` | `ggml-small-q5_1.bin` | 190 MB | MIT |

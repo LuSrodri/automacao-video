@@ -19,6 +19,7 @@ class TradutorApp : Application() {
         super.onCreate()
         settings = SettingsStore(this)
         models = ModelRepository(this)
+        models.removeObsolete(com.tradutorrt.app.models.ModelCatalog.all)
         pipeline = TranslationPipeline(this, settings, models)
     }
 
